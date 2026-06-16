@@ -5,6 +5,7 @@ chat call / no write). See client.py and assembler.py module docstrings."""
 
 from .assembler import assemble, build_system_prompt, build_user_message, sanitize_source
 from .client import ChatResult, LlmClient
+from .nli_grounding import LlmGroundingStrategy
 
 __all__ = [
     "LlmClient",
@@ -13,4 +14,5 @@ __all__ = [
     "sanitize_source",
     "build_system_prompt",
     "build_user_message",
+    "LlmGroundingStrategy",
 ]

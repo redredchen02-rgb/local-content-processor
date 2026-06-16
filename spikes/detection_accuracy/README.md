@@ -63,7 +63,32 @@ BLOCKED; dedup never auto-rejects, only confident-unique passes — R36).
 
 # point it at your own labeled set (e.g. the real golden set)
 ./.venv/bin/python spikes/detection_accuracy/run_eval.py --labeled spikes/detection_accuracy/golden_set/labeled.jsonl
+
+# ALSO score the opt-in +NLI LLM entailment judge alongside the substring
+# baselines (needs an LLM endpoint configured; one network call per claim):
+./.venv/bin/python spikes/detection_accuracy/run_eval.py --with-nli
+./.venv/bin/python spikes/detection_accuracy/run_eval.py --with-nli --config config.yaml --labeled spikes/detection_accuracy/golden_set/labeled.jsonl
 ```
+
+### The `+NLI` LLM judge (`--with-nli`) — opt-in, now real
+
+The `+NLI` path the plan reserved is implemented as
+`lcp.adapters.llm.nli_grounding.LlmGroundingStrategy`: it uses the company
+OpenAI-compatible LLM as a claim-level entailment judge (one constrained, tiny
+YES/NO call per claim) and satisfies the same `GroundingStrategy` Protocol as the
+substring baseline, so the harness scores them **head to head** on the same set.
+
+- **Default run does NOT use it** — it stays offline + zero-dependency. Pass
+  `--with-nli` to enable it (and have `llm.base_url` + the api_key configured).
+- **Security:** the judge is zero-capability (returns one word), and both the
+  source and the claim are sanitized + datamarked as DATA — same lethal-trifecta
+  posture as the assembler. It resolves no URL.
+- **Fail-closed:** anything but a confident `YES` (incl. a truncated/empty answer
+  or an LLM error) → "not grounded" → routed to a human.
+- **Still not the decision.** A good `+NLI` number on the *synthetic* set proves
+  the path works end to end (it has been run live against `gemma4-31b-heretic`);
+  choosing substring-only vs +NLI for production still requires the real labeled
+  corpus below. MVP default remains substring-only (see the MVP DECISION above).
 
 Reading the table:
 

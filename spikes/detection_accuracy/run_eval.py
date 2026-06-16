@@ -159,16 +159,15 @@ def _rows_of_kind(rows: list[dict[str, Any]], kind: str) -> list[dict[str, Any]]
 
 # --- grounding eval ----------------------------------------------------------
 
-# SEAM: each entry maps a strategy NAME -> a GroundingStrategy (Protocol) factory.
-# The substring/overlap BASELINE runs today (zero deps). To evaluate a +NLI
-# strategy later, add e.g. "nli_minicheck": lambda: NliStrategy(load_model())
-# here — verify_grounding() and the scoring below DO NOT change. We do NOT import
-# any heavy ML dependency in this spike; the seam stays empty-but-ready.
+# Each entry maps a strategy NAME -> a GroundingStrategy (Protocol) factory.
+# The substring/overlap BASELINES run by default (zero deps, offline). The +NLI
+# LLM entailment judge is REAL and opt-in: pass --with-nli to append it (see
+# build_grounding_strategies + lcp.adapters.llm.nli_grounding). verify_grounding()
+# and the scoring below DO NOT change — every strategy is scored the same way.
 GROUNDING_STRATEGIES: dict[str, Callable[[], GroundingStrategy]] = {
     "substring_overlap_0.6": lambda: SubstringOverlapStrategy(overlap_threshold=0.6),
     # Sensitivity probe — same baseline, stricter overlap (more fail-closed).
     "substring_overlap_0.8": lambda: SubstringOverlapStrategy(overlap_threshold=0.8),
-    # "nli_minicheck": lambda: NliStrategy(...),   # <-- U1 plugs NLI in HERE
 }
 
 
@@ -180,12 +179,19 @@ def _row_to_draft(d: dict[str, Any]) -> Draft:
     )
 
 
-def eval_grounding(rows: list[dict[str, Any]]) -> dict[str, Metrics]:
+def eval_grounding(
+    rows: list[dict[str, Any]],
+    strategies: dict[str, Callable[[], GroundingStrategy]] | None = None,
+) -> dict[str, Metrics]:
     """For each strategy, predicted_positive = "needs_human_review" (i.e. the
-    gate flagged it as not-grounded). actual_positive = label == 'ungrounded'."""
+    gate flagged it as not-grounded). actual_positive = label == 'ungrounded'.
+
+    `strategies` defaults to the substring baselines; pass an augmented dict (e.g.
+    including the opt-in +NLI LLM judge) to score them head-to-head."""
     samples = _rows_of_kind(rows, "grounding")
+    strategies = strategies or GROUNDING_STRATEGIES
     out: dict[str, Metrics] = {}
-    for name, factory in GROUNDING_STRATEGIES.items():
+    for name, factory in strategies.items():
         strat = factory()
         pairs: list[tuple[bool, bool]] = []
         for r in samples:
@@ -274,9 +280,12 @@ def _recommend_threshold(m: Metrics) -> str:
     return "FAIL-CLOSED: recall<1.0 -> route this reason to human, do not auto-pass"
 
 
-def build_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def build_report(
+    rows: list[dict[str, Any]],
+    strategies: dict[str, Callable[[], GroundingStrategy]] | None = None,
+) -> dict[str, Any]:
     """Full machine-readable metrics structure (also what the harness test asserts)."""
-    grounding = {k: v.as_dict() for k, v in eval_grounding(rows).items()}
+    grounding = {k: v.as_dict() for k, v in eval_grounding(rows, strategies).items()}
     risk = {k: v.as_dict() for k, v in eval_risk(rows).items()}
     dedup = {k: v.as_dict() for k, v in eval_dedup(rows).items()}
     return {
@@ -300,7 +309,10 @@ def _fmt_row(detector: str, strategy: str, m: Metrics) -> str:
     )
 
 
-def print_decision_table(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def print_decision_table(
+    rows: list[dict[str, Any]],
+    strategies: dict[str, Callable[[], GroundingStrategy]] | None = None,
+) -> dict[str, Any]:
     counts = defaultdict(int)
     for r in rows:
         counts[r.get("kind")] += 1
@@ -314,7 +326,7 @@ def print_decision_table(rows: list[dict[str, Any]]) -> dict[str, Any]:
     print("  detector   strategy                 metrics                                      recommendation")
     print("-" * 100)
 
-    g = eval_grounding(rows)
+    g = eval_grounding(rows, strategies)
     for name, m in g.items():
         print(_fmt_row("grounding", name, m))
     r = eval_risk(rows)
@@ -332,7 +344,44 @@ def print_decision_table(rows: list[dict[str, Any]]) -> dict[str, Any]:
     print("  FN (false negative) = unsafe item wrongly cleared — the dangerous error.")
     print("=" * 100)
 
-    return build_report(rows)
+    return build_report(rows, strategies)
+
+
+# --- opt-in +NLI strategy (uses the company LLM; needs config + network) ------
+
+
+def build_grounding_strategies(
+    *, with_nli: bool, config_path: str | None
+) -> dict[str, Callable[[], GroundingStrategy]]:
+    """The grounding strategies to score. Always the substring baselines; with
+    ``with_nli`` also the LLM entailment judge (+NLI), constructed from config.
+
+    The +NLI judge is built ONCE and reused across samples (one LlmClient). It
+    makes a real network call per grounding claim, so it is opt-in only — the
+    default harness run stays zero-dependency and offline."""
+    strategies = dict(GROUNDING_STRATEGIES)
+    if not with_nli:
+        return strategies
+
+    from lcp.adapters.llm.client import LlmClient
+    from lcp.adapters.llm.nli_grounding import LlmGroundingStrategy
+    from lcp.core.config import load_config
+
+    cfg = load_config(config_path)
+    if not cfg.llm.base_url:
+        raise SystemExit(
+            "error: --with-nli needs an LLM endpoint; set llm.base_url in the "
+            "config (and the api_key in the OS keyring / LCP_LLM_API_KEY)."
+        )
+    client = LlmClient(
+        cfg,
+        ca_bundle=cfg.llm.ca_bundle,
+        allow_http_hosts=cfg.llm.allow_http_hosts,
+    )
+    strategy = LlmGroundingStrategy(client=client)
+    # Reuse the SAME strategy object (one client) across the lambda's calls.
+    strategies[f"nli_llm[{cfg.llm.model or 'llm'}]"] = lambda: strategy
+    return strategies
 
 
 # --- entrypoint --------------------------------------------------------------
@@ -351,6 +400,17 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="print the machine-readable report as JSON instead of the table",
     )
+    parser.add_argument(
+        "--with-nli",
+        action="store_true",
+        help="also score the opt-in +NLI LLM entailment judge (needs an LLM "
+        "endpoint configured; makes one network call per grounding claim)",
+    )
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="config path for --with-nli (defaults to ./config.yaml if present)",
+    )
     args = parser.parse_args(argv)
 
     if not args.labeled.exists():
@@ -362,10 +422,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: labeled set is empty: {args.labeled}", file=sys.stderr)
         return 2
 
+    config_path = args.config
+    if args.with_nli and config_path is None:
+        default_cfg = _REPO_ROOT / "config.yaml"
+        config_path = str(default_cfg) if default_cfg.exists() else None
+    strategies = build_grounding_strategies(
+        with_nli=args.with_nli, config_path=config_path
+    )
+
     if args.json:
-        print(json.dumps(build_report(rows), ensure_ascii=False, indent=2))
+        print(json.dumps(build_report(rows, strategies), ensure_ascii=False, indent=2))
     else:
-        print_decision_table(rows)
+        print_decision_table(rows, strategies)
     return 0
 
 
