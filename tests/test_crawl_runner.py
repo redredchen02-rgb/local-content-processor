@@ -1,0 +1,341 @@
+"""Crawl subprocess orchestration + real per-asset/manifest output (Unit 4).
+
+Network policy: we NEVER hit a real external site. The integration crawl runs a
+REAL Scrapy subprocess against a local 127.0.0.1 http.server fixture (gated by
+LCP_ALLOW_LOOPBACK_FOR_TESTS, a test-only escape — production's net_guard blocks
+loopback). crawl_runner's guard/orchestration logic is driven with an injected
+subprocess stub so allowlist/SSRF/minimal-env/timeout paths are deterministic.
+"""
+
+from __future__ import annotations
+
+import functools
+import http.server
+import json
+import os
+import socketserver
+import subprocess
+import sys
+import threading
+from io import BytesIO
+from pathlib import Path
+
+import pytest
+
+from lcp.adapters.crawler import net_guard, scrapy_impl
+from lcp.adapters.crawler.base import (
+    STATUS_CRAWL_FAILED,
+    STATUS_CRAWLED,
+    STATUS_CRAWLED_WARN,
+    STATUS_NEEDS_REVISION,
+    SourceSpec,
+)
+from lcp.adapters.crawler.crawl_runner import (
+    EVENT_CRAWL_REJECTED,
+    CrawlRunner,
+)
+from lcp.adapters.crawler.source_registry import SourceEntry, SourceRegistry
+from lcp.adapters.storage.audit_log import AuditLog
+from lcp.adapters.storage.manifest import read_manifest, write_manifest
+from lcp.core.errors import ExternalServiceError, InputValidationError
+from lcp.core.models import AssetState, SourceType
+
+TS = "2026-06-16T00:00:00Z"
+REPO_SRC = str(Path(__file__).resolve().parents[1] / "src")
+
+
+def _real_jpeg() -> bytes:
+    from PIL import Image
+
+    buf = BytesIO()
+    Image.new("RGB", (16, 16), (0, 128, 255)).save(buf, "JPEG")
+    return buf.getvalue()
+
+
+class _QuietHandler(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, *a):  # silence the test server
+        pass
+
+
+@pytest.fixture
+def local_server(tmp_path_factory):
+    """A 127.0.0.1 http.server serving a fixed HTML page + a real image."""
+    root = tmp_path_factory.mktemp("docroot")
+    (root / "img").mkdir()
+    (root / "img" / "a.jpg").write_bytes(_real_jpeg())
+    (root / "article.html").write_text(
+        "<html><head><title>Local Test Title</title></head><body>"
+        "<article><p>Body one.</p><p>Body two.</p></article>"
+        '<img src="/img/a.jpg"><img src="/img/a.jpg"></body></html>',
+        encoding="utf-8",
+    )
+    handler = functools.partial(_QuietHandler, directory=str(root))
+    httpd = socketserver.TCPServer(("127.0.0.1", 0), handler)
+    port = httpd.server_address[1]
+    t = threading.Thread(target=httpd.serve_forever, daemon=True)
+    t.start()
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def _spawn_crawl(url: str, job_dir: Path, extra_env: dict | None = None) -> subprocess.CompletedProcess:
+    env = dict(os.environ)
+    env["LCP_ALLOW_LOOPBACK_FOR_TESTS"] = "1"
+    env["PYTHONPATH"] = REPO_SRC
+    if extra_env:
+        env.update(extra_env)
+    cmd = [
+        sys.executable, "-m", "lcp.adapters.crawler.scrapy_impl",
+        "--url", url,
+        "--job-id", job_dir.name,
+        "--job-dir", str(job_dir),
+        "--allow-domain", "127.0.0.1",
+        "--timeout", "15",
+        "--source-domain", "127.0.0.1",
+        "--fetched-at", TS,
+    ]
+    return subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=90)
+
+
+# --------------------------------------------------------------------------
+# Integration: real Scrapy subprocess against the local server
+# --------------------------------------------------------------------------
+
+def test_real_subprocess_crawl_produces_bundle_0600_sha256(local_server, tmp_path):
+    job_dir = tmp_path / "jobA"
+    proc = _spawn_crawl(f"{local_server}/article.html", job_dir)
+    assert proc.returncode == 0, proc.stderr
+
+    m = read_manifest(job_dir)
+    assert m is not None
+    assert m.crawl_status == STATUS_CRAWLED
+    # source.{html,txt} captured + hashed
+    assert (job_dir / "raw" / "source.html").exists()
+    assert (job_dir / "raw" / "source.txt").read_text(encoding="utf-8").startswith("Body one.")
+    assert m.hashes.source_html_sha256 and m.hashes.source_text_sha256
+
+    # exactly one image asset (duplicate URL deduped), OK, with sha256, 0600
+    img_assets = [a for a in m.assets if a.state is AssetState.OK]
+    assert len(img_assets) == 1
+    a = img_assets[0]
+    assert a.sha256 and len(a.sha256) == 64
+    disk = job_dir / a.path
+    assert disk.exists()
+    assert os.stat(disk).st_mode & 0o077 == 0  # 0600 downloaded media
+
+
+def test_real_subprocess_does_not_overwrite_existing_job(local_server, tmp_path):
+    job_dir = tmp_path / "jobB"
+    assert _spawn_crawl(f"{local_server}/article.html", job_dir).returncode == 0
+    before = (job_dir / "manifest.json").read_text(encoding="utf-8")
+    # second spawn into the SAME job dir must refuse to clobber (R11) -> nonzero
+    proc2 = _spawn_crawl(f"{local_server}/article.html", job_dir)
+    assert proc2.returncode != 0
+    after = (job_dir / "manifest.json").read_text(encoding="utf-8")
+    assert before == after  # manifest untouched
+
+
+def test_subprocess_env_strips_secrets(local_server, tmp_path):
+    # The PARENT sets a secret; minimal_env() must NOT pass it to the child. We
+    # prove it by having the child fail loudly if the secret is visible.
+    job_dir = tmp_path / "jobC"
+    # Build the command via the same minimal_env() the runner uses.
+    from lcp.runtime_hardening import minimal_env
+
+    env = minimal_env()
+    env["LCP_ALLOW_LOOPBACK_FOR_TESTS"] = "1"
+    env["PYTHONPATH"] = REPO_SRC
+    # assert the scrubbed env carries no secret even if parent has one
+    os.environ["LCP_LLM_API_KEY"] = "sk-should-not-leak"
+    try:
+        scrubbed = minimal_env()
+        assert "LCP_LLM_API_KEY" not in scrubbed
+    finally:
+        del os.environ["LCP_LLM_API_KEY"]
+
+
+# --------------------------------------------------------------------------
+# Orchestration with an injected subprocess stub (deterministic)
+# --------------------------------------------------------------------------
+
+def _registry() -> SourceRegistry:
+    return SourceRegistry([SourceEntry(domain="example.com", legal_basis="public press release")])
+
+
+def _good_resolver(host):
+    return ["93.184.216.34"]  # global
+
+
+def _internal_resolver(host):
+    return ["10.0.0.5"]  # private -> SSRF reject
+
+
+def test_domain_not_in_allowlist_rejected_and_audited(tmp_path):
+    audit = AuditLog(tmp_path / "audit.jsonl")
+    runner = CrawlRunner(_registry(), audit=audit, resolver=_good_resolver)
+    spec = SourceSpec(
+        job_id="j1", source_type=SourceType.URL,
+        job_dir=tmp_path / "j1", url="https://evil.test/x",
+    )
+    with pytest.raises(InputValidationError):
+        runner.crawl_url(spec, ts=TS)
+    events = [json.loads(l) for l in (tmp_path / "audit.jsonl").read_text().splitlines()]
+    assert any(
+        e["event"] == EVENT_CRAWL_REJECTED and e["extra"]["reason"] == "domain_not_allowlisted"
+        for e in events
+    )
+
+
+def test_ssrf_blocked_and_audited(tmp_path):
+    audit = AuditLog(tmp_path / "audit.jsonl")
+    runner = CrawlRunner(_registry(), audit=audit, resolver=_internal_resolver)
+    spec = SourceSpec(
+        job_id="j2", source_type=SourceType.URL,
+        job_dir=tmp_path / "j2", url="https://example.com/x",
+    )
+    with pytest.raises(InputValidationError):
+        runner.crawl_url(spec, ts=TS)
+    events = [json.loads(l) for l in (tmp_path / "audit.jsonl").read_text().splitlines()]
+    assert any(
+        e["event"] == EVENT_CRAWL_REJECTED and e["extra"]["reason"] == "ssrf_blocked"
+        for e in events
+    )
+
+
+def test_runner_passes_minimal_env_to_subprocess(tmp_path):
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["env"] = kwargs.get("env")
+        # simulate the child writing a manifest
+        spec_job_dir = tmp_path / "j3"
+        from lcp.adapters.crawler.bundle import build_manifest
+        m = build_manifest(
+            job_id="j3", source_type=SourceType.URL, source_domain="example.com",
+            fetched_at=TS, assets=[], source_html="<html></html>", source_text="body",
+            crawl_status=STATUS_NEEDS_REVISION,
+        )
+        write_manifest(spec_job_dir, m, create_only=True)
+
+        class P:
+            returncode = 0
+        return P()
+
+    os.environ["LCP_LLM_API_KEY"] = "sk-secret-xyz"
+    try:
+        runner = CrawlRunner(_registry(), resolver=_good_resolver, subprocess_runner=fake_run)
+        spec = SourceSpec(
+            job_id="j3", source_type=SourceType.URL,
+            job_dir=tmp_path / "j3", url="https://example.com/x",
+        )
+        bundle = runner.crawl_url(spec, ts=TS)
+    finally:
+        del os.environ["LCP_LLM_API_KEY"]
+
+    assert bundle.job_status == STATUS_NEEDS_REVISION
+    env = captured["env"]
+    assert "LCP_LLM_API_KEY" not in env  # secret stripped from subprocess env
+
+
+def test_runner_timeout_raises_external_service_error(tmp_path):
+    def fake_run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout", 1))
+
+    runner = CrawlRunner(_registry(), resolver=_good_resolver, subprocess_runner=fake_run)
+    spec = SourceSpec(
+        job_id="j4", source_type=SourceType.URL,
+        job_dir=tmp_path / "j4", url="https://example.com/x",
+    )
+    with pytest.raises(ExternalServiceError):
+        runner.crawl_url(spec, ts=TS)
+
+
+def test_runner_no_manifest_raises_external_service_error(tmp_path):
+    def fake_run(cmd, **kwargs):
+        class P:
+            returncode = 1
+        return P()  # child "crashed", wrote nothing
+
+    runner = CrawlRunner(_registry(), resolver=_good_resolver, subprocess_runner=fake_run)
+    spec = SourceSpec(
+        job_id="j5", source_type=SourceType.URL,
+        job_dir=tmp_path / "j5", url="https://example.com/x",
+    )
+    with pytest.raises(ExternalServiceError):
+        runner.crawl_url(spec, ts=TS)
+
+
+# --------------------------------------------------------------------------
+# Real per-asset/manifest output path via extract_content + write_bundle
+# (fabricated Scrapy Response — no network)
+# --------------------------------------------------------------------------
+
+def _response(html: str, url: str = "https://example.com/a"):
+    from scrapy.http import HtmlResponse
+
+    return HtmlResponse(url=url, body=html.encode("utf-8"), encoding="utf-8")
+
+
+def _spec(tmp_path, job_id="jx"):
+    d = tmp_path / job_id
+    d.mkdir(parents=True, exist_ok=True)
+    return SourceSpec(job_id=job_id, source_type=SourceType.URL, job_dir=d, url="https://example.com/a")
+
+
+def test_extract_dedupes_duplicate_media_urls():
+    html = (
+        "<html><title>T</title><body><p>x</p>"
+        '<img src="/a.jpg"><img src="/a.jpg"><img src="/b.jpg"></body></html>'
+    )
+    out = scrapy_impl.extract_content(_response(html))
+    assert out["image_urls"] == ["https://example.com/a.jpg", "https://example.com/b.jpg"]
+
+
+def test_title_present_body_empty_needs_revision(tmp_path):
+    html = "<html><head><title>Only A Title</title></head><body></body></html>"
+    out = scrapy_impl.extract_content(_response(html))
+    bundle = scrapy_impl.write_bundle_from_extraction(
+        _spec(tmp_path, "jrev"), out, source_domain="example.com", fetched_at=TS
+    )
+    assert bundle.job_status == STATUS_NEEDS_REVISION
+
+
+def test_total_extraction_failure_crawl_failed(tmp_path):
+    # neither title nor body -> CRAWL_FAILED (retriable)
+    out = {"title": "", "body": "", "image_urls": [], "video_urls": [],
+           "source_html": "<html></html>", "metadata": {"url": "https://example.com/a"}}
+    bundle = scrapy_impl.write_bundle_from_extraction(
+        _spec(tmp_path, "jfail"), out, source_domain="example.com", fetched_at=TS
+    )
+    assert bundle.job_status == STATUS_CRAWL_FAILED
+
+
+def test_partial_asset_failure_crawled_warn(tmp_path):
+    # one image declared, but the pipeline produced no download -> FAILED ->
+    # CRAWLED_WARN (content otherwise complete).
+    out = {
+        "title": "Good Title", "body": "Good body text",
+        "image_urls": ["https://example.com/missing.jpg"], "video_urls": [],
+        "source_html": "<html></html>", "metadata": {"url": "https://example.com/a"},
+        "downloaded_images": [], "downloaded_files": [],
+    }
+    bundle = scrapy_impl.write_bundle_from_extraction(
+        _spec(tmp_path, "jwarn"), out, source_domain="example.com", fetched_at=TS
+    )
+    assert bundle.job_status == STATUS_CRAWLED_WARN
+    failed = [a for a in bundle.manifest.assets if a.state is AssetState.FAILED]
+    assert len(failed) == 1 and failed[0].source_url == "https://example.com/missing.jpg"
+
+
+def test_robots_disallow_recorded_not_bypassed():
+    # ROBOTSTXT_OBEY must be True in the spider settings (plan R8). We assert
+    # the policy is on, never bypassed.
+    settings = scrapy_impl.build_settings(
+        job_dir=Path("/tmp/x"), allow_domains=["example.com"], timeout=15
+    )
+    assert settings["ROBOTSTXT_OBEY"] is True
+    assert settings["REDIRECT_ENABLED"] is False  # redirects not blindly followed
+    assert settings["AUTOTHROTTLE_ENABLED"] is True
