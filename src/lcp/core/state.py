@@ -62,7 +62,17 @@ TERMINAL_STATES: frozenset[JobState] = frozenset(
 # has an exit edge; retry and supersede edges are included. The ABSENCE of
 # REVIEW_PENDING->PROCESSING is deliberate (freeze via edge-absence).
 _TRANSITIONS: dict[JobState, frozenset[JobState]] = {
-    JobState.NEW: frozenset({JobState.CRAWLED, JobState.CRAWL_FAILED}),
+    # A fresh crawl/ingest can land directly in any initial outcome (R9):
+    # clean -> CRAWLED, partial assets -> CRAWLED_WARN, missing title/body ->
+    # NEEDS_REVISION, total failure -> CRAWL_FAILED.
+    JobState.NEW: frozenset(
+        {
+            JobState.CRAWLED,
+            JobState.CRAWLED_WARN,
+            JobState.NEEDS_REVISION,
+            JobState.CRAWL_FAILED,
+        }
+    ),
     JobState.CRAWL_FAILED: frozenset({JobState.NEW}),  # retry
     JobState.CRAWLED: frozenset({JobState.CRAWLED_WARN, JobState.PROCESSING}),
     JobState.CRAWLED_WARN: frozenset({JobState.PROCESSING}),  # retry/process
