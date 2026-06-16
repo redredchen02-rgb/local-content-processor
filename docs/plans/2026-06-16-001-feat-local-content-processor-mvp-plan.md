@@ -200,7 +200,7 @@ graph TB
 
 ### Phase 0 — De-risking spike
 
-- [ ] **Unit 1: 合規偵測 / grounding 準確度 spike**
+- [~] **Unit 1: 合規偵測 / grounding 準確度 spike** — harness 已建並可跑（`spikes/detection_accuracy/`：評測真實確定性偵測器、NLI seam 就緒、合成樣本驗證 mechanics）；**準確度「決策」（substring-only vs +NLI）仍待真實語料 + 模型**。
 
 **Goal:** 量測誹謗/隱私偵測與 grounding 驗證在本地可達的誤判/漏判率，定 R4/R16/R23 偵測策略強度（純規則 vs +NLI/MiniCheck）+ golden set + 閾值。
 
