@@ -1,0 +1,50 @@
+# Copy to config.yaml and edit. api_key is NOT stored here — set it in the OS
+# keyring (service "local-content-processor", user "llm") or LCP_LLM_API_KEY env.
+
+storage:
+  base_dir: "./data"
+
+crawler:
+  allow_domains:
+    - "example.com"        # only public, legally-citable sources (with basis below)
+  respect_robots_txt: true
+  rate_limit_seconds: 2
+  timeout_seconds: 30
+  max_assets_per_job: 100
+
+media:
+  image_width: 800
+  image_quality: 90
+  cover_width: 1300
+  cover_height: 640
+  video_codec: "h264"
+  video_fps: 30
+  min_video_bitrate_mbps: 1.5
+  max_video_size_mb: 500
+
+content:
+  title_min_chars: 25
+  title_max_chars: 35
+  tag_min_count: 3
+  tag_max_count: 5
+  uncertainty_terms: ["網傳", "疑似", "被曝", "據傳"]
+
+llm:
+  base_url: ""             # company OpenAI-compatible endpoint, must include /v1
+  keyring_username: "llm"
+  model: ""
+  timeout_seconds: 60
+  max_retries: 3
+  allowed_hosts: []        # base_url host must be allowlisted (R40)
+
+publisher:
+  reviewers: []            # whitelist of reviewer names allowed to approve/reject
+  publish_enabled_by_default: false
+  require_human_approval: true
+
+categories:
+  今日吃瓜: ["普通爆料", "日常瓜類"]
+  網紅黑料: ["網紅", "主播", "博主"]
+  熱門大瓜: ["高熱度", "高討論度"]
+  海外吃瓜: ["海外人物", "國外平台"]
+  # 學生校園 deliberately disabled by default (plan R3); enable per-case only.
