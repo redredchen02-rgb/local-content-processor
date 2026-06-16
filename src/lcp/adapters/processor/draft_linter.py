@@ -33,7 +33,7 @@ from ...core.rules import lint_rules
 from ...core.rules.grounding import GroundingResult, GroundingStrategy
 from ...core.rules.lint_rules import LintConfig, LintResult, LintStatus
 from ...core.state import JobState, ReviewReason
-from ..llm.assembler import sanitize_source
+from ...core.text_sanitize import sanitize_source
 from ..storage.audit_log import AuditLog
 from ..storage.job_store import JobStore
 from ._persist import persist_gate_state

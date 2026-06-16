@@ -36,8 +36,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Protocol, runtime_checkable
 
-from ...adapters.llm.assembler import sanitize_source  # pure, no I/O — allowed
 from ..draft import Draft
+from ..text_sanitize import sanitize_source  # core-local: no upward import
 
 # Token overlap >= this fraction of the claim's tokens counts the claim as
 # grounded in the baseline strategy (calibration pending — Unit 1 spike).

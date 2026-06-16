@@ -176,7 +176,7 @@ def approve(
     # Belt-and-suspenders: if the shell did not pass the draft, load the
     # persisted one ourselves so the body binding is enforced unconditionally.
     if draft is None:
-        from ...pipeline import load_draft
+        from ..storage.draft_store import load_draft
 
         draft = load_draft(store, job_id)
 
@@ -344,7 +344,7 @@ def resolve(
     mode: str
     if relint and hold is ReviewReason.GROUNDING:
         # Re-lint path: the human cleared grounding; lint must re-run clean.
-        from ...pipeline import _read_source_text, load_draft
+        from ..storage.draft_store import _read_source_text, load_draft
         from ..processor.draft_linter import (
             build_lint_config,
             relint_after_grounding_cleared,
