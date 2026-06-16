@@ -475,7 +475,7 @@ graph TB
 
 ### Phase 4 — Stage 4 Review & Sign-off
 
-- [ ] **Unit 8: Review packet + 簽核 + 上架責任閉環 + queue/list**
+- [x] **Unit 8: Review packet + 簽核 + 上架責任閉環 + queue/list**
 
 **Goal:** 人面向審核包（**淨化後**）、approve/reject（reviewer attribution）、published_url 回填責任閉環、batch↔人工閘門銜接（待辦清單 + summary）。
 
@@ -511,7 +511,7 @@ graph TB
 
 ### Phase 5 — Interface
 
-- [ ] **Unit 9: 最小 GUI（pywebview serverless）+ 輸出轉義/CSP**
+- [x] **Unit 9: 最小 GUI（pywebview serverless）+ 輸出轉義/CSP**
 
 **Goal:** 不開埠的桌面視窗，完成建/跑/看/approve/reject/複查裁決/重跑/resume/回填，與 CLI 共用 core，顯示狀態計數/待辦；**所有渲染輸出端轉義 + CSP**。
 
