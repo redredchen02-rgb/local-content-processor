@@ -173,6 +173,15 @@ def approve(
     title_sha = freeze.get("title_sha256")
     cover_sha = freeze.get("cover_sha256")
 
+    # Fail closed on a malformed freeze: an approval must bind to a real
+    # body+title hash, never a null one. (Also narrows Optional -> str for the
+    # SignoffRecord construction below.)
+    if not isinstance(body_sha, str) or not isinstance(title_sha, str):
+        raise InputValidationError(
+            f"freeze record for {job_id} is missing the bound body/title hash; "
+            "rebuild the review packet before approving"
+        )
+
     # Belt-and-suspenders: if the shell did not pass the draft, load the
     # persisted one ourselves so the body binding is enforced unconditionally.
     if draft is None:
@@ -294,8 +303,10 @@ def reject(
         decision="rejected",
         reviewer_stated=reviewer,
         observed_os_user=observed,
-        body_sha256=freeze.get("body_sha256"),
-        title_sha256=freeze.get("title_sha256"),
+        # A packet-less rejection (e.g. NEEDS_HUMAN_REVIEW) has no frozen hashes;
+        # record the absence as "" (the codebase's no-hash convention).
+        body_sha256=freeze.get("body_sha256") or "",
+        title_sha256=freeze.get("title_sha256") or "",
         cover_sha256=freeze.get("cover_sha256"),
         new_state=JobState.REJECTED,
     )

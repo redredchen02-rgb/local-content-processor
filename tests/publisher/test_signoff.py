@@ -181,6 +181,27 @@ def test_body_edit_after_freeze_blocks_approval(config, store, audit):
     assert store.get_job("jh").state is JobState.REVIEW_PENDING
 
 
+def test_approve_refuses_freeze_missing_bound_hash(config, store, audit):
+    """Fail closed: a malformed freeze (missing the bound body/title hash) must
+    not yield an approval bound to a null hash. Regression for the mypy-surfaced
+    Any|None -> str finding in signoff.approve."""
+    import json
+
+    from lcp.adapters.publisher.review_packet import REVIEW_MANIFEST_NAME
+
+    _review_pending_job(store, audit, "jmf")
+    mpath = store.job_dir("jmf") / "review" / REVIEW_MANIFEST_NAME
+    manifest = json.loads(mpath.read_text(encoding="utf-8"))
+    manifest["freeze"]["body_sha256"] = None  # corrupt/incomplete freeze
+    manifest["freeze"].pop("title_sha256", None)
+    mpath.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+
+    with pytest.raises(InputValidationError):
+        signoff.approve("jmf", REVIEWER, config=config, store=store, audit=audit, ts=TS)
+    # Not approved — state unchanged.
+    assert store.get_job("jmf").state is JobState.REVIEW_PENDING
+
+
 def test_unchanged_body_passes_hash_binding(config, store, audit):
     original = _draft()
     _review_pending_job(store, audit, "jok", draft=original)
