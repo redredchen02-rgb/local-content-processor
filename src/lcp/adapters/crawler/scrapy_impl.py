@@ -19,11 +19,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 from pathlib import Path
 from typing import Any
 
+from ...core.errors import InputValidationError
 from ...core.models import (
     AssetKind,
     AssetRef,
@@ -34,6 +36,8 @@ from ..storage.manifest import write_manifest
 from . import net_guard
 from .base import RawJobBundle, SourceSpec
 from .bundle import build_manifest, derive_status, sha256_bytes, sha256_text
+
+logger = logging.getLogger(__name__)
 
 # Image/video extensions used when classifying scraped media URLs.
 _IMAGE_EXT = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
@@ -67,7 +71,15 @@ def _media_url_is_safe(url: str) -> bool:
     try:
         net_guard.validate_url(url)
         return True
-    except Exception:
+    except InputValidationError:
+        # Expected: an SSRF-unsafe / malformed target -> drop the URL quietly.
+        return False
+    except Exception as e:  # noqa: BLE001 - stay fail-closed but surface the bug
+        # An UNEXPECTED guard error must not be silently swallowed; log it (no
+        # attacker content) and still fail closed (drop the URL, never download).
+        logger.warning(
+            "unexpected media-URL guard error (%s); dropping URL", type(e).__name__
+        )
         return False
 
 

@@ -114,6 +114,14 @@ def _validate_base_url(
             f"{sorted(allowed_hosts)!r} (R40 host allowlist)"
         )
 
+    # base_url must include the /v1 prefix (openai SDK v2 expectation). Checked
+    # here (the single base_url validator) rather than separately in the caller.
+    if not base_url.rstrip("/").endswith("/v1"):
+        raise InputValidationError(
+            "LLM base_url must end with '/v1' "
+            f"(got {base_url!r}); the openai SDK appends paths to it"
+        )
+
     if scheme == "http":
         # Plain http only for an explicitly allowlisted loopback/private host.
         if host not in allow_http_hosts:
@@ -197,14 +205,8 @@ class LlmClient:
             )
 
         # Transport safety BEFORE we touch the key — fail fast, no secret needed.
+        # (_validate_base_url also enforces the '/v1' suffix.)
         _validate_base_url(base_url, llm.allowed_hosts, self._allow_http_hosts)
-
-        # base_url must include the /v1 prefix (openai SDK v2 expectation).
-        if not base_url.rstrip("/").endswith("/v1"):
-            raise InputValidationError(
-                "LLM base_url must end with '/v1' "
-                f"(got {base_url!r}); the openai SDK appends paths to it"
-            )
 
         # Resolve the secret last (raises DependencyError if absent). Never log.
         api_key = self._config.llm_api_key()

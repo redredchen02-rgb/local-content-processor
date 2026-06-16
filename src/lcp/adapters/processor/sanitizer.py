@@ -25,18 +25,10 @@ concern, but it has the same no-side-effects discipline as the rule layer.
 
 from __future__ import annotations
 
+import html
 from dataclasses import dataclass
 
 from ...core.draft import Draft
-
-# Order matters: ``&`` first so we don't double-escape the entities we add.
-_HTML_ESCAPES: tuple[tuple[str, str], ...] = (
-    ("&", "&amp;"),
-    ("<", "&lt;"),
-    (">", "&gt;"),
-    ('"', "&quot;"),
-    ("'", "&#x27;"),
-)
 
 
 def escape_html(text: str | None) -> str:
@@ -48,13 +40,14 @@ def escape_html(text: str | None) -> str:
     is applied regardless of what the input-side sanitizer did, because the
     threat model treats every draft/scraped string as hostile.
 
+    Delegates to :func:`html.escape` (quote=True) — the stdlib reference
+    implementation — which escapes ``&`` first then ``< > " '`` to ``&amp;
+    &lt; &gt; &quot; &#x27;``, removing the hand-rolled ordering footgun.
+
     Returns "" for None. Pure: no I/O, no URL parsing."""
     if text is None:
         return ""
-    out = str(text)
-    for needle, repl in _HTML_ESCAPES:
-        out = out.replace(needle, repl)
-    return out
+    return html.escape(str(text), quote=True)
 
 
 def inert_link(url: str | None) -> str:

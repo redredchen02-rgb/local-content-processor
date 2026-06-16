@@ -85,10 +85,9 @@ def write_manifest(
         )
     text = _serialize(manifest)
     if deterministic_skip and path.exists():
-        existing = path.read_text(encoding="utf-8")
-        if hashlib.sha256(existing.encode("utf-8")).hexdigest() == hashlib.sha256(
-            text.encode("utf-8")
-        ).hexdigest():
+        # Both sides are the same deterministic serialization; compare the
+        # strings directly (hashing both just to compare was redundant).
+        if path.read_text(encoding="utf-8") == text:
             return False  # unchanged deterministic content -> idempotent skip
     _atomic_write(path, text)
     return True

@@ -218,7 +218,13 @@ class Api:
             self._status[job_id] = {"job_id": escape_html(job_id), "status": "running"}
 
         def _worker():
-            result = fn()
+            try:
+                result = fn()
+            except Exception:  # noqa: BLE001 - background-thread boundary
+                # A non-LcpError must NOT kill the worker and strand status at
+                # "running" forever. Return the same bridge-safe error shape fn()
+                # itself would (no raw exception text crosses the bridge).
+                result = {"error": "internal error", "exit_code": EXIT_INTERNAL}
             done = "error" if "error" in result else "done"
             with self._status_lock:
                 self._status[job_id] = {

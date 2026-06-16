@@ -25,6 +25,7 @@ but the process result is flagged ``dry_run=True`` so the shell can label it."""
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -49,7 +50,7 @@ from .core.draft import Draft, DraftStatus
 from .core.errors import ExternalServiceError, InputValidationError
 from .core.models import SourceType
 from .core.rules.risk_rules import RiskInput
-from .core.state import JobState
+from .core.state import JobState, TRANSIENT_STATES
 
 # Targets for run_until.
 TARGET_DRAFT = "draft"
@@ -114,18 +115,30 @@ def save_draft(store: JobStore, job_id: str, draft: Draft) -> Path:
 
     This is what the review-packet command reads back to FREEZE — so the freeze
     binds the exact draft Stage 2 produced, not a re-assembled (and therefore
-    non-deterministic) one. Plaintext 0600, best-effort deletion (R42)."""
-    import os as _os
+    non-deterministic) one. Plaintext 0600, best-effort deletion (R42).
 
+    Atomic: temp in the same dir + fsync + os.replace, with chmod 0600 on the
+    temp before the replace (so the committed draft is never world-readable and a
+    crash mid-write never leaves a torn draft.json)."""
     path = _draft_path(store, job_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.tmp.{_os.getpid()}")
-    tmp.write_text(draft.model_dump_json(indent=2), encoding="utf-8")
-    _os.replace(tmp, path)
+    tmp = path.with_name(f".{path.name}.tmp.{os.getpid()}")
     try:
-        _os.chmod(path, 0o600)
-    except OSError:
-        pass
+        with tmp.open("w", encoding="utf-8") as f:
+            f.write(draft.model_dump_json(indent=2))
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:
+            pass
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
     return path
 
 
@@ -575,7 +588,7 @@ def list_jobs(
         return store.list_by_state(st)
     out: list[JobRecord] = []
     for st in JobState:
-        if st in (JobState.PROCESSING,):
+        if st in TRANSIENT_STATES:
             continue
         out.extend(store.list_by_state(st))
     out.sort(key=lambda r: (r.created_at, r.job_id))
@@ -592,7 +605,7 @@ def batch_summary(store: JobStore) -> dict[str, int]:
     summary: dict[str, int] = {}
     total = 0
     for st in JobState:
-        if st in (JobState.PROCESSING,):
+        if st in TRANSIENT_STATES:
             continue
         n = len(store.list_by_state(st))
         if n:

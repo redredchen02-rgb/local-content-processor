@@ -81,15 +81,28 @@ def _sha256_file(path: Path) -> str:
 
 
 def _write_0600(path: Path, text: str) -> None:
+    """Atomic 0600 write: temp in the same dir + fsync + os.replace (rename is
+    atomic on POSIX, so a crash mid-write never leaves a half-written freeze
+    artifact). chmod the temp BEFORE the replace so the committed file is 0600
+    with no world-readable window."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        f.write(text)
-        f.flush()
-        os.fsync(f.fileno())
+    tmp = path.with_name(f".{path.name}.tmp.{os.getpid()}")
     try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
+        with tmp.open("w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:
+            pass
+        os.replace(tmp, path)  # atomic
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
 
 @dataclass(frozen=True)

@@ -260,6 +260,8 @@ def update_llm_config_file(
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
         os.chmod(tmp_name, 0o600)
         os.replace(tmp_name, p)
     except BaseException:
