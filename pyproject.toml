@@ -42,11 +42,16 @@ pythonpath = ["src"]
 [tool.mypy]
 python_version = "3.11"
 files = ["src/lcp"]
+# --strict's global-only flags live here (they cannot sit in a per-module
+# override); the per-module-settable rest of --strict is in the lcp.core.* block.
 warn_unused_configs = true
 warn_redundant_casts = true
+strict_bytes = true
 
-# Strict bundle, scoped to the pure core (equivalent to --strict; the two
-# global-only flags above are the rest of --strict's expansion).
+# Strict bundle, scoped to the pure core — the per-module-settable subset of
+# --strict (the global-only flags above + this list = --strict's expansion).
+# Enumerated rather than `strict = true` because mypy applies a per-override
+# `strict` GLOBALLY (it would force strict onto the adapters/shells too).
 [[tool.mypy.overrides]]
 module = "lcp.core.*"
 disallow_any_generics = true
