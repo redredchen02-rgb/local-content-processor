@@ -21,12 +21,18 @@ jobs:
 
       # Install the package editable with every functional extra the tests
       # exercise (crawl=scrapy, media=pillow, llm=openai, dedup=datasketch).
-      # The gui extra (pywebview) is omitted: it needs system GTK/Qt and no test
-      # imports webview (the GUI Api is tested headless).
+      # gui=pywebview is omitted (needs a GUI backend); gui.py's lazy `import
+      # webview` is handled by a mypy missing-import override so the type gate
+      # stays green here, and the launch() regression test importorskips webview.
       - name: Install package + test deps
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[crawl,media,llm,dedup,dev]"
+
+      # Static type gate: lcp.core.* strict, whole package non-strict (config in
+      # pyproject [tool.mypy]). Blocks the build on any type regression.
+      - name: Type-check (mypy)
+        run: mypy
 
       - name: Run tests
         run: pytest -q
