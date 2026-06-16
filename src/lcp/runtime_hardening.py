@@ -13,19 +13,43 @@ import re
 _SECRET_KEY_RE = re.compile(
     r"(api[_-]?key|authorization|secret|token|password|bearer)", re.IGNORECASE
 )
-# Inline secret-ish assignments, e.g. api_key=sk-123 / "token": "abc".
+# Inline secret-ish assignments. Handles three delimiter shapes after the key:
+#   - `key = v` / `key: v`            (=/: with optional surrounding ws)
+#   - `"key": "v"` / {"api_key":"v"}  (JSON form: optional quote+ws before the
+#                                       delimiter, optional opening quote on the value)
+#   - `key v`                         (space-separated, e.g. Authorization Bearer abc /
+#                                       "Incorrect API key provided: sk-...")
+# Group 1 = the key + delimiter + any opening quote (kept verbatim); group 2 =
+# the secret value (masked). The value swallows an optional Bearer/Basic prefix.
 _SECRET_VALUE_RE = re.compile(
     r"((?:api[_-]?key|authorization|secret|token|password|bearer)"
-    r"\s*[=:]\s*['\"]?)((?:Bearer\s+|Basic\s+)?[^\s'\",;]+)",
+    r"['\"]?\s*(?:[=:]\s*)?['\"]?)"
+    r"((?:Bearer\s+|Basic\s+)?[^\s'\",;}]+)",
     re.IGNORECASE,
+)
+
+# Standalone high-entropy token shapes that must be masked even without a key
+# label nearby (provider errors often echo just the token):
+#   - OpenAI-style keys: sk-..., sk-proj-..., sk-ant-... (>=16 tail chars)
+#   - JWT-ish: three base64url segments starting with the eyJ header
+_STANDALONE_TOKEN_RES = (
+    re.compile(r"sk-[A-Za-z0-9_-]{16,}"),
+    re.compile(r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),
 )
 
 _MASK = "***REDACTED***"
 
 
 def redact(text: str) -> str:
-    """Mask secret-looking assignments inside a free-form string."""
-    return _SECRET_VALUE_RE.sub(lambda m: m.group(1) + _MASK, text)
+    """Mask secret-looking values inside a free-form string.
+
+    Two passes: (1) key-labelled values (api_key=…, "token": "…", Authorization
+    Bearer …), (2) standalone high-entropy token shapes (sk-…, JWTs) that leak
+    without a key label (e.g. provider 'Incorrect API key provided: sk-…')."""
+    out = _SECRET_VALUE_RE.sub(lambda m: m.group(1) + _MASK, text)
+    for pat in _STANDALONE_TOKEN_RES:
+        out = pat.sub(_MASK, out)
+    return out
 
 
 class SecretRedactingFilter(logging.Filter):

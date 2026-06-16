@@ -53,11 +53,33 @@ def _classify_media_url(url: str) -> AssetKind | None:
     return None
 
 
+def _media_url_is_safe(url: str) -> bool:
+    """SECOND-ORDER SSRF guard: validate a scraped media URL through net_guard
+    BEFORE it is handed to ImagesPipeline/FilesPipeline for download.
+
+    The page itself was validated at the top level, but the img/video/<a> URLs it
+    embeds are untrusted attacker-controlled targets (e.g. 169.254.169.254 cloud
+    metadata, 127.0.0.1). Each must pass the same scheme + DNS-resolved is_global
+    check, or it is dropped (recorded as a FAILED asset). LCP_ALLOW_LOOPBACK_FOR_
+    TESTS keeps the loopback test fixture working, consistent with main()."""
+    if os.environ.get("LCP_ALLOW_LOOPBACK_FOR_TESTS"):
+        return True
+    try:
+        net_guard.validate_url(url)
+        return True
+    except Exception:
+        return False
+
+
 def extract_content(response) -> dict[str, Any]:
     """Pure-ish extraction from a Scrapy Response. Returns title, body text,
-    image_urls, video_urls, source_html, and resolved metadata. No network.
+    image_urls, video_urls, rejected_media_urls, source_html, and resolved
+    metadata.
 
-    De-dupes media URLs (plan edge: duplicate URLs skipped)."""
+    De-dupes media URLs (plan edge: duplicate URLs skipped) AND validates every
+    scraped media URL through net_guard (second-order SSRF): a URL pointing at an
+    internal/metadata IP is NOT added to the download lists; it is recorded in
+    `rejected_media_urls` so write_bundle records it as a FAILED asset."""
     title = (response.css("title::text").get() or "").strip()
     if not title:
         title = (response.css("h1::text").get() or "").strip()
@@ -69,30 +91,37 @@ def extract_content(response) -> dict[str, Any]:
     body = "\n".join(t.strip() for t in paras if t.strip()).strip()
 
     image_urls: list[str] = []
-    for src in response.css("img::attr(src)").getall():
-        full = response.urljoin(src)
-        if full not in image_urls:
-            image_urls.append(full)
-
     video_urls: list[str] = []
+    rejected_media_urls: list[str] = []
+
+    def _accept(full: str, kind: AssetKind) -> None:
+        target = image_urls if kind is AssetKind.IMAGE else video_urls
+        if full in target or full in rejected_media_urls:
+            return  # de-dupe
+        if not _media_url_is_safe(full):
+            rejected_media_urls.append(full)  # second-order SSRF -> drop
+            return
+        target.append(full)
+
+    for src in response.css("img::attr(src)").getall():
+        _accept(response.urljoin(src), AssetKind.IMAGE)
+
     for src in response.css("video::attr(src), video source::attr(src)").getall():
-        full = response.urljoin(src)
-        if full not in video_urls:
-            video_urls.append(full)
+        _accept(response.urljoin(src), AssetKind.VIDEO)
+
     # Also classify links pointing at media files.
     for href in response.css("a::attr(href)").getall():
         full = response.urljoin(href)
         kind = _classify_media_url(full)
-        if kind is AssetKind.IMAGE and full not in image_urls:
-            image_urls.append(full)
-        elif kind is AssetKind.VIDEO and full not in video_urls:
-            video_urls.append(full)
+        if kind is not None:
+            _accept(full, kind)
 
     return {
         "title": title,
         "body": body,
         "image_urls": image_urls,
         "video_urls": video_urls,
+        "rejected_media_urls": rejected_media_urls,
         "source_html": response.text,
         "metadata": {
             "url": response.url,
@@ -249,6 +278,22 @@ def write_bundle_from_extraction(
         job_dir=spec.job_dir,
         max_assets=spec.max_assets,
     )
+
+    # Record media URLs dropped by the SSRF guard as FAILED assets (never
+    # downloaded). They count as partial-asset failures -> CRAWLED_WARN upstream.
+    for url in extracted.get("rejected_media_urls", []):
+        if len(assets) >= spec.max_assets:
+            break
+        kind = _classify_media_url(url) or AssetKind.IMAGE
+        assets.append(
+            AssetRef(
+                kind=kind,
+                path="",
+                source_url=url,
+                state=AssetState.FAILED,
+                note="rejected by SSRF guard (internal/metadata target)",
+            )
+        )
 
     status = derive_status(title=title, body=body, assets=assets)
     manifest = build_manifest(

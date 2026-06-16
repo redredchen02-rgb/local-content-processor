@@ -1,16 +1,33 @@
 """SSRF + path-traversal guards (SECURITY CRITICAL — plan R40, OWASP SSRF).
 
-What actually works (plan 真有效 / 裝飾 table):
+ACTIVE defences (what is genuinely enforced today):
 - Validate the DNS-RESOLVED IP's `ipaddress.ip_address(ip).is_global`, NOT a
-  hostname string blacklist (a hostname blacklist is decoration).
-- PIN the validated literal IP for the connection while keeping the original
-  hostname for the Host header — this defends against DNS-rebinding/TOCTOU
-  (the attacker cannot flip the IP between validate-time and connect-time
-  because we connect to the pinned literal).
+  hostname string blacklist (a hostname blacklist is decoration). Applied at
+  validate time to the top-level URL (crawl_runner preflight + subprocess) AND
+  to every scraped media URL before download (scrapy_impl second-order guard).
 - scheme allowlist (http/https only).
-- a redirect re-validation hook so a 30x to an internal IP is rejected too.
 - decimal/octal/hex/IPv6-encoded internal IP literals are normalised through
   `ipaddress` and rejected by the same is_global check.
+- For the Scrapy crawl path specifically, also: `allowed_domains`
+  (OffsiteMiddleware drops off-allowlist requests) + `REDIRECT_ENABLED=False`
+  (a 30x is not blindly followed).
+
+HONEST RESIDUAL — pin-IP-at-connect is NOT wired for the Scrapy path
+-------------------------------------------------------------------
+`ValidatedTarget.pinned_ip` and :func:`revalidate_redirect` exist, but NOTHING
+in the Scrapy path consumes them: Scrapy opens its OWN connection and RE-RESOLVES
+DNS at connect time, so we cannot force it to connect to the literal IP we
+validated. That means the DNS-rebinding / TOCTOU defence the pinned IP would give
+is NOT currently active for Scrapy. An attacker who controls an allowlisted
+domain's DNS could resolve it to a global IP at validate time and flip it to an
+internal IP by connect time. This is a DOCUMENTED RESIDUAL RISK (recorded in
+docs/security/pii-inventory.md), not a defence we pretend to have. Wiring a
+pinned-IP custom Scrapy resolver into the subprocess is heavy and deferred.
+
+`pinned_ip` / `revalidate_redirect` are therefore AVAILABLE FOR A FUTURE
+pinned-connection transport (e.g. an httpx-based fetcher that connects to the
+literal IP with a host-header override), but are NOT currently wired into the
+live crawl path. Do not read their existence as an active rebinding defence.
 
 Path guard: `safe_join(base, user_path)` = resolve() + is_relative_to(base);
 rejects `..`, absolute escapes, and symlinks whose real target leaves base.
@@ -42,9 +59,12 @@ Resolver = Callable[[str], list[str]]
 class ValidatedTarget:
     """A network target that passed SSRF validation.
 
-    `pinned_ip` is the literal IP the caller MUST connect to (rebinding
-    defence); `host` is the original hostname preserved for the Host header;
-    `url` is the original URL string."""
+    `pinned_ip` is the literal IP a pinned-connection transport WOULD connect to
+    (the rebinding defence). NOTE: the live Scrapy path does NOT consume it
+    (Scrapy re-resolves DNS at connect time), so today `pinned_ip` is
+    informational / available for a future pinned-connection transport, NOT an
+    active rebinding defence (see module docstring + pii-inventory.md). `host` is
+    the original hostname preserved for the Host header; `url` is the original."""
 
     url: str
     scheme: str
@@ -211,9 +231,14 @@ def validate_url(
 def revalidate_redirect(
     location: str, *, resolver: Resolver | None = None
 ) -> ValidatedTarget:
-    """Re-validation hook for redirect targets (30x Location). A redirect to an
-    internal IP must be rejected just like the initial URL — the crawler must
-    NOT blindly follow redirects (plan R40 'close redirect following')."""
+    """Re-validation hook for redirect targets (30x Location).
+
+    AVAILABLE FOR A FUTURE pinned-connection transport — NOT currently wired into
+    the Scrapy path, which instead closes redirects entirely via
+    `REDIRECT_ENABLED=False` (so a 30x is never followed in the first place). If a
+    future fetcher follows redirects itself, it MUST call this so a redirect to an
+    internal IP is rejected just like the initial URL (plan R40 'close redirect
+    following'). Kept + tested so the future wiring is a drop-in, not a rewrite."""
     return _validate(location, resolver or default_resolver)
 
 

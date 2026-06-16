@@ -93,7 +93,8 @@ def test_approve_then_backfill_completes_loop(config, store, audit):
 
     new_state = signoff.backfill_published_url(
         "j1", "https://mysite.example/post/1",
-        store=store, audit=audit, ts=TS, attested=True, reviewer=REVIEWER,
+        config=config, store=store, audit=audit, ts=TS, attested=True,
+        reviewer=REVIEWER,
     )
     assert new_state is JobState.PUBLISHED_RECORDED
     assert store.get_job("j1").state is JobState.PUBLISHED_RECORDED
@@ -133,7 +134,8 @@ def test_backfill_without_attest_stays_approved(config, store, audit):
     with pytest.raises(InputValidationError):
         signoff.backfill_published_url(
             "jna", "https://site.example/x",
-            store=store, audit=audit, ts=TS, attested=False,
+            config=config, store=store, audit=audit, ts=TS, attested=False,
+            reviewer=REVIEWER,
         )
     assert store.get_job("jna").state is JobState.APPROVED
 
@@ -143,9 +145,23 @@ def test_backfill_requires_nonempty_url(config, store, audit):
     signoff.approve("ju", REVIEWER, config=config, store=store, audit=audit, ts=TS)
     with pytest.raises(InputValidationError):
         signoff.backfill_published_url(
-            "ju", "  ", store=store, audit=audit, ts=TS, attested=True,
+            "ju", "  ", config=config, store=store, audit=audit, ts=TS,
+            attested=True, reviewer=REVIEWER,
         )
     assert store.get_job("ju").state is JobState.APPROVED
+
+
+def test_backfill_non_whitelisted_reviewer_rejected(config, store, audit):
+    """P3 regression: backfill requires a whitelisted reviewer like approve."""
+    _review_pending_job(store, audit, "jbw")
+    signoff.approve("jbw", REVIEWER, config=config, store=store, audit=audit, ts=TS)
+    with pytest.raises(InputValidationError):
+        signoff.backfill_published_url(
+            "jbw", "https://site.example/x",
+            config=config, store=store, audit=audit, ts=TS, attested=True,
+            reviewer="mallory",
+        )
+    assert store.get_job("jbw").state is JobState.APPROVED
 
 
 # --- Hash binding: editing the BODY after freeze is detectable ----------------
@@ -230,10 +246,158 @@ def test_cannot_supersede_terminal_published(config, store, audit):
     _review_pending_job(store, audit, "pub")
     signoff.approve("pub", REVIEWER, config=config, store=store, audit=audit, ts=TS)
     signoff.backfill_published_url(
-        "pub", "https://x.example/1", store=store, audit=audit, ts=TS, attested=True,
+        "pub", "https://x.example/1", config=config, store=store, audit=audit,
+        ts=TS, attested=True, reviewer=REVIEWER,
     )
     with pytest.raises(InputValidationError):
         signoff.supersede("pub", store=store, audit=audit, ts=TS)
+
+
+# --- NEEDS_HUMAN_REVIEW is not a dead-end (resolve / reject) -----------------
+
+
+def _nhr_job(store, job_id, reason, *, draft=None, source_text=None):
+    """Drive a job to NEEDS_HUMAN_REVIEW with the given hold reason. Optionally
+    persist a draft + source.txt (for the grounding re-lint path)."""
+    from lcp.pipeline import save_draft
+
+    store.create_job(job_id, created_at=TS)
+    store.set_state(job_id, JobState.CRAWLED, updated_at=TS)
+    if source_text is not None:
+        raw = store.job_dir(job_id) / "raw"
+        raw.mkdir(parents=True, exist_ok=True)
+        (raw / "source.txt").write_text(source_text, encoding="utf-8")
+    if draft is not None:
+        save_draft(store, job_id, draft)
+    persist_gate_state(
+        store, job_id, JobState.NEEDS_HUMAN_REVIEW, updated_at=TS,
+        review_reason=reason,
+    )
+
+
+@pytest.mark.parametrize("reason", [ReviewReason.RISK, ReviewReason.DEDUP])
+def test_resolve_risk_dedup_hold_via_override(config, store, audit, reason):
+    """A risk/dedup hold clears to PROCESSED via an explicit, audited override."""
+    from lcp.adapters.publisher.signoff import EVENT_NHR_RESOLVED
+
+    _nhr_job(store, "jr", reason)
+    rec = signoff.resolve(
+        "jr", REVIEWER, config=config, store=store, audit=audit, ts=TS,
+        reason="manually reviewed, false positive",
+    )
+    assert rec.new_state is JobState.PROCESSED
+    assert store.get_job("jr").state is JobState.PROCESSED
+    evt = [l for l in audit._read_lines() if l["event"] == EVENT_NHR_RESOLVED][-1]
+    assert evt["extra"]["mode"] == "human_override"
+    assert evt["extra"]["resolved_from_reason"] == reason.value
+    assert evt["extra"]["override_note"]
+
+
+def test_resolve_override_requires_reason(config, store, audit):
+    _nhr_job(store, "jor", ReviewReason.RISK)
+    with pytest.raises(InputValidationError):
+        signoff.resolve(
+            "jor", REVIEWER, config=config, store=store, audit=audit, ts=TS,
+        )
+    assert store.get_job("jor").state is JobState.NEEDS_HUMAN_REVIEW
+
+
+def _lint_clean_draft(**overrides) -> Draft:
+    """A draft that PASSES the default lint (title 25-35 chars, all required
+    sections incl. image_sections, 3-5 objective tags)."""
+    from lcp.core.draft import MediaSection
+
+    base = dict(
+        title="台北華山文創園區週末美食市集熱鬧登場活動報導特別企劃專題",  # 28 chars (25-35)
+        intro="本週末在華山舉辦大型美食市集。",
+        quick_facts=["時間：週末", "地點：華山"],
+        event_body="華山文創園區本週末舉辦美食市集，現場人潮眾多。",
+        image_sections=[MediaSection(asset_ref="raw/images/a.jpg", caption="現場")],
+        faq=[FaqItem(question="要錢嗎？", answer="免費入場")],
+        summary="不容錯過的週末活動。",
+        tags=["美食", "市集", "華山"],
+        quotes=[SourceQuote(text="華山文創園區本週末舉辦美食市集。")],
+    )
+    base.update(overrides)
+    return Draft(**base)
+
+
+def test_resolve_grounding_hold_relint_clean_promotes(config, store, audit):
+    """A grounding hold clears via re-lint: a clean lint promotes to PROCESSED."""
+    source = "華山文創園區本週末舉辦美食市集。"
+    draft = _lint_clean_draft()
+    # sanity: this draft really passes the default lint
+    assert len(draft.title) >= 25 and len(draft.title) <= 35
+    _nhr_job(store, "jg", ReviewReason.GROUNDING, draft=draft, source_text=source)
+    rec = signoff.resolve(
+        "jg", REVIEWER, config=config, store=store, audit=audit, ts=TS,
+        relint=True,
+    )
+    assert rec.new_state is JobState.PROCESSED
+    assert store.get_job("jg").state is JobState.PROCESSED
+
+
+def test_resolve_grounding_relint_dirty_lint_refuses(config, store, audit):
+    """If the re-lint still fails, resolve refuses and the job stays held."""
+    # A too-short title fails lint -> not promoted.
+    source = "華山文創園區本週末舉辦美食市集。"
+    draft = _draft(title="短")  # below title_min_chars -> lint fails
+    _nhr_job(store, "jgd", ReviewReason.GROUNDING, draft=draft, source_text=source)
+    with pytest.raises(InputValidationError):
+        signoff.resolve(
+            "jgd", REVIEWER, config=config, store=store, audit=audit, ts=TS,
+            relint=True,
+        )
+    assert store.get_job("jgd").state is JobState.NEEDS_HUMAN_REVIEW
+
+
+@pytest.mark.parametrize(
+    "reason", [ReviewReason.RISK, ReviewReason.DEDUP, ReviewReason.GROUNDING]
+)
+def test_reject_nhr_without_freeze_reaches_rejected(config, store, audit, reason):
+    """A NEEDS_HUMAN_REVIEW job (no packet/freeze) can be rejected -> REJECTED.
+
+    Previously reject() called _freeze_hashes() which raises for jobs without a
+    packet, dead-ending NHR jobs."""
+    from lcp.adapters.publisher.signoff import EVENT_SIGNOFF_REJECT
+
+    _nhr_job(store, "jrej", reason)
+    rec = signoff.reject(
+        "jrej", REVIEWER, "not suitable",
+        config=config, store=store, audit=audit, ts=TS,
+    )
+    assert rec.new_state is JobState.REJECTED
+    assert store.get_job("jrej").state is JobState.REJECTED
+    evt = [l for l in audit._read_lines() if l["event"] == EVENT_SIGNOFF_REJECT][-1]
+    assert evt["extra"]["rejected_from_state"] == JobState.NEEDS_HUMAN_REVIEW.value
+
+
+def test_resolve_requires_nhr_state(config, store, audit):
+    _review_pending_job(store, audit, "jrp")
+    with pytest.raises(InputValidationError):
+        signoff.resolve(
+            "jrp", REVIEWER, config=config, store=store, audit=audit, ts=TS,
+            reason="x",
+        )
+
+
+def test_resolve_non_whitelisted_rejected(config, store, audit):
+    _nhr_job(store, "jnw", ReviewReason.RISK)
+    with pytest.raises(InputValidationError):
+        signoff.resolve(
+            "jnw", "mallory", config=config, store=store, audit=audit, ts=TS,
+            reason="x",
+        )
+    assert store.get_job("jnw").state is JobState.NEEDS_HUMAN_REVIEW
+
+
+def test_supersede_nhr_is_allowed(config, store, audit):
+    _nhr_job(store, "jsup", ReviewReason.DEDUP)
+    new_state = signoff.supersede(
+        "jsup", store=store, audit=audit, ts=TS, new_job_id="jsup2",
+    )
+    assert new_state is JobState.SUPERSEDED
+    assert store.get_job("jsup").state is JobState.SUPERSEDED
 
 
 # --- Audit integrity throughout ---------------------------------------------
@@ -243,7 +407,8 @@ def test_audit_chain_verifies_after_full_loop(config, store, audit):
     _review_pending_job(store, audit, "j1")
     signoff.approve("j1", REVIEWER, config=config, store=store, audit=audit, ts=TS)
     signoff.backfill_published_url(
-        "j1", "https://x.example/1", store=store, audit=audit, ts=TS, attested=True,
+        "j1", "https://x.example/1", config=config, store=store, audit=audit,
+        ts=TS, attested=True, reviewer=REVIEWER,
     )
     assert audit.verify_chain()
     pub = [l for l in audit._read_lines() if l["event"] == EVENT_PUBLISHED_RECORDED][-1]

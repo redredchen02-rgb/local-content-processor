@@ -88,7 +88,7 @@ _TRANSITIONS: dict[JobState, frozenset[JobState]] = {
     ),
     JobState.PROCESS_FAILED: frozenset({JobState.PROCESSING}),  # retry
     JobState.NEEDS_HUMAN_REVIEW: frozenset(
-        {JobState.PROCESSED, JobState.REJECTED}
+        {JobState.PROCESSED, JobState.REJECTED, JobState.SUPERSEDED}
     ),
     JobState.NEEDS_REVISION: frozenset(
         {JobState.PROCESSING, JobState.SUPERSEDED}  # re-run in place / supersede

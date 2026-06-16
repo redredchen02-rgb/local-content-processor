@@ -330,6 +330,47 @@ def test_partial_asset_failure_crawled_warn(tmp_path):
     assert len(failed) == 1 and failed[0].source_url == "https://example.com/missing.jpg"
 
 
+def test_scraped_media_urls_validated_for_ssrf(tmp_path, monkeypatch):
+    """P1 regression (second-order SSRF): media URLs scraped from untrusted HTML
+    must each pass net_guard before being queued for download. An <img>/<a>
+    pointing at 169.254.169.254 / 127.0.0.1 is dropped (not in image_urls), while
+    an allowlisted global media URL is kept. Rejected ones surface as FAILED
+    assets via write_bundle."""
+    # Ensure the loopback test bypass is OFF so real validation runs in-process.
+    monkeypatch.delenv("LCP_ALLOW_LOOPBACK_FOR_TESTS", raising=False)
+
+    good = "https://93.184.216.34/photo.jpg"  # literal global IP, no DNS needed
+    html = (
+        "<html><title>T</title><body><p>x</p>"
+        f'<img src="{good}">'
+        '<img src="http://169.254.169.254/latest/meta-data/iam">'
+        '<img src="http://127.0.0.1/secret.png">'
+        '<a href="http://10.0.0.1/internal.mp4">link</a>'
+        "</body></html>"
+    )
+    out = scrapy_impl.extract_content(_response(html))
+
+    # Only the global media URL is queued for download.
+    assert out["image_urls"] == [good]
+    assert out["video_urls"] == []
+    # The internal/metadata targets were rejected (dropped, recorded).
+    rejected = set(out["rejected_media_urls"])
+    assert "http://169.254.169.254/latest/meta-data/iam" in rejected
+    assert "http://127.0.0.1/secret.png" in rejected
+    assert "http://10.0.0.1/internal.mp4" in rejected
+
+    # write_bundle records the rejected URLs as FAILED assets.
+    bundle = scrapy_impl.write_bundle_from_extraction(
+        _spec(tmp_path, "jssrf"), out, source_domain="example.com", fetched_at=TS,
+    )
+    failed_urls = {
+        a.source_url for a in bundle.manifest.assets
+        if a.state is AssetState.FAILED
+    }
+    assert "http://169.254.169.254/latest/meta-data/iam" in failed_urls
+    assert "http://127.0.0.1/secret.png" in failed_urls
+
+
 def test_robots_disallow_recorded_not_bypassed():
     # ROBOTSTXT_OBEY must be True in the spider settings (plan R8). We assert
     # the policy is on, never bypassed.

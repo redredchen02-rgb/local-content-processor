@@ -141,19 +141,24 @@ class Api:
                 max_assets=c.config.crawler.max_assets_per_job,
             )
             bundle = runner.crawl_url(spec, ts=ts)
-            target = pl._CRAWL_STATUS_TO_STATE.get(bundle.job_status)
-            if target is not None:
-                c.store.set_hashes(
-                    job_id,
-                    updated_at=ts,
-                    source_html_sha256=bundle.manifest.hashes.source_html_sha256,
-                    source_text_sha256=bundle.manifest.hashes.source_text_sha256,
-                )
-                c.store.set_state(job_id, target, updated_at=ts)
+            # Unknown crawl status -> CRAWL_FAILED (same default as
+            # pipeline.stage1); never leave the job parked at NEW.
+            from .core.state import JobState
+
+            target = pl._CRAWL_STATUS_TO_STATE.get(
+                bundle.job_status, JobState.CRAWL_FAILED
+            )
+            c.store.set_hashes(
+                job_id,
+                updated_at=ts,
+                source_html_sha256=bundle.manifest.hashes.source_html_sha256,
+                source_text_sha256=bundle.manifest.hashes.source_text_sha256,
+            )
+            c.store.set_state(job_id, target, updated_at=ts)
             return {
                 "job_id": escape_html(job_id),
                 "crawl_status": escape_html(bundle.job_status),
-                "state": (target.value if target else escape_html(bundle.job_status)),
+                "state": target.value,
             }
         except LcpError as e:
             return _error_dict(e)
@@ -303,9 +308,13 @@ class Api:
         state machine (BLOCKED/NEEDS_HUMAN_REVIEW have NO path to APPROVED)."""
         try:
             c = self._ctx()
+            # Load the persisted draft and pass it so signoff re-verifies the
+            # frozen body hash — a draft tampered after freeze must NOT approve.
+            draft = pl.load_draft(c.store, job_id)
             rec = signoff.approve(
                 job_id, reviewer,
                 config=c.config, store=c.store, audit=c.audit, ts=_now(),
+                draft=draft,
             )
             return {
                 "job_id": escape_html(job_id),
@@ -334,15 +343,44 @@ class Api:
         except LcpError as e:
             return _error_dict(e)
 
-    def backfill(self, job_id: str, url: str, attested: bool) -> dict:
-        """Mirror `backfill`: APPROVED -> PUBLISHED_RECORDED ONLY with a non-empty
-        URL AND the attestation tick. Without the tick the job stays APPROVED
-        (the machine never publishes — R26/R37). The URL is never resolved."""
+    def resolve(
+        self,
+        job_id: str,
+        reviewer: str,
+        relint: bool = False,
+        reason: str | None = None,
+    ) -> dict:
+        """Mirror `resolve`: drive NEEDS_HUMAN_REVIEW -> PROCESSED.
+
+        Grounding hold + relint=True: lint re-runs; a clean lint promotes.
+        Risk/dedup hold (or grounding without relint): explicit reason required
+        (a recorded human override). Reviewer MUST be whitelisted."""
+        try:
+            c = self._ctx()
+            rec = signoff.resolve(
+                job_id, reviewer,
+                config=c.config, store=c.store, audit=c.audit, ts=_now(),
+                relint=bool(relint), reason=reason,
+            )
+            return {
+                "job_id": escape_html(job_id),
+                "state": rec.new_state.value,
+                "reviewer_stated": escape_html(rec.reviewer_stated),
+            }
+        except LcpError as e:
+            return _error_dict(e)
+
+    def backfill(self, job_id: str, reviewer: str, url: str, attested: bool) -> dict:
+        """Mirror `backfill`: APPROVED -> PUBLISHED_RECORDED ONLY with a
+        whitelisted reviewer, a non-empty URL AND the attestation tick. Without
+        the tick the job stays APPROVED (the machine never publishes — R26/R37).
+        The URL is never resolved."""
         try:
             c = self._ctx()
             new_state = signoff.backfill_published_url(
                 job_id, url,
-                store=c.store, audit=c.audit, ts=_now(), attested=bool(attested),
+                config=c.config, store=c.store, audit=c.audit, ts=_now(),
+                attested=bool(attested), reviewer=reviewer,
             )
             return {
                 "job_id": escape_html(job_id),

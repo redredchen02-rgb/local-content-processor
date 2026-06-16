@@ -14,7 +14,7 @@ from pathlib import Path
 
 from ...core.errors import InputValidationError
 from ...core.models import AssetKind, AssetRef, AssetState, SourceType
-from ..storage.manifest import write_manifest
+from ..storage.manifest import manifest_path, write_manifest
 from . import net_guard
 from .base import Crawler, RawJobBundle, SourceSpec
 from .bundle import build_manifest, derive_status, sha256_bytes
@@ -62,6 +62,15 @@ class LocalIngestCrawler(Crawler):
         src = Path(spec.local_dir).resolve()
         if not src.is_dir():
             raise InputValidationError(f"material folder not found: {src}")
+
+        # create_only must be SIDE-EFFECT-FREE on refusal: check for an existing
+        # manifest at the TOP, before we write source.txt or copy any media (R11).
+        # Otherwise a second ingest would clobber source.txt/media and THEN raise.
+        if manifest_path(spec.job_dir).exists():
+            raise InputValidationError(
+                f"job bundle already exists for {spec.job_id}; refusing to "
+                "overwrite (create_only)"
+            )
 
         raw_dir = spec.job_dir / "raw"
         images_dir = raw_dir / "images"

@@ -244,6 +244,18 @@ def test_external_error_message_redacts_secret(with_key):
     assert "REDACTED" in str(ei.value)
 
 
+def test_external_error_message_redacts_exact_resolved_key(with_key):
+    # P2 regression: a provider error that echoes the EXACT resolved api_key
+    # (e.g. "Incorrect API key provided: sk-...") must mask it.
+    leaky = RuntimeError(f"Incorrect API key provided: {SECRET}")
+    stub = StubOpenAI(raises=leaky)
+    client = LlmClient(_config(), client_factory=stub.factory)
+    with pytest.raises(ExternalServiceError) as ei:
+        client.chat(system="r", user="d")
+    assert SECRET not in str(ei.value)
+    assert "REDACTED" in str(ei.value)
+
+
 # --------------------------------------------------------------------------
 # transport security (R40)
 # --------------------------------------------------------------------------

@@ -75,18 +75,31 @@ def test_full_signoff_loop_via_api(tmp_path):
     assert res["disclaimer"] == DISCLAIMER
 
     # 4. backfill WITHOUT attestation stays APPROVED (loop open).
-    res = api.backfill("j1", "https://site.example/x", attested=False)
+    res = api.backfill("j1", "alice", "https://site.example/x", attested=False)
     assert "error" in res
     assert store.get_job("j1").state is JobState.APPROVED
 
     # 5. backfill WITH attestation -> PUBLISHED_RECORDED.
-    res = api.backfill("j1", "https://site.example/x", attested=True)
+    res = api.backfill("j1", "alice", "https://site.example/x", attested=True)
     assert "error" not in res
     assert res["state"] == "published_recorded"
     assert store.get_job("j1").state is JobState.PUBLISHED_RECORDED
 
 
 # --- Edge: refusals do not transition ---------------------------------------
+
+
+def test_api_backfill_non_whitelisted_rejected(tmp_path):
+    """P3 regression: backfill via the Api requires a whitelisted reviewer."""
+    base = str(tmp_path)
+    store = _processed_job_with_draft(base, "jbf")
+    api = _api(tmp_path, base)
+    api.make_review_packet("jbf")
+    api.approve("jbf", "alice")
+    res = api.backfill("jbf", "mallory", "https://site.example/x", attested=True)
+    assert "error" in res
+    assert res["exit_code"] == 2
+    assert store.get_job("jbf").state is JobState.APPROVED
 
 
 def test_reject_via_api(tmp_path):
@@ -130,6 +143,53 @@ def test_approve_needs_human_review_refused_by_state_machine(tmp_path):
     assert store.get_job("jh").state is JobState.NEEDS_HUMAN_REVIEW
 
 
+def test_api_resolve_nhr_via_override(tmp_path):
+    """A NEEDS_HUMAN_REVIEW (dedup) job is resolved to PROCESSED via Api.resolve
+    with an explicit reason; without a reason it returns an error dict."""
+    base = str(tmp_path)
+    from lcp.adapters.processor._persist import persist_gate_state
+    from lcp.adapters.storage.job_store import JobStore
+    from lcp.core.state import ReviewReason
+
+    store = JobStore(base_dir=base)
+    ts = "2026-06-16T00:00:00Z"
+    store.create_job("jn", created_at=ts)
+    store.set_state("jn", JobState.CRAWLED, updated_at=ts)
+    persist_gate_state(store, "jn", JobState.NEEDS_HUMAN_REVIEW, updated_at=ts,
+                       review_reason=ReviewReason.DEDUP)
+
+    api = _api(tmp_path, base)
+    res = api.resolve("jn", "alice")  # no reason -> override refused
+    assert "error" in res
+    assert store.get_job("jn").state is JobState.NEEDS_HUMAN_REVIEW
+
+    res = api.resolve("jn", "alice", reason="manually verified unique")
+    assert "error" not in res
+    assert res["state"] == "processed"
+    assert store.get_job("jn").state is JobState.PROCESSED
+
+
+def test_api_reject_nhr_reaches_rejected(tmp_path):
+    """A held NEEDS_HUMAN_REVIEW job (no packet) can be rejected via the Api."""
+    base = str(tmp_path)
+    from lcp.adapters.processor._persist import persist_gate_state
+    from lcp.adapters.storage.job_store import JobStore
+    from lcp.core.state import ReviewReason
+
+    store = JobStore(base_dir=base)
+    ts = "2026-06-16T00:00:00Z"
+    store.create_job("jrn", created_at=ts)
+    store.set_state("jrn", JobState.CRAWLED, updated_at=ts)
+    persist_gate_state(store, "jrn", JobState.NEEDS_HUMAN_REVIEW, updated_at=ts,
+                       review_reason=ReviewReason.GROUNDING)
+
+    api = _api(tmp_path, base)
+    res = api.reject("jrn", "alice", "not suitable")
+    assert "error" not in res
+    assert res["state"] == "rejected"
+    assert store.get_job("jrn").state is JobState.REJECTED
+
+
 def test_approve_blocked_refused(tmp_path):
     base = str(tmp_path)
     from lcp.adapters.processor._persist import persist_gate_state
@@ -145,6 +205,34 @@ def test_approve_blocked_refused(tmp_path):
     res = api.approve("jb", "alice")
     assert "error" in res
     assert store.get_job("jb").state is JobState.BLOCKED
+
+
+def test_api_approve_rejects_body_tampered_after_freeze(tmp_path):
+    """P1 regression: Api.approve (no draft= arg) must load the persisted draft
+    and re-verify the frozen body hash. Overwriting draft.json after freeze ->
+    approve returns an error dict and the job stays REVIEW_PENDING."""
+    from lcp.core.draft import Draft, FaqItem, SourceQuote
+    from lcp.pipeline import save_draft
+
+    base = str(tmp_path)
+    store = _processed_job_with_draft(base, "jt")
+    api = _api(tmp_path, base)
+    res = api.make_review_packet("jt")
+    assert "error" not in res
+    assert store.get_job("jt").state is JobState.REVIEW_PENDING
+
+    tampered = Draft(
+        title="台北華山美食市集週末熱鬧登場活動", intro="引言。",
+        quick_facts=["週末"], event_body="完全不同的正文，已被竄改。",
+        faq=[FaqItem(question="Q", answer="A")], summary="結尾。",
+        quotes=[SourceQuote(text="華山文創園區本週末舉辦美食市集。")],
+    )
+    save_draft(store, "jt", tampered)
+
+    res = api.approve("jt", "alice")
+    assert "error" in res
+    assert res["exit_code"] == 2
+    assert store.get_job("jt").state is JobState.REVIEW_PENDING
 
 
 # --- XSS: get_packet returns escaped / inert strings ------------------------
@@ -295,6 +383,47 @@ def test_job_status_falls_back_to_persisted_state(tmp_path):
 
     st2 = api.job_status("does-not-exist")
     assert st2["status"] == "unknown"
+
+
+# --- unknown crawl status defaults to CRAWL_FAILED (parity with stage1) ------
+
+
+def test_create_and_crawl_unknown_status_defaults_to_crawl_failed(tmp_path, monkeypatch):
+    """P3 regression: an unrecognised crawl status must map to CRAWL_FAILED (the
+    same default as pipeline.stage1), never leave the job parked at NEW."""
+    import lcp.gui as gui
+    from lcp.adapters.crawler.base import RawJobBundle
+    from lcp.adapters.crawler.bundle import build_manifest
+    from lcp.adapters.storage.job_store import JobStore
+    from lcp.core.models import SourceType
+
+    base = str(tmp_path)
+
+    class _FakeRunner:
+        def __init__(self, *a, **k):
+            pass
+
+        def crawl_url(self, spec, *, ts):
+            manifest = build_manifest(
+                job_id=spec.job_id, source_type=SourceType.URL,
+                source_domain="example.com", fetched_at=ts, assets=[],
+                source_html="<html></html>", source_text="b",
+                crawl_status="weird-unknown-status",
+            )
+            return RawJobBundle(
+                job_id=spec.job_id, raw_dir=spec.job_dir / "raw",
+                manifest=manifest, job_status="weird-unknown-status",
+            )
+
+    monkeypatch.setattr(gui, "CrawlRunner", _FakeRunner)
+    monkeypatch.setattr(gui.SourceRegistry, "from_config", staticmethod(lambda *_: None))
+
+    api = _api(tmp_path, base)
+    res = api.create_and_crawl("jcf", "https://example.com/x")
+    assert "error" not in res
+    assert res["state"] == "crawl_failed"
+    store = JobStore(base_dir=base)
+    assert store.get_job("jcf").state.value == "crawl_failed"
 
 
 # --- static security guards -------------------------------------------------

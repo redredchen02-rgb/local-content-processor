@@ -128,18 +128,21 @@ def crawl(ctx, url, input_file, job_id):
         max_assets=c.config.crawler.max_assets_per_job,
     )
     bundle = runner.crawl_url(spec, ts=ts)
-    target = pl._CRAWL_STATUS_TO_STATE.get(bundle.job_status)
-    if target is not None:
-        c.store.set_hashes(
-            job_id,
-            updated_at=ts,
-            source_html_sha256=bundle.manifest.hashes.source_html_sha256,
-            source_text_sha256=bundle.manifest.hashes.source_text_sha256,
-        )
-        c.store.set_state(job_id, target, updated_at=ts)
+    # Unknown crawl status -> CRAWL_FAILED (same default as pipeline.stage1); we
+    # never leave the job parked at NEW on an unrecognised status.
+    from .core.state import JobState
+
+    target = pl._CRAWL_STATUS_TO_STATE.get(bundle.job_status, JobState.CRAWL_FAILED)
+    c.store.set_hashes(
+        job_id,
+        updated_at=ts,
+        source_html_sha256=bundle.manifest.hashes.source_html_sha256,
+        source_text_sha256=bundle.manifest.hashes.source_text_sha256,
+    )
+    c.store.set_state(job_id, target, updated_at=ts)
     c.emit(
         {"job_id": job_id, "crawl_status": bundle.job_status,
-         "state": target.value if target else bundle.job_status},
+         "state": target.value},
         human=f"crawled {job_id}: {bundle.job_status}",
     )
 
@@ -253,9 +256,12 @@ def approve(ctx, job_id, reviewer):
     recorded). The reviewer must be in config.publisher.reviewers. Does NOT
     publish — APPROVED is not complete until you `backfill` the URL (R37)."""
     c = Ctx(ctx.obj)
+    # Load the persisted Stage-2 draft and pass it so signoff re-verifies the
+    # frozen body hash — a draft tampered after freeze must NOT approve.
+    draft = pl.load_draft(c.store, job_id)
     rec = signoff.approve(
         job_id, reviewer,
-        config=c.config, store=c.store, audit=c.audit, ts=_now(),
+        config=c.config, store=c.store, audit=c.audit, ts=_now(), draft=draft,
     )
     c.emit(
         {
@@ -292,20 +298,50 @@ def reject(ctx, job_id, reviewer, reason):
 
 @cli.command()
 @click.option("--job-id", "job_id", required=True)
+@click.option("--reviewer", required=True, help="Reviewer (must be whitelisted)")
+@click.option("--relint", is_flag=True,
+              help="Re-run lint to clear a grounding hold (the human vouched for "
+                   "grounding); only a clean lint promotes to PROCESSED")
+@click.option("--reason", default=None,
+              help="Required for a risk/dedup human override (recorded, audited)")
+@click.pass_context
+def resolve(ctx, job_id, reviewer, relint, reason):
+    """Drive a NEEDS_HUMAN_REVIEW job out of the hold: -> PROCESSED.
+
+    Grounding hold + --relint: lint re-runs; a clean lint promotes to PROCESSED.
+    Risk/dedup hold (or grounding without --relint): an explicit --reason is
+    required — this is a recorded human override (state machine allows it)."""
+    c = Ctx(ctx.obj)
+    rec = signoff.resolve(
+        job_id, reviewer,
+        config=c.config, store=c.store, audit=c.audit, ts=_now(),
+        relint=relint, reason=reason,
+    )
+    c.emit(
+        {"job_id": job_id, "state": rec.new_state.value,
+         "reviewer_stated": rec.reviewer_stated},
+        human=f"resolved {job_id} by {rec.reviewer_stated}: {rec.new_state.value}",
+    )
+
+
+@cli.command()
+@click.option("--job-id", "job_id", required=True)
+@click.option("--reviewer", required=True, help="Reviewer (must be whitelisted)")
 @click.option("--url", required=True, help="The published URL you pasted")
 @click.option("--attest/--no-attest", default=False,
               help="Confirm the published version IS the signed-off version")
 @click.pass_context
-def backfill(ctx, job_id, url, attest):
+def backfill(ctx, job_id, reviewer, url, attest):
     """Record a publish: APPROVED -> PUBLISHED_RECORDED (responsibility loop).
 
-    The machine never publishes (R26). This only RECORDS that a human pasted the
-    URL AND ticked the attestation (--attest). Without --attest the job STAYS
-    APPROVED (the loop is open, R37)."""
+    The machine never publishes (R26). This only RECORDS that a whitelisted human
+    pasted the URL AND ticked the attestation (--attest). Without --attest the job
+    STAYS APPROVED (the loop is open, R37)."""
     c = Ctx(ctx.obj)
     new_state = signoff.backfill_published_url(
         job_id, url,
-        store=c.store, audit=c.audit, ts=_now(), attested=attest,
+        config=c.config, store=c.store, audit=c.audit, ts=_now(),
+        attested=attest, reviewer=reviewer,
     )
     c.emit(
         {"job_id": job_id, "state": new_state.value, "attested": attest},

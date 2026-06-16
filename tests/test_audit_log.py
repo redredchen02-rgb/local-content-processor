@@ -1,5 +1,6 @@
 import hashlib
 import json
+import threading
 
 import pytest
 
@@ -83,6 +84,35 @@ def test_erasure_event_recorded(tmp_path):
     lines = (tmp_path / "audit.jsonl").read_text().splitlines()
     assert json.loads(lines[-1])["event"] == EVENT_ERASURE
     assert log.verify_chain()
+
+
+def test_concurrent_appends_keep_seq_unique_and_chain_valid(tmp_path):
+    # P0 regression: the GUI runs gates in background threads, so multiple
+    # threads append to the SAME AuditLog concurrently. Without an exclusive
+    # lock held across read-tail + write, two appends read the same tail and
+    # commit a duplicate seq, corrupting the hash chain. With the flock fix,
+    # seqs stay unique/contiguous and verify_chain() passes.
+    log = _log(tmp_path)
+    n = 40
+    barrier = threading.Barrier(n)
+
+    def _worker(i):
+        barrier.wait()  # maximise contention on the read-tail/write window
+        log.append(
+            ts=TS, stage="crawl", event=f"E{i}", job_id="j1", actor="machine"
+        )
+
+    threads = [threading.Thread(target=_worker, args=(i,)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    lines = (tmp_path / "audit.jsonl").read_text().splitlines()
+    assert len(lines) == n
+    seqs = sorted(json.loads(line)["seq"] for line in lines)
+    assert seqs == list(range(n))  # unique + contiguous, no duplicates
+    assert log.verify_chain() is True
 
 
 def test_chain_links_prev_hash(tmp_path):

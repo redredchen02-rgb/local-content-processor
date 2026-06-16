@@ -45,8 +45,8 @@ from .adapters.publisher.review_packet import ReviewPacket, build_review_packet
 from .adapters.storage.audit_log import AuditLog
 from .adapters.storage.job_store import JobRecord, JobStore
 from .core.config import Config
-from .core.draft import Draft
-from .core.errors import InputValidationError
+from .core.draft import Draft, DraftStatus
+from .core.errors import ExternalServiceError, InputValidationError
 from .core.models import SourceType
 from .core.rules.risk_rules import RiskInput
 from .core.state import JobState
@@ -74,7 +74,8 @@ class ProcessResult:
     draft: Draft | None
     final_state: JobState
     dry_run: bool
-    stopped_at: str | None = None  # "risk" | "dedup" | "lint" | None (passed)
+    # "risk" | "dedup" | "assemble" | "lint" | "error" | None (passed)
+    stopped_at: str | None = None
     notes: list[str] = field(default_factory=list)
 
 
@@ -155,7 +156,22 @@ class Pipeline:
         self.dry_run = dry_run
         self.crawler = crawler
         # dry_run is threaded into the client: in dry-run it never calls the API.
-        self.llm_client = llm_client or LlmClient(config, dry_run=dry_run)
+        if llm_client is None:
+            self.llm_client = LlmClient(config, dry_run=dry_run)
+        else:
+            # An injected client must HONOUR dry_run — otherwise Pipeline(
+            # dry_run=True, llm_client=<live>) would silently hit the API. If the
+            # client exposes the dry-run flag we force it on; if it cannot be
+            # forced and is not already dry, refuse (fail loud, never call live).
+            if dry_run:
+                if hasattr(llm_client, "_dry_run"):
+                    llm_client._dry_run = True
+                elif not getattr(llm_client, "dry_run", False):
+                    raise InputValidationError(
+                        "dry_run=True but the injected llm_client cannot be put "
+                        "in dry mode; refusing (it could call the live API)"
+                    )
+            self.llm_client = llm_client
 
     # --- Stage 1: crawl / ingest --------------------------------------------
 
@@ -196,9 +212,16 @@ class Pipeline:
         grounding. Stops at the FIRST gate that parks the job.
 
         The job must rest at a legal PROCESSING-predecessor (CRAWLED /
-        CRAWLED_WARN). Each gate uses the shared persist seam (PROCESSING ->
-        resting state) and writes a PII-free audit event. On full pass the job
-        lands PROCESSED.
+        CRAWLED_WARN / PROCESS_FAILED — the last for a retry). A ``.processing``
+        marker is set at entry and cleared in `finally` (crash detection); each
+        gate uses the shared persist seam (PROCESSING -> resting state) and writes
+        a PII-free audit event. On full pass the job lands PROCESSED.
+
+        A truncated/empty draft from assemble (DraftStatus.NEEDS_REVISION)
+        short-circuits to NEEDS_REVISION BEFORE grounding/lint, carrying the
+        assembler's reason. An ExternalServiceError from assemble/gates (LLM 5xx /
+        timeout) is mapped to PROCESS_FAILED (retriable) instead of leaving the
+        job at CRAWLED.
 
         dry_run: the LLM client was built with dry_run=True, so `assemble`
         returns a NOT_EXECUTED stub (no API call, no tokens, no external
@@ -206,12 +229,69 @@ class Pipeline:
         record = self.store.get_job(job_id)
         if record is None:
             raise InputValidationError(f"unknown job: {job_id}")
-        if record.state not in (JobState.CRAWLED, JobState.CRAWLED_WARN):
+        # PROCESS_FAILED is a legal entry too: a failed (e.g. LLM 5xx) run is
+        # retriable (PROCESS_FAILED -> PROCESSING -> ...).
+        if record.state not in (
+            JobState.CRAWLED, JobState.CRAWLED_WARN, JobState.PROCESS_FAILED
+        ):
             raise InputValidationError(
-                f"process requires CRAWLED/CRAWLED_WARN; {job_id} is "
-                f"{record.state.value}"
+                f"process requires CRAWLED/CRAWLED_WARN/PROCESS_FAILED; {job_id} "
+                f"is {record.state.value}"
             )
 
+        # Mark the job mid-Stage-2 (transient PROCESSING) so a crash is
+        # detectable and an LLM 5xx can be mapped to a retriable PROCESS_FAILED.
+        # The marker is cleared in `finally`; the gates' persist_gate_state also
+        # clears it when they park the job (clear is idempotent).
+        self.store.mark_processing(job_id)
+        try:
+            return self._process_inner(
+                job_id,
+                record=record,
+                ts=ts,
+                title=title,
+                risk_input=risk_input,
+                site_index_path=site_index_path,
+                has_videos=has_videos,
+            )
+        except ExternalServiceError:
+            # An LLM/network failure mid-process must not leave the job at
+            # CRAWLED. Persist PROCESS_FAILED (retriable: PROCESS_FAILED ->
+            # PROCESSING) so a re-run picks it up. persist_gate_state re-marks +
+            # clears its own marker.
+            from .adapters.processor._persist import persist_gate_state
+
+            persist_gate_state(
+                self.store, job_id, JobState.PROCESS_FAILED, updated_at=ts,
+                error_code="llm_external_error",
+            )
+            return ProcessResult(
+                job_id=job_id,
+                draft=None,
+                final_state=JobState.PROCESS_FAILED,
+                dry_run=self.dry_run,
+                stopped_at="error",
+                notes=["LLM/external service error; PROCESS_FAILED (retriable)"],
+            )
+        finally:
+            self.store.clear_processing(job_id)
+
+    def _process_inner(
+        self,
+        job_id: str,
+        *,
+        record: JobRecord,
+        ts: str,
+        title: str,
+        risk_input: RiskInput | None,
+        site_index_path: str | Path | None,
+        has_videos: bool,
+    ) -> ProcessResult:
+        """Stage-2 gate sequence (called inside the .processing marker scope).
+
+        Raises ExternalServiceError up to `process` (which maps it to
+        PROCESS_FAILED); every other resting state is returned as a
+        ProcessResult."""
         source_text = _read_source_text(self.store, job_id)
         notes: list[str] = []
 
@@ -255,6 +335,7 @@ class Pipeline:
             )
 
         # --- constrained rewrite (dry_run aware: NO API call in dry-run) ---
+        # An ExternalServiceError here propagates to `process` -> PROCESS_FAILED.
         draft = assemble(
             source_text,
             self.llm_client,
@@ -265,6 +346,26 @@ class Pipeline:
         save_draft(self.store, job_id, draft)
         if self.dry_run:
             notes.append("dry-run: LLM not executed; no external mutation")
+
+        # --- assemble verdict: a truncated/empty draft (NEEDS_REVISION) must
+        # short-circuit BEFORE grounding/lint, carrying the assembler's reason
+        # (otherwise the truncation review_reason is silently lost). ---
+        if draft.status is DraftStatus.NEEDS_REVISION:
+            from .adapters.processor._persist import persist_gate_state
+
+            persist_gate_state(
+                self.store, job_id, JobState.NEEDS_REVISION, updated_at=ts
+            )
+            if draft.review_reason:
+                notes.append(f"assemble: {draft.review_reason}")
+            return ProcessResult(
+                job_id=job_id,
+                draft=draft,
+                final_state=JobState.NEEDS_REVISION,
+                dry_run=self.dry_run,
+                stopped_at="assemble",
+                notes=notes,
+            )
 
         # --- lint + grounding gate ---
         lint_config = build_lint_config(self.config.content, self.config.categories)

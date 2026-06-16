@@ -18,7 +18,7 @@ def test_help_lists_commands(capsys):
     assert "crawl" in out and "ingest" in out
     # ...plus the Unit 8 operator actions (CLI/GUI parity surface).
     for cmd in ("process", "review-packet", "approve", "reject", "backfill",
-                "list", "run", "supersede"):
+                "list", "run", "supersede", "resolve"):
         assert cmd in out
 
 
@@ -102,13 +102,86 @@ def test_full_signoff_loop_via_cli(tmp_path):
 
     # 4. backfill without --attest stays APPROVED (loop open).
     assert main(["--config", str(cfg), "backfill", "--job-id", "j1",
+                 "--reviewer", "alice",
                  "--url", "https://site.example/x"]) == EXIT_INPUT
     assert store.get_job("j1").state is JobState.APPROVED
 
     # 5. backfill with --attest -> PUBLISHED_RECORDED.
     assert main(["--config", str(cfg), "backfill", "--job-id", "j1",
+                 "--reviewer", "alice",
                  "--url", "https://site.example/x", "--attest"]) == EXIT_OK
     assert store.get_job("j1").state is JobState.PUBLISHED_RECORDED
+
+
+def test_cli_approve_rejects_body_tampered_after_freeze(tmp_path):
+    """P1 regression: approve via the CLI (no draft= arg) must load the persisted
+    draft and re-verify the frozen body hash. Overwriting draft.json with a
+    different body after the freeze -> approval FAILS and the job stays
+    REVIEW_PENDING (never reaches APPROVED)."""
+    from lcp.core.draft import Draft, FaqItem, SourceQuote
+    from lcp.core.state import JobState
+    from lcp.pipeline import save_draft
+
+    base = str(tmp_path)
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {"storage": {"base_dir": base}, "publisher": {"reviewers": ["alice"]}}
+        ),
+        encoding="utf-8",
+    )
+    store = _processed_job_with_draft(base, "jt")
+    # Freeze the packet at the original draft.
+    assert main(["--config", str(cfg), "review-packet", "--job-id", "jt"]) == EXIT_OK
+    assert store.get_job("jt").state is JobState.REVIEW_PENDING
+
+    # Tamper: overwrite the persisted draft.json with a different body.
+    tampered = Draft(
+        title="台北華山美食市集週末熱鬧登場活動", intro="引言。",
+        quick_facts=["週末"], event_body="完全不同的正文，已被竄改。",
+        faq=[FaqItem(question="Q", answer="A")], summary="結尾。",
+        quotes=[SourceQuote(text="華山文創園區本週末舉辦美食市集。")],
+    )
+    save_draft(store, "jt", tampered)
+
+    # Approve must FAIL (hash mismatch) and NOT transition.
+    rc = main(["--config", str(cfg), "approve", "--job-id", "jt",
+               "--reviewer", "alice"])
+    assert rc == EXIT_INPUT
+    assert store.get_job("jt").state is JobState.REVIEW_PENDING
+
+
+def test_cli_resolve_drives_nhr_to_processed(tmp_path):
+    """P1 regression: a NEEDS_HUMAN_REVIEW (risk) job is no longer stuck — the
+    CLI `resolve` command with a reason overrides it to PROCESSED."""
+    from lcp.adapters.processor._persist import persist_gate_state
+    from lcp.adapters.storage.job_store import JobStore
+    from lcp.core.state import JobState, ReviewReason
+
+    base = str(tmp_path)
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {"storage": {"base_dir": base}, "publisher": {"reviewers": ["alice"]}}
+        ),
+        encoding="utf-8",
+    )
+    ts = "2026-06-16T00:00:00Z"
+    store = JobStore(base_dir=base)
+    store.create_job("jn", created_at=ts)
+    store.set_state("jn", JobState.CRAWLED, updated_at=ts)
+    persist_gate_state(store, "jn", JobState.NEEDS_HUMAN_REVIEW, updated_at=ts,
+                       review_reason=ReviewReason.RISK)
+
+    # override without a reason -> input error (honest: override needs a reason)
+    assert main(["--config", str(cfg), "resolve", "--job-id", "jn",
+                 "--reviewer", "alice"]) == EXIT_INPUT
+    assert store.get_job("jn").state is JobState.NEEDS_HUMAN_REVIEW
+
+    # override with a reason -> PROCESSED
+    assert main(["--config", str(cfg), "resolve", "--job-id", "jn",
+                 "--reviewer", "alice", "--reason", "false positive"]) == EXIT_OK
+    assert store.get_job("jn").state is JobState.PROCESSED
 
 
 def test_review_packet_without_draft_is_usage_error(tmp_path):

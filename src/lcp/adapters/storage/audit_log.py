@@ -22,6 +22,11 @@ import os
 import re
 from pathlib import Path
 
+try:
+    import fcntl  # POSIX-only: used for an exclusive append lock.
+except ImportError:  # pragma: no cover - non-POSIX (e.g. Windows)
+    fcntl = None  # type: ignore[assignment]
+
 from ...core.errors import InputValidationError
 
 GENESIS_HASH = "0" * 64
@@ -105,27 +110,40 @@ class AuditLog:
             )
 
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        seq, prev_hash = self._tail()
-        payload: dict = {
-            "seq": seq,
-            "ts": ts,
-            "stage": stage,
-            "event": event,
-            "job_id": job_id,
-            "actor": actor,
-            "prev_hash": prev_hash,
-        }
-        if artifact_sha256 is not None:
-            payload["artifact_sha256"] = artifact_sha256
-        if extra:
-            payload["extra"] = extra
-        record = dict(payload)
-        record["hash"] = _line_hash(prev_hash, payload)
 
+        # Serialize concurrent appends with an OS-level exclusive lock held
+        # ACROSS read-tail + write. Without it two threads/processes can read the
+        # same tail (seq+prev_hash) and both write the same seq, corrupting the
+        # chain (the GUI runs gates in background threads — plan CONCURRENCY).
+        # The lock is taken on the append fd itself; we re-read the tail UNDER
+        # the lock so the seq/prev_hash we commit to is the true latest.
         with self.path.open("a", encoding="utf-8") as f:
-            f.write(_canonical(record) + "\n")
-            f.flush()
-            os.fsync(f.fileno())
+            if fcntl is not None:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                seq, prev_hash = self._tail()
+                payload: dict = {
+                    "seq": seq,
+                    "ts": ts,
+                    "stage": stage,
+                    "event": event,
+                    "job_id": job_id,
+                    "actor": actor,
+                    "prev_hash": prev_hash,
+                }
+                if artifact_sha256 is not None:
+                    payload["artifact_sha256"] = artifact_sha256
+                if extra:
+                    payload["extra"] = extra
+                record = dict(payload)
+                record["hash"] = _line_hash(prev_hash, payload)
+
+                f.write(_canonical(record) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
         return record
 
     def verify_chain(self) -> bool:

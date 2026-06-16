@@ -175,6 +175,25 @@ def test_redirect_to_global_ip_allowed():
 
 
 # --------------------------------------------------------------------------
+# the REAL, ACTIVE defence: validate_url rejects internal IPs at validate time
+# (pinned-IP-at-connect is a documented residual; this is what actually works)
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("url,resolved", [
+    ("http://169.254.169.254/latest/meta-data/", None),  # literal metadata IP
+    ("http://127.0.0.1/secret", None),                   # literal loopback
+    ("http://10.0.0.1/internal", None),                  # literal private
+    ("http://intranet.example/admin", "10.0.0.7"),       # resolves internal
+])
+def test_validate_url_rejects_internal_targets(url, resolved):
+    """The active SSRF defence — reject any target whose (literal or resolved) IP
+    is non-global — must hold regardless of the unwired pinned-IP residual."""
+    mapping = {} if resolved is None else {"intranet.example": [resolved]}
+    with pytest.raises(InputValidationError):
+        net_guard.validate_url(url, resolver=_resolver(mapping))
+
+
+# --------------------------------------------------------------------------
 # path traversal: safe_join
 # --------------------------------------------------------------------------
 

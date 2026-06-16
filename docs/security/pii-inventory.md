@@ -62,6 +62,31 @@ Delete job → `rmtree(data/jobs/<id>/)` (best-effort) → delete SQLite row →
 append `ERASURE` audit event (`method=best_effort_unlink`,
 `cryptographic_erasure=false`). The audit chain after deletion still verifies.
 
+## SSRF residual risk (honest gap, R40)
+
+The crawl path's ACTIVE SSRF defences are: scheme allowlist (http/https) +
+DNS-resolved `is_global` check at validate time (top-level URL **and** every
+scraped media URL) + Scrapy `allowed_domains` (OffsiteMiddleware) +
+`REDIRECT_ENABLED=False` (redirects not followed).
+
+**Residual (documented, not fixed):** pin-IP-at-connect is **NOT wired** for the
+Scrapy path. `net_guard.ValidatedTarget.pinned_ip` and
+`net_guard.revalidate_redirect()` exist but nothing in the live crawl consumes
+them, because Scrapy opens its own connection and **re-resolves DNS at connect
+time**. We cannot force Scrapy to connect to the literal IP we validated, so
+**DNS-rebinding / TOCTOU on an allowlisted domain is a residual risk**: an
+attacker controlling an allowlisted domain's DNS could answer with a global IP at
+validate time and an internal IP at connect time.
+
+- Why not fixed now: wiring a pinned-IP custom resolver into the Scrapy
+  subprocess is heavy; deferred to a future pinned-connection transport (e.g. an
+  httpx fetcher that connects to the literal IP with a Host-header override).
+- `pinned_ip` / `revalidate_redirect` are kept (and tested) as drop-in building
+  blocks for that future transport — they are **not** claimed as active today.
+- Mitigations in place meanwhile: tight `allowed_domains`, scheme allowlist, the
+  per-resolved-IP `is_global` reject (rejects any internal A/AAAA record at
+  validate time), and no redirect following.
+
 ## Sign-off (to be completed by PM/legal)
 
 - [ ] Confirmed in writing: no named statutory erasure obligation for MVP.

@@ -274,3 +274,144 @@ def test_process_persists_draft_for_review_packet(store, audit):
 
 def test_load_draft_missing_returns_none(store):
     assert pl.load_draft(store, "nope") is None
+
+
+# --- assemble verdict: truncated draft short-circuits to NEEDS_REVISION -------
+
+
+class _FakeChatClient:
+    """Minimal LlmClient stand-in for process(): a fixed ChatResult or a raise.
+
+    `assemble` only needs `.chat(...)` returning a ChatResult and `.model`."""
+
+    model = "fake-model"
+
+    def __init__(self, *, result=None, raises=None):
+        self._result = result
+        self._raises = raises
+
+    def chat(self, **kwargs):
+        if self._raises is not None:
+            raise self._raises
+        return self._result
+
+
+def _clean_index(store):
+    # Present-but-empty site index so dedup returns unique (not uncertain).
+    (store.base_dir / "site_index.jsonl").write_text("", encoding="utf-8")
+
+
+def test_process_truncated_draft_short_circuits_needs_revision(store, audit, monkeypatch):
+    """P2: finish_reason=length -> assemble produces a NEEDS_REVISION draft;
+    process must persist NEEDS_REVISION (carrying the truncation reason) WITHOUT
+    running grounding/lint."""
+    from lcp.adapters.llm.client import ChatResult
+
+    _clean_index(store)
+    truncated = ChatResult(
+        text="partial...", finish_reason="length", model="fake-model",
+        needs_revision=True, revision_reason="truncated:length", executed=True,
+    )
+    p = pl.Pipeline(
+        Config(), store, audit,
+        crawler=FakeCrawler(), llm_client=_FakeChatClient(result=truncated),
+    )
+    p.stage1(_spec(store, "jt"), ts=TS)
+
+    # Grounding/lint must NOT run -> their audit events must be absent.
+    res = p.process("jt", ts=TS, title="台北華山美食市集週末熱鬧登場")
+    assert res.final_state is JobState.NEEDS_REVISION
+    assert res.stopped_at == "assemble"
+    assert store.get_job("jt").state is JobState.NEEDS_REVISION
+    assert any("truncated:length" in n for n in res.notes)
+
+    events = {l["event"] for l in audit._read_lines() if l["job_id"] == "jt"}
+    assert "GROUNDING_GATE" not in events
+    assert "LINT_GATE" not in events
+    # No leftover .processing marker.
+    assert not store.is_processing("jt")
+
+
+# --- LLM 5xx mid-process -> PROCESS_FAILED (retriable), marker cleared --------
+
+
+def test_process_external_error_lands_process_failed_and_retries(store, audit):
+    """P2: an LLM ExternalServiceError mid-process must NOT leave the job at
+    CRAWLED — it lands PROCESS_FAILED (retriable) with the marker cleared, and a
+    re-run from PROCESS_FAILED works end to end."""
+    from lcp.adapters.llm.client import ChatResult
+    from lcp.core.errors import ExternalServiceError
+
+    _clean_index(store)
+    failing = _FakeChatClient(raises=ExternalServiceError("LLM call failed (503)"))
+    p = pl.Pipeline(
+        Config(), store, audit, crawler=FakeCrawler(), llm_client=failing,
+    )
+    p.stage1(_spec(store, "je"), ts=TS)
+
+    res = p.process("je", ts=TS, title="台北華山美食市集週末熱鬧登場")
+    assert res.final_state is JobState.PROCESS_FAILED
+    assert res.stopped_at == "error"
+    assert store.get_job("je").state is JobState.PROCESS_FAILED
+    assert not store.is_processing("je")  # marker cleared (try/finally)
+
+    # Retry from PROCESS_FAILED with a now-healthy client -> reaches a normal
+    # resting state (here a clean draft passes to PROCESSED).
+    from lcp.core.draft import DraftStatus
+
+    ok = ChatResult(
+        text="重寫後的完整內文，足夠長度。", finish_reason="stop", model="fake-model",
+        needs_revision=False, revision_reason=None, executed=True,
+    )
+    p2 = pl.Pipeline(
+        Config(), store, audit, crawler=FakeCrawler(),
+        llm_client=_FakeChatClient(result=ok),
+    )
+    res2 = p2.process("je", ts=TS, title="台北華山美食市集週末熱鬧登場")
+    # The retry runs the gates again (no longer stuck at CRAWLED/PROCESS_FAILED).
+    assert res2.final_state in (
+        JobState.PROCESSED, JobState.NEEDS_HUMAN_REVIEW, JobState.NEEDS_REVISION,
+    )
+    assert store.get_job("je").state is not JobState.PROCESS_FAILED
+
+
+# --- dry_run cannot be bypassed by an injected live client -------------------
+
+
+def test_dry_run_forces_injected_client_to_dry_mode(store, audit):
+    """P3 regression: Pipeline(dry_run=True, llm_client=<live>) must NOT call the
+    API — the injected client is forced into dry mode."""
+    from lcp.adapters.llm.client import LlmClient
+    from lcp.core.config import LlmConfig
+
+    _clean_index(store)
+    called = {"n": 0}
+
+    class _BoomCompletions:
+        def create(self, **kwargs):
+            called["n"] += 1
+            raise AssertionError("live API must not be called under dry_run")
+
+    class _BoomClient:
+        def __init__(self, **kwargs):
+            import types as _t
+            self.chat = _t.SimpleNamespace(completions=_BoomCompletions())
+
+    cfg = Config(
+        llm=LlmConfig(
+            base_url="https://llm.example.com/v1", model="m",
+            allowed_hosts=["llm.example.com"],
+        )
+    )
+    live = LlmClient(cfg, dry_run=False, client_factory=lambda **k: _BoomClient(**k))
+
+    # Pipeline is dry-run but a LIVE client was injected -> must be forced dry.
+    p = pl.Pipeline(cfg, store, audit, dry_run=True,
+                    crawler=FakeCrawler(), llm_client=live)
+    p.stage1(_spec(store, "jdry"), ts=TS)
+    res = p.process("jdry", ts=TS, title="台北華山美食市集週末熱鬧登場")
+
+    assert called["n"] == 0  # API never hit
+    assert res.dry_run is True
+    if res.draft is not None:
+        assert res.draft.executed is False

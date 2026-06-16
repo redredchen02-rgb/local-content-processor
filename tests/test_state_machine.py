@@ -38,6 +38,14 @@ def test_supersede_from_approved():
     validate_transition(JobState.NEEDS_REVISION, JobState.SUPERSEDED)
 
 
+def test_needs_human_review_can_supersede_and_resolve():
+    # NHR is no longer a dead-end: it can exit to PROCESSED (resolve), REJECTED
+    # (reject), or SUPERSEDED (redo).
+    validate_transition(JobState.NEEDS_HUMAN_REVIEW, JobState.PROCESSED)
+    validate_transition(JobState.NEEDS_HUMAN_REVIEW, JobState.REJECTED)
+    validate_transition(JobState.NEEDS_HUMAN_REVIEW, JobState.SUPERSEDED)
+
+
 def test_retry_edges():
     validate_transition(JobState.CRAWL_FAILED, JobState.NEW)
     validate_transition(JobState.PROCESS_FAILED, JobState.PROCESSING)

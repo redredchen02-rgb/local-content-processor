@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from ...core.config import Config
 from ...core.draft import Draft
 from ...core.errors import InputValidationError
-from ...core.state import JobState
+from ...core.state import JobState, ReviewReason
 from ..storage.audit_log import (
     EVENT_SIGNOFF_INVALIDATED,
     EVENT_SUPERSEDED,
@@ -49,6 +49,7 @@ from .review_packet import compute_body_sha256, read_review_manifest
 EVENT_SIGNOFF_APPROVE = "SIGNOFF_APPROVE"
 EVENT_SIGNOFF_REJECT = "SIGNOFF_REJECT"
 EVENT_PUBLISHED_RECORDED = "PUBLISHED_RECORDED"
+EVENT_NHR_RESOLVED = "NHR_RESOLVED"
 
 # VERBATIM disclaimer — recorded with every sign-off. Do not paraphrase: it is
 # the honest statement that this is attribution, not authentication (plan).
@@ -61,8 +62,15 @@ DISCLAIMER = (
 
 # States from which a job may be superseded (redo). APPROVED is included on
 # purpose: an already-signed job can be re-done, voiding the old sign-off (plan).
+# NEEDS_HUMAN_REVIEW is included so a held job can be re-done instead of being
+# stuck (the state machine carries the matching edge).
 _SUPERSEDABLE = frozenset(
-    {JobState.REVIEW_PENDING, JobState.APPROVED, JobState.NEEDS_REVISION}
+    {
+        JobState.REVIEW_PENDING,
+        JobState.APPROVED,
+        JobState.NEEDS_REVISION,
+        JobState.NEEDS_HUMAN_REVIEW,
+    }
 )
 
 
@@ -134,11 +142,13 @@ def approve(
     Refuses (the state machine raises) for any non-REVIEW_PENDING source state —
     so BLOCKED / DUPLICATE / NEEDS_HUMAN_REVIEW have NO path to APPROVED.
 
-    If `draft` is supplied, re-verifies it still hashes to the FROZEN body +
-    title recorded by the review packet; a mismatch means the body was edited
-    after freeze and approval is refused. The bound hashes are written into the
-    audit event so the sign-off provably covers that artifact. Does NOT publish
-    (R26) — APPROVED is the most a machine action ever reaches."""
+    The frozen body binding is ALWAYS enforced: if `draft` is None we load the
+    persisted Stage-2 draft ourselves (belt-and-suspenders so a shell that
+    forgets to pass it still gets the check). We re-verify the draft still hashes
+    to the FROZEN body recorded by the review packet; a mismatch means the body
+    was edited after freeze and approval is refused. The bound hashes are written
+    into the audit event so the sign-off provably covers that artifact. Does NOT
+    publish (R26) — APPROVED is the most a machine action ever reaches."""
     observed = observed_os_user()
     try:
         _require_whitelisted(config, reviewer)
@@ -162,6 +172,13 @@ def approve(
     body_sha = freeze.get("body_sha256")
     title_sha = freeze.get("title_sha256")
     cover_sha = freeze.get("cover_sha256")
+
+    # Belt-and-suspenders: if the shell did not pass the draft, load the
+    # persisted one ourselves so the body binding is enforced unconditionally.
+    if draft is None:
+        from ...pipeline import load_draft
+
+        draft = load_draft(store, job_id)
 
     # Hash binding: the body MUST match the frozen hash. Editing the body after
     # the packet was built is detectable here and blocks approval.
@@ -215,11 +232,16 @@ def reject(
     audit: AuditLog,
     ts: str,
 ) -> SignoffRecord:
-    """Reject a REVIEW_PENDING job: REVIEW_PENDING -> REJECTED (terminal).
+    """Reject a REVIEW_PENDING / APPROVED / NEEDS_HUMAN_REVIEW job -> REJECTED.
 
-    Whitelist + state-machine enforced exactly like `approve`. `reason` is an
-    operator note recorded under a PII-safe key (`reject_note`); keep it free of
-    scraped text — it is the reviewer's own words, not subject PII."""
+    Whitelist + state-machine enforced like `approve`. A FREEZE record is only
+    required when rejecting from REVIEW_PENDING / APPROVED (those jobs always have
+    a review packet, and we bind the rejected artifact's body hash). A
+    NEEDS_HUMAN_REVIEW job (risk/dedup/grounding hold) has NO packet, so it would
+    otherwise be stuck — rejecting it must NOT require a freeze; the state machine
+    (NEEDS_HUMAN_REVIEW -> REJECTED) is the gate. `reason` is an operator note
+    recorded under a PII-safe key (`reject_note`); keep it free of scraped text —
+    it is the reviewer's own words, not subject PII."""
     observed = observed_os_user()
     try:
         _require_whitelisted(config, reviewer)
@@ -239,7 +261,16 @@ def reject(
         )
         raise
 
-    freeze = _freeze_hashes(store, job_id)
+    record = store.get_job(job_id)
+    if record is None:
+        raise InputValidationError(f"unknown job: {job_id}")
+
+    # Freeze is only meaningful for packet-bearing states. A NEEDS_HUMAN_REVIEW
+    # job has no packet — requiring a freeze would dead-end it (the original bug).
+    freeze: dict = {}
+    if record.state is not JobState.NEEDS_HUMAN_REVIEW:
+        freeze = _freeze_hashes(store, job_id)
+
     store.set_state(job_id, JobState.REJECTED, updated_at=ts)
 
     audit.append(
@@ -253,6 +284,7 @@ def reject(
             "reviewer_stated": reviewer,
             "observed_os_user": observed,
             "reject_note": reason,
+            "rejected_from_state": record.state.value,
             "disclaimer": DISCLAIMER,
         },
     )
@@ -269,19 +301,134 @@ def reject(
     )
 
 
+def resolve(
+    job_id: str,
+    reviewer: str,
+    *,
+    config: Config,
+    store: JobStore,
+    audit: AuditLog,
+    ts: str,
+    relint: bool = False,
+    reason: str | None = None,
+) -> SignoffRecord:
+    """Operator path OUT of NEEDS_HUMAN_REVIEW: NEEDS_HUMAN_REVIEW -> PROCESSED.
+
+    A held job (risk / dedup / grounding) otherwise has no command that drives it
+    forward — this is that command. It is honest about WHY each hold clears:
+
+      * GROUNDING hold + ``relint=True``: re-run lint (the human already vouched
+        for grounding when they cleared it, plan 架構審查 2d). Only a CLEAN lint
+        promotes the job to PROCESSED; a still-failing lint refuses (keep it for
+        the human to re-edit / supersede).
+      * RISK / DEDUP hold (or a grounding hold without relint): a human OVERRIDE.
+        The state machine already allows NHR -> PROCESSED; we require an explicit
+        ``reason`` and record it (reviewer + reason) so the override is on the
+        audit record, not silent.
+
+    Whitelist-enforced like approve/reject. The job MUST currently be in
+    NEEDS_HUMAN_REVIEW. Returns a SignoffRecord (decision="resolved")."""
+    observed = observed_os_user()
+    _require_whitelisted(config, reviewer)
+
+    record = store.get_job(job_id)
+    if record is None:
+        raise InputValidationError(f"unknown job: {job_id}")
+    if record.state is not JobState.NEEDS_HUMAN_REVIEW:
+        raise InputValidationError(
+            f"resolve requires a NEEDS_HUMAN_REVIEW job; {job_id} is "
+            f"{record.state.value}"
+        )
+
+    hold = record.review_reason
+    mode: str
+    if relint and hold is ReviewReason.GROUNDING:
+        # Re-lint path: the human cleared grounding; lint must re-run clean.
+        from ...pipeline import _read_source_text, load_draft
+        from ..processor.draft_linter import (
+            build_lint_config,
+            relint_after_grounding_cleared,
+        )
+        from ...core.rules.lint_rules import LintStatus
+
+        draft = load_draft(store, job_id)
+        if draft is None:
+            raise InputValidationError(
+                f"no processed draft for {job_id}; cannot re-lint to resolve"
+            )
+        lint_config = build_lint_config(config.content, config.categories)
+        outcome = relint_after_grounding_cleared(
+            job_id=job_id,
+            draft=draft,
+            source_text=_read_source_text(store, job_id),
+            lint_config=lint_config,
+            audit=audit,
+            ts=ts,
+            actor=reviewer,
+        )
+        if outcome.lint is None or outcome.lint.status is not LintStatus.PASS:
+            raise InputValidationError(
+                f"re-lint still fails for {job_id}; the grounding hold cannot be "
+                "auto-resolved — re-edit or supersede instead"
+            )
+        mode = "relint_clean"
+    else:
+        # Override path (risk / dedup, or grounding without relint): explicit +
+        # audited. An override without a reason is refused — keep it honest.
+        if not reason or not reason.strip():
+            raise InputValidationError(
+                "resolving a risk/dedup hold (or a grounding hold without "
+                "--relint) is a human OVERRIDE and requires an explicit reason"
+            )
+        mode = "human_override"
+
+    # State transition: NEEDS_HUMAN_REVIEW -> PROCESSED (state machine gate).
+    store.set_state(job_id, JobState.PROCESSED, updated_at=ts)
+
+    audit.append(
+        ts=ts,
+        stage="signoff",
+        event=EVENT_NHR_RESOLVED,
+        job_id=job_id,
+        actor=observed,
+        extra={
+            "reviewer_stated": reviewer,
+            "observed_os_user": observed,
+            "resolved_from_reason": hold.value if hold else None,
+            "mode": mode,
+            "override_note": reason if mode == "human_override" else None,
+            "disclaimer": DISCLAIMER,
+        },
+    )
+
+    return SignoffRecord(
+        job_id=job_id,
+        decision="resolved",
+        reviewer_stated=reviewer,
+        observed_os_user=observed,
+        body_sha256="",
+        title_sha256="",
+        cover_sha256=None,
+        new_state=JobState.PROCESSED,
+    )
+
+
 def backfill_published_url(
     job_id: str,
     url: str,
     *,
+    config: Config,
     store: JobStore,
     audit: AuditLog,
     ts: str,
     attested: bool,
-    reviewer: str | None = None,
+    reviewer: str,
 ) -> JobState:
     """Close the responsibility loop: APPROVED -> PUBLISHED_RECORDED (plan R37).
 
-    Requires BOTH a non-empty published URL AND an operator attestation tick
+    Requires a WHITELISTED reviewer (like approve/reject — recording a publish is
+    an accountable operator action) PLUS BOTH a non-empty published URL AND an
+    operator attestation tick
     (`attested=True`) confirming the published version IS the signed-off version.
     Without the tick (or with an empty URL) the job STAYS APPROVED — the machine
     does not publish and cannot complete the loop on its own (R26/R37).
@@ -290,6 +437,10 @@ def backfill_published_url(
     fact that a URL was recorded + the body hash. The URL itself is written to a
     0600 file in the job dir (operator-facing, plaintext, best-effort deletion).
     We never fetch or resolve it."""
+    # Recording a publish is an accountable action -> require a whitelisted
+    # reviewer, exactly like approve/reject.
+    _require_whitelisted(config, reviewer)
+
     record = store.get_job(job_id)
     if record is None:
         raise InputValidationError(f"unknown job: {job_id}")

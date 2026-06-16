@@ -245,7 +245,7 @@ function bind() {
 
   $("btn-backfill").addEventListener("click", async function () {
     const a = api(); if (!a) return;
-    const res = await a.backfill($("job-id").value, $("published-url").value, $("attest").checked);
+    const res = await a.backfill($("job-id").value, $("reviewer").value, $("published-url").value, $("attest").checked);
     handleResult(res, "recorded publish");
     refreshJobs(); refreshSummary();
   });

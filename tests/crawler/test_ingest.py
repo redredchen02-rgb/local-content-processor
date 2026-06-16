@@ -95,6 +95,34 @@ def test_no_clobber_existing_job(tmp_path):
         LocalIngestCrawler().crawl(spec2)
 
 
+def test_create_only_refusal_is_side_effect_free(tmp_path):
+    """P3 regression: a second ingest on an existing job must NOT mutate
+    source.txt (or copy media) before raising — the refusal is checked at the
+    TOP, so the original bundle is untouched."""
+    src = tmp_path / "material"
+    src.mkdir()
+    (src / "title.txt").write_text("first title", encoding="utf-8")
+    (src / "body.txt").write_text("the original body", encoding="utf-8")
+    job_dir = tmp_path / "j6"
+    bundle = LocalIngestCrawler().crawl(_spec(job_dir, src))
+    src_txt = bundle.raw_dir / "source.txt"
+    before = src_txt.read_text(encoding="utf-8")
+    assert before == "the original body"
+
+    # A second ingest with DIFFERENT material must raise WITHOUT touching the
+    # existing source.txt (would-be clobber happens before the manifest write).
+    src2 = tmp_path / "material2"
+    src2.mkdir()
+    (src2 / "title.txt").write_text("second title", encoding="utf-8")
+    (src2 / "body.txt").write_text("TAMPERED BODY THAT MUST NOT BE WRITTEN",
+                                   encoding="utf-8")
+    with pytest.raises(InputValidationError):
+        LocalIngestCrawler().crawl(_spec(job_dir, src2))
+
+    # source.txt is unchanged — the refusal had no side effects.
+    assert src_txt.read_text(encoding="utf-8") == before
+
+
 def test_missing_material_folder_rejected(tmp_path):
     spec = _spec(tmp_path / "j4", tmp_path / "does-not-exist")
     with pytest.raises(InputValidationError):

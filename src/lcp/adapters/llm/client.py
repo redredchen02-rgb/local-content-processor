@@ -177,6 +177,7 @@ class LlmClient:
         self._allow_http_hosts = frozenset(allow_http_hosts or ())
         self._client_factory = client_factory
         self._client = None  # built lazily
+        self._resolved_api_key: str | None = None  # for exact-string redaction
 
     @property
     def model(self) -> str:
@@ -207,6 +208,9 @@ class LlmClient:
 
         # Resolve the secret last (raises DependencyError if absent). Never log.
         api_key = self._config.llm_api_key()
+        # Remember it ONLY to redact the EXACT string from any error message a
+        # provider echoes back (belt-and-suspenders over the generic redact()).
+        self._resolved_api_key = api_key
 
         factory = self._client_factory
         if factory is None:
@@ -322,7 +326,12 @@ class LlmClient:
         through unchanged."""
         if isinstance(e, (DependencyError, InputValidationError)):
             return e
-        # Redact in case any provider error string echoes a header/key.
-        safe = redact(f"{type(e).__name__}: {e}")
+        # Redact in case any provider error string echoes a header/key. First
+        # mask the EXACT resolved api_key (a provider may echo it verbatim, e.g.
+        # "Incorrect API key provided: sk-..."), THEN the generic shapes.
+        raw = f"{type(e).__name__}: {e}"
+        if self._resolved_api_key:
+            raw = raw.replace(self._resolved_api_key, "***REDACTED***")
+        safe = redact(raw)
         logger.warning("LLM call failed: %s", safe)
         return ExternalServiceError(f"LLM call failed ({safe})")
