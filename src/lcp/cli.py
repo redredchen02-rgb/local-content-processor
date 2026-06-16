@@ -167,11 +167,12 @@ def ingest(ctx, directory, job_id):
 @click.option("--title", default="", help="Working title (lint/risk input)")
 @click.pass_context
 def process(ctx, job_id, title):
-    """Stage 2: validate media, risk + dedup gates, assemble, lint + ground.
+    """Stage 2: risk + dedup gates, assemble, lint + ground.
 
-    Honours --dry-run: the LLM is NOT called and no external system is mutated
-    (the draft is marked not-executed). Stops at the first gate that parks the
-    job (BLOCKED / DUPLICATE / NEEDS_*)."""
+    (Media validate/normalize is staged in adapters/media but NOT yet wired into
+    this path.) Honours --dry-run: the LLM is NOT called and no external system is
+    mutated (the draft is marked not-executed). Stops at the first gate that parks
+    the job (BLOCKED / DUPLICATE / NEEDS_*)."""
     c = Ctx(ctx.obj)
     p = pl.Pipeline(c.config, c.store, c.audit, dry_run=c.dry_run)
     res = p.process(job_id, ts=_now(), title=title)

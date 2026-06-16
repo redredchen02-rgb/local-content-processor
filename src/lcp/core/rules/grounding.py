@@ -34,6 +34,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import Enum
+from functools import lru_cache
 from typing import Protocol, runtime_checkable
 
 from ..draft import Draft
@@ -114,13 +115,19 @@ def _normalize(text: str) -> str:
     return _WS_RE.sub("", _PUNCT_RE.sub("", text.lower()))
 
 
-def _char_shingles(text: str, n: int = _OVERLAP_NGRAM) -> set[str]:
+@lru_cache(maxsize=512)
+def _char_shingles(text: str, n: int = _OVERLAP_NGRAM) -> frozenset[str]:
     """Character n-grams of the normalized text. Works for CJK (no word
-    boundaries) AND space-delimited text without a tokenizer/segmenter."""
+    boundaries) AND space-delimited text without a tokenizer/segmenter.
+
+    Memoized (bounded LRU): verify_grounding shingles the SAME source once per
+    claim, so re-shingling it was O(claims x |source|); the cache makes it
+    O(|source|) once per source. Returns a frozenset so the shared cached value
+    is immutable (callers only ever read it)."""
     s = _normalize(text)
     if len(s) < n:
-        return {s} if s else set()
-    return {s[i : i + n] for i in range(len(s) - n + 1)}
+        return frozenset({s}) if s else frozenset()
+    return frozenset(s[i : i + n] for i in range(len(s) - n + 1))
 
 
 @dataclass(frozen=True)

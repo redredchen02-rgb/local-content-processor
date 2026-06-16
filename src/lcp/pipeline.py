@@ -12,15 +12,17 @@ WHAT lives here:
     ingest (Stage 1) -> process (Stage 2) -> optionally build the review packet
     (Stage 4). Returns a :class:`RunResult` describing where the job came to
     rest (it may stop early at any gate: BLOCKED / DUPLICATE / NEEDS_*).
-  * :meth:`Pipeline.process` — Stage 2: media validate/normalize, risk gate,
-    dedup gate, constrained-rewrite assemble (dry_run aware), lint + grounding.
+  * :meth:`Pipeline.process` — Stage 2: risk gate, dedup gate,
+    constrained-rewrite assemble (dry_run aware), lint + grounding. (Media
+    validate/normalize is staged in adapters/media but NOT yet wired into this
+    path — see adapters/media/__init__.py.)
   * :func:`batch_summary` — counts-by-state for cron/batch (flow G5).
   * :func:`list_jobs` — pull-style worklist filtered by state (flow G5/G7).
 
 dry_run (R32): threaded straight through to the LlmClient (constructed with
 dry_run=True) and the assembler — in dry-run the LLM is NOT called and no
 external system is mutated; the resulting Draft is marked NOT_EXECUTED. The
-deterministic local stages (crawl/ingest already done, media, gates) still run,
+deterministic local stages (crawl/ingest already done, gates) still run,
 but the process result is flagged ``dry_run=True`` so the shell can label it."""
 
 from __future__ import annotations
