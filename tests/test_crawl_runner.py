@@ -286,12 +286,17 @@ def _spec(tmp_path, job_id="jx"):
 
 
 def test_extract_dedupes_duplicate_media_urls():
+    # Use literal globally-routable IPs so net_guard's second-order SSRF check
+    # classifies them directly (is_global) without any live DNS lookup. The
+    # duplicate a.jpg is still deduped; b.jpg (different host) stays distinct.
+    a = "https://93.184.216.34/a.jpg"
+    b = "https://93.184.216.35/b.jpg"
     html = (
         "<html><title>T</title><body><p>x</p>"
-        '<img src="/a.jpg"><img src="/a.jpg"><img src="/b.jpg"></body></html>'
+        f'<img src="{a}"><img src="{a}"><img src="{b}"></body></html>'
     )
     out = scrapy_impl.extract_content(_response(html))
-    assert out["image_urls"] == ["https://example.com/a.jpg", "https://example.com/b.jpg"]
+    assert out["image_urls"] == [a, b]
 
 
 def test_title_present_body_empty_needs_revision(tmp_path):

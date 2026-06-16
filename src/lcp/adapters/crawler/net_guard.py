@@ -224,7 +224,11 @@ def validate_url(
     url: str, *, resolver: Resolver | None = None
 ) -> ValidatedTarget:
     """Validate a URL for fetching. Raises InputValidationError on any SSRF
-    risk; returns a ValidatedTarget whose pinned_ip the caller connects to."""
+    risk. The ACTIVE defense is this validate-time check (scheme allowlist +
+    per-resolved-IP is_global reject). The returned ValidatedTarget.pinned_ip is
+    available for a future pinned-connection transport but is NOT consumed on the
+    Scrapy path (which re-resolves DNS at connect time) — see the SSRF RESIDUAL
+    note at the top of this module."""
     return _validate(url, resolver or default_resolver)
 
 
