@@ -12,17 +12,16 @@ WHAT lives here:
     ingest (Stage 1) -> process (Stage 2) -> optionally build the review packet
     (Stage 4). Returns a :class:`RunResult` describing where the job came to
     rest (it may stop early at any gate: BLOCKED / DUPLICATE / NEEDS_*).
-  * :meth:`Pipeline.process` — Stage 2: risk gate, dedup gate,
-    constrained-rewrite assemble (dry_run aware), lint + grounding. (Media
-    validate/normalize is staged in adapters/media but NOT yet wired into this
-    path — see adapters/media/__init__.py.)
+  * :meth:`Pipeline.process` — Stage 2: risk gate, media validation +
+    normalization (images -> 800px, 1300x640 cover, video spec/black checks),
+    dedup gate, constrained-rewrite assemble (dry_run aware), lint + grounding.
   * :func:`batch_summary` — counts-by-state for cron/batch (flow G5).
   * :func:`list_jobs` — pull-style worklist filtered by state (flow G5/G7).
 
 dry_run (R32): threaded straight through to the LlmClient (constructed with
 dry_run=True) and the assembler — in dry-run the LLM is NOT called and no
 external system is mutated; the resulting Draft is marked NOT_EXECUTED. The
-deterministic local stages (crawl/ingest already done, gates) still run,
+deterministic local stages (crawl/ingest already done, media, gates) still run,
 but the process result is flagged ``dry_run=True`` so the shell can label it."""
 
 from __future__ import annotations
@@ -41,7 +40,7 @@ from .adapters.crawler.base import (
 )
 from .adapters.llm.assembler import assemble
 from .adapters.llm.client import LlmClient
-from .adapters.processor import dedup_checker, risk_checker
+from .adapters.processor import dedup_checker, media_checker, risk_checker
 from .adapters.processor.draft_linter import build_lint_config, run_draft_lint_gate
 from .adapters.publisher.review_packet import ReviewPacket, build_review_packet
 from .adapters.storage.audit_log import AuditLog
@@ -201,8 +200,9 @@ class Pipeline:
         site_index_path: str | Path | None = None,
         has_videos: bool = False,
     ) -> ProcessResult:
-        """Stage 2: risk gate -> dedup gate -> assemble (dry_run aware) -> lint +
-        grounding. Stops at the FIRST gate that parks the job.
+        """Stage 2: risk gate -> media validation -> dedup gate -> assemble
+        (dry_run aware) -> lint + grounding. Stops at the FIRST gate that parks
+        the job.
 
         The job must rest at a legal PROCESSING-predecessor (CRAWLED /
         CRAWLED_WARN / PROCESS_FAILED — the last for a retry). A ``.processing``
@@ -304,6 +304,29 @@ class Pipeline:
                 final_state=risk_out.job_state,
                 dry_run=self.dry_run,
                 stopped_at="risk",
+                notes=notes,
+            )
+
+        # --- media validation + normalization (素材完整性 + 圖片/封面/影片規格) ---
+        # Runs after the cheap, terminal risk hard-stop (so redline content never
+        # triggers media subprocess work) and before the LLM (so bad media stops
+        # before spending tokens). A media quality issue -> NEEDS_REVISION (never
+        # BLOCKED). No media -> no-op. Deterministic local I/O, so it runs in
+        # dry-run too.
+        media_out = media_checker.run_media_gate(
+            job_id=job_id,
+            store=self.store,
+            audit=self.audit,
+            ts=ts,
+            media_config=self.config.media,
+        )
+        if media_out.job_state is not None:
+            return ProcessResult(
+                job_id=job_id,
+                draft=None,
+                final_state=media_out.job_state,
+                dry_run=self.dry_run,
+                stopped_at="media",
                 notes=notes,
             )
 
