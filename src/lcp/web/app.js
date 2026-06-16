@@ -189,10 +189,50 @@ async function loadDisclaimer() {
   $("disclaimer").value = res.disclaimer || "";
 }
 
+// --- LLM settings ----------------------------------------------------------
+
+function setKeyState(isSet) {
+  setText($("settings-key-state"), isSet ? "key: set" : "key: not set");
+}
+
+async function loadSettings() {
+  const a = api();
+  if (!a) return;
+  const res = await a.get_settings();
+  if (res.error) {
+    setText($("settings-status"), "error: " + res.error);
+    return;
+  }
+  // .value carries data only (never parsed as HTML); the api_key is never sent
+  // back by get_settings, so there is nothing secret to place in the DOM.
+  $("settings-base-url").value = res.base_url || "";
+  $("settings-model").value = res.model || "";
+  setKeyState(res.api_key_set);
+}
+
+async function saveSettings() {
+  const a = api();
+  if (!a) return;
+  const res = await a.save_settings(
+    $("settings-base-url").value,
+    $("settings-model").value,
+    $("settings-api-key").value
+  );
+  // Clear the secret from the DOM regardless of outcome.
+  $("settings-api-key").value = "";
+  if (res.error) {
+    setText($("settings-status"), "error (" + res.exit_code + "): " + res.error);
+    return;
+  }
+  setKeyState(res.api_key_set);
+  setText($("settings-status"), "saved" + (res.key_saved ? " (api_key updated)" : ""));
+}
+
 function bind() {
   $("refresh-summary").addEventListener("click", refreshSummary);
   $("refresh-jobs").addEventListener("click", refreshJobs);
   $("btn-load-packet").addEventListener("click", loadPacket);
+  $("btn-save-settings").addEventListener("click", saveSettings);
 
   $("btn-crawl").addEventListener("click", async function () {
     const a = api(); if (!a) return;
@@ -255,6 +295,7 @@ function init() {
   bind();
   populateReviewers();
   loadDisclaimer();
+  loadSettings();
   refreshSummary();
   refreshJobs();
 }

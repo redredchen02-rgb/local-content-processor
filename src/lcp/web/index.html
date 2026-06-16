@@ -19,6 +19,27 @@
     <p class="note">The machine never auto-publishes. Sign-off is attribution, not authentication.</p>
   </header>
 
+  <!-- LLM settings: base_url/model -> config.yaml; api_key -> OS keyring ONLY -->
+  <section id="settings">
+    <h2>LLM settings</h2>
+    <p class="note">api_key is stored in the OS keyring — never written to a file, never shown here.</p>
+    <div class="row">
+      <label for="settings-base-url">Base URL (must end with /v1)</label>
+      <input id="settings-base-url" type="text" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="row">
+      <label for="settings-model">Model</label>
+      <input id="settings-model" type="text" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="row">
+      <label for="settings-api-key">API key</label>
+      <input id="settings-api-key" type="password" autocomplete="off">
+      <span id="settings-key-state" class="status"></span>
+    </div>
+    <button id="btn-save-settings" type="button">Save settings</button>
+    <p id="settings-status" class="status"></p>
+  </section>
+
   <!-- Home: counts-by-state (G7) -->
   <section id="home">
     <h2>Summary</h2>

@@ -31,7 +31,7 @@ from .adapters.publisher.review_packet import build_review_packet
 from .adapters.storage.audit_log import AuditLog
 from .adapters.storage.job_store import JobStore
 from .core.config import load_config
-from .core.errors import EXIT_INTERNAL, EXIT_OK, LcpError, UsageError
+from .core.errors import DependencyError, EXIT_INTERNAL, EXIT_OK, LcpError, UsageError
 from .core.models import SourceType
 from .runtime_hardening import apply_hardening
 
@@ -464,6 +464,24 @@ def run(ctx, url, input_dir, job_id, target, title, source_urls):
         human=f"run {job_id} --until {target}: {res.final_state.value}"
         + (" [dry-run]" if res.dry_run else ""),
     )
+
+
+@cli.command()
+@click.pass_context
+def gui(ctx):
+    """Launch the minimal desktop GUI (pywebview).
+
+    Configure the LLM endpoint + api_key from the Settings panel; base_url/model
+    go to the config file, the api_key goes to the OS keyring only (never a file).
+    Needs the gui extra: pip install 'local-content-processor[gui]'."""
+    from .gui import launch
+
+    try:
+        launch(config_path=ctx.obj.get("config_path"))
+    except ModuleNotFoundError as e:  # pywebview not installed
+        raise DependencyError(
+            "GUI needs pywebview: pip install 'local-content-processor[gui]'"
+        ) from e
 
 
 class CrawlRunnerCrawler:

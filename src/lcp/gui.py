@@ -49,6 +49,7 @@ import threading
 from pathlib import Path
 
 from . import pipeline as pl
+from .core import config as _config
 from .adapters.crawler.base import SourceSpec
 from .adapters.crawler.crawl_runner import CrawlRunner
 from .adapters.crawler.ingest import LocalIngestCrawler
@@ -91,7 +92,12 @@ class _Ctx:
     opens its OWN JobStore connection (WAL-safe across background threads)."""
 
     def __init__(self, config_path: str | None, base_dir: str | None):
-        self.config = load_config(config_path)
+        # Lenient: the GUI MANAGES its own config file (Settings panel), so a
+        # path that does not exist yet falls back to defaults rather than raising
+        # — but a present-but-invalid file still surfaces its error. An explicit
+        # path is never silently ignored once the file exists.
+        load_path = config_path if (config_path and Path(config_path).exists()) else None
+        self.config = load_config(load_path)
         resolved = base_dir or self.config.storage.base_dir
         self.store = JobStore(base_dir=resolved)
         self.audit = AuditLog(Path(resolved) / "audit.jsonl")
@@ -454,6 +460,74 @@ class Api:
         is our own fixed text, never attacker-shapeable)."""
         return {"disclaimer": signoff.DISCLAIMER}
 
+    # --- LLM settings (base_url/model -> file; api_key -> keyring ONLY) -------
+
+    def _settings_path(self) -> Path:
+        """Where save_settings writes. The configured path if one was given, else
+        ``config.yaml`` in the working directory (the gitignored convention)."""
+        return Path(self._config_path) if self._config_path else Path("config.yaml")
+
+    def get_settings(self) -> dict:
+        """Non-secret LLM settings + whether an api_key is set. NEVER returns the
+        key (only a boolean). All strings escaped for safe rendering."""
+        try:
+            c = self._ctx()
+            llm = c.config.llm
+            return {
+                "base_url": escape_html(llm.base_url),
+                "model": escape_html(llm.model),
+                "allowed_hosts": [escape_html(h) for h in llm.allowed_hosts],
+                "api_key_set": c.config.has_api_key(),
+                "config_path": escape_html(str(self._settings_path())),
+            }
+        except LcpError as e:
+            return _error_dict(e)
+
+    def save_settings(
+        self, base_url: str = "", model: str = "", api_key: str = ""
+    ) -> dict:
+        """Persist base_url + model to the config file (its host auto-added to
+        allowed_hosts) and, when api_key is non-empty, store it in the OS keyring.
+
+        The api_key is NEVER written to a file, returned across the bridge, or
+        logged. An empty api_key leaves the existing key untouched.
+
+        Ordering matters: the key (the failure-prone, secret-bearing step) is
+        stored in the keyring FIRST; the config file is written only after that
+        succeeds, so a keyring failure aborts before any file mutation."""
+        try:
+            from urllib.parse import urlsplit
+
+            base_url = (base_url or "").strip()
+            model = (model or "").strip()
+            host = _config.validate_llm_base_url(base_url)  # raises on bad shape
+
+            # 1. Secret first — if this fails, nothing is persisted to the file.
+            key_saved = False
+            if api_key and api_key.strip():
+                username = self._ctx().config.llm.keyring_username
+                _config.set_llm_api_key(api_key, username=username)
+                key_saved = True
+
+            # 2. Then the file. A loopback http endpoint also needs its host in
+            # allow_http_hosts to be usable at call time (client R40 gate).
+            is_http = urlsplit(base_url).scheme.lower() == "http"
+            _config.update_llm_config_file(
+                self._settings_path(),
+                base_url=base_url,
+                model=model,
+                allowed_hosts_add=host,
+                allow_http_hosts_add=host if is_http else None,
+            )
+            out = self.get_settings()
+            if "error" in out:
+                return out
+            out["saved"] = True
+            out["key_saved"] = key_saved
+            return out
+        except LcpError as e:
+            return _error_dict(e)
+
 
 def _input_error(msg: str) -> LcpError:
     """Build an InputValidationError without importing it at the call site."""
@@ -473,6 +547,10 @@ def launch(config_path: str | None = None):  # pragma: no cover - desktop only
     clashes with the no-inline CSP)."""
     import webview  # lazy: never imported at module top-level
 
+    # Resolve a concrete config path so the Settings panel reads and writes the
+    # SAME file the rest of the GUI loads (config.yaml in cwd by default; it is
+    # gitignored). A missing file is tolerated — the panel creates it.
+    config_path = config_path or "config.yaml"
     api = Api(config_path=config_path)
     webview.create_window(
         "Local Content Processor",
