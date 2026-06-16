@@ -34,7 +34,7 @@ from .adapters.crawler.base import (
     STATUS_CRAWLED,
     STATUS_CRAWLED_WARN,
     STATUS_NEEDS_REVISION,
-    Crawler,
+    CrawlerProtocol,
     RawJobBundle,
     SourceSpec,
 )
@@ -47,7 +47,7 @@ from .adapters.storage.audit_log import AuditLog
 from .adapters.storage.job_store import JobRecord, JobStore
 from .core.config import Config
 from .core.draft import Draft, DraftStatus
-from .core.errors import ExternalServiceError, InputValidationError
+from .core.errors import ExternalServiceError, InputValidationError, LcpError
 from .core.models import SourceType
 from .core.rules.risk_rules import RiskInput
 from .core.state import JobState, TRANSIENT_STATES
@@ -126,7 +126,7 @@ class Pipeline:
         audit: AuditLog,
         *,
         dry_run: bool = False,
-        crawler: Crawler | None = None,
+        crawler: CrawlerProtocol | None = None,
         llm_client: LlmClient | None = None,
     ) -> None:
         self.config = config
@@ -514,6 +514,11 @@ class Pipeline:
             )
 
         # target == review: build the packet (freeze -> REVIEW_PENDING).
+        # Reaching here means proc.final_state is PROCESSED, which guarantees a
+        # draft. Guard the invariant explicitly (fail closed; also narrows the
+        # Optional for the type checker).
+        if proc.draft is None:  # pragma: no cover - PROCESSED always carries a draft
+            raise LcpError(f"internal: PROCESSED job {spec.job_id} has no draft")
         packet = self.build_packet(
             spec.job_id,
             proc.draft,

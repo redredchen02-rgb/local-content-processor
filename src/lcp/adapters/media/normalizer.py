@@ -22,6 +22,7 @@ core ``asset_rules`` judges (plan Unit 5 architecture rule).
 from __future__ import annotations
 
 import warnings
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -194,7 +195,7 @@ def normalize_image(
 
 
 def make_cover(
-    src_paths: list[str | Path],
+    src_paths: Sequence[str | Path],
     dst_path: str | Path,
     *,
     cover_width: int = 1300,

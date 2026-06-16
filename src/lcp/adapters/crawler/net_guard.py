@@ -81,9 +81,9 @@ def default_resolver(host: str) -> list[str]:
         raise InputValidationError(f"DNS resolution failed for {host!r}: {e}") from e
     ips: list[str] = []
     for info in infos:
-        ip = info[4][0]
+        # info[4][0] is the address (str at runtime; typeshed widens to str|int).
         # Strip IPv6 scope id (e.g. fe80::1%en0).
-        ip = ip.split("%", 1)[0]
+        ip = str(info[4][0]).split("%", 1)[0]
         if ip not in ips:
             ips.append(ip)
     if not ips:

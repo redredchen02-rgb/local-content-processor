@@ -289,9 +289,9 @@ def _to_float(value: object) -> float | None:
 
 
 def _to_int(value: object) -> int | None:
-    if value is None:
+    if not isinstance(value, (str, int, float)):
         return None
     try:
-        return int(value)  # type: ignore[arg-type]
+        return int(value)
     except (TypeError, ValueError):
         return None
