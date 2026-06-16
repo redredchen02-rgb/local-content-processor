@@ -1,7 +1,7 @@
 ---
 title: "feat: Local Content Processor — MVP (Crawl → Process → Review packet)"
 type: feat
-status: active
+status: completed
 date: 2026-06-16
 deepened: 2026-06-16
 origin: docs/brainstorms/2026-06-16-local-content-processor-requirements.md
@@ -110,10 +110,10 @@ Greenfield（已驗證：repo 內僅有 origin 文件、非 git repo、無程式
 - **R42 抹除義務**：使用者確認**無具名法定抹除義務** ✅ → 落盤加密/crypto-shred 降 post-MVP，MVP 採 best-effort unlink + 誠實標註。
 
 ### Deferred to Implementation
-- **公司 LLM 端點確切規格**（base_url 後綴、模型名、認證 header、串流/限流）：向內部團隊取得；Unit 7a 以 adapter 隔離。
+- ~~**公司 LLM 端點確切規格**~~ **已取得並接上（2026-06-16）**：base_url `https://la-sealion.inaiai.com/v1`、model `gemma4-31b-heretic`、api_key 走 OS keyring（不入檔）；端到端連通測試通過。可由 GUI Settings 面板或 `config.yaml` + keyring 設定。
 - **目標機 ffmpeg filter 預設值**：落地前跑 `ffmpeg -h filter=blackdetect` 對齊。
 - **模糊/黑屏/dedup 門檻數值**：Unit 1 spike + 自家語料校準。
-- **grounding 自動驗證強度**（子字串 only vs +NLI/MiniCheck）：由 Unit 1 spike 可達準確度決定（origin Deferred）。
+- **grounding 自動驗證強度**（子字串 only vs +NLI/MiniCheck）：~~由 Unit 1 spike 可達準確度決定~~ **已決（2026-06-16）：MVP = substring-only + fail-closed；+NLI 延後待真實語料**（見 Unit 1 / spike README）。
 - **（已右整）落盤加密/crypto-shred 移 post-MVP**（使用者確認無具名抹除義務）；MVP 採 best-effort unlink + 誠實標註。未來若出現抹除義務，再做加密機制（file-AES vs SQLCipher）+ DEK 邊界（誰持有、Scrapy 明文窗）+ nonce-vs-checksum 的 spike。
 - **目標 OS**：R44 多項硬化（umask/RLIMIT_CORE/start_new_session/killpg）為 POSIX-only；MVP 主目標訂 **macOS/Linux**，Windows 對等（ACL/DPAPI/Job Object）列 post-MVP。
 
@@ -200,7 +200,7 @@ graph TB
 
 ### Phase 0 — De-risking spike
 
-- [~] **Unit 1: 合規偵測 / grounding 準確度 spike** — harness 已建並可跑（`spikes/detection_accuracy/`：評測真實確定性偵測器、NLI seam 就緒、合成樣本驗證 mechanics）；**準確度「決策」（substring-only vs +NLI）仍待真實語料 + 模型**。
+- [x] **Unit 1: 合規偵測 / grounding 準確度 spike** — harness 已建並可跑（`spikes/detection_accuracy/`：評測真實確定性偵測器、NLI seam 就緒、合成樣本驗證 mechanics）。**MVP 決策（2026-06-16，保守分支）：grounding = `substring-only` + fail-closed 送人審；`+NLI/MiniCheck` 延後（P1，待真實去識別化語料）**——此即本 unit Approach 規定的「準確度未知 → advisory + route-to-human」分支，且為目前已出貨程式碼的行為。**誠實標註：真實 precision/recall 數字仍待人工標註語料**（語料視同 PII、`spikes/**/golden_set/` 已 gitignore，不入版控）；決策記錄於 `spikes/detection_accuracy/README.md`。
 
 **Goal:** 量測誹謗/隱私偵測與 grounding 驗證在本地可達的誤判/漏判率，定 R4/R16/R23 偵測策略強度（純規則 vs +NLI/MiniCheck）+ golden set + 閾值。
 

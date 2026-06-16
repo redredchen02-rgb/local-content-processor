@@ -6,6 +6,31 @@ It scores the **real, deterministic** detectors against a labeled set and prints
 a decision table (*strategy × precision/recall × recommended fail-closed
 threshold*).
 
+## MVP DECISION (recorded 2026-06-16)
+
+**Grounding strategy for MVP = `substring-only`, fail-closed to human review.
+`+NLI/MiniCheck` is deferred (P1) until a real labeled corpus exists.**
+
+Rationale — this is the plan's own *prescribed* branch for the "accuracy
+unproven" case (Unit 1 Approach: *"準確度過低/未知 → MVP 退為 advisory-only +
+該 reason 一律 route-to-human (fail-closed)"*):
+
+- No real, human-labeled corpus exists yet, so there is **no decision-grade
+  measurement** that would justify trusting an automated grounding gate or
+  pulling in the heavy NLI/transformer dependency. The numbers above are on the
+  synthetic set and validate **mechanics only**.
+- The conservative, safe choice is therefore the substring baseline with
+  **fail-closed** behaviour: any ungrounded quote/claim → `needs_human_review`
+  (reason=grounding), never auto-passed. This is exactly what the shipped code
+  does (`grounding.verify_grounding` + `SubstringOverlapStrategy`, fail-closed).
+- The `+NLI` path stays a **drop-in seam** (`GROUNDING_STRATEGIES` here, the
+  `GroundingStrategy` Protocol in `core/rules/grounding.py`). When a real golden
+  set is annotated, run it through this harness (substring vs +NLI head-to-head)
+  and revisit. Until then: **do not claim a measured accuracy number.**
+
+risk + dedup gates are likewise advisory + fail-closed (risk redline = hard-stop
+BLOCKED; dedup never auto-rejects, only confident-unique passes — R36).
+
 ## What this delivers (and what it does NOT)
 
 - ✅ It **runs now**, end to end, with zero extra dependencies, and exits 0.
