@@ -219,3 +219,35 @@ def test_no_in_place_rerun_after_freeze(store, audit):
 
     with pytest.raises(InputValidationError):
         persist_gate_state(store, "jf", JobState.PROCESSED, updated_at=TS)
+
+
+# --- media-produced cover is auto-wired into the freeze -----------------------
+
+
+def test_cover_auto_picked_up_from_processed_dir(store, audit):
+    """The Stage-2 media gate writes processed/cover/cover.jpg; build_review_packet
+    picks it up WITHOUT an explicit processed_cover and binds its hash."""
+    _processed_job(store, "jc")
+    job_dir = store.job_dir("jc")
+    cover = job_dir / "processed" / "cover" / "cover.jpg"
+    cover.parent.mkdir(parents=True, exist_ok=True)
+    cover.write_bytes(b"\xff\xd8\xff\xe0fake-jpeg-bytes-for-hashing")
+
+    packet = build_review_packet(
+        job_id="jc", draft=_draft(), store=store, audit=audit,
+        submitted_at=TS, source_urls=[],
+    )
+    assert packet.cover_sha256 is not None
+    assert packet.cover_path is not None and packet.cover_path.exists()
+    assert (job_dir / "review" / "cover.jpg").exists()
+
+
+def test_no_cover_when_absent_stays_none(store, audit):
+    """No processed cover on disk -> cover hash stays None (unchanged behaviour)."""
+    _processed_job(store, "jn")
+    packet = build_review_packet(
+        job_id="jn", draft=_draft(), store=store, audit=audit,
+        submitted_at=TS, source_urls=[],
+    )
+    assert packet.cover_sha256 is None
+    assert packet.cover_path is None

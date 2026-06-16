@@ -221,6 +221,14 @@ def build_review_packet(
     body_sha = _sha256_text(body_text)
     title_sha = _sha256_text(draft.title or "")
 
+    # Default to the cover the Stage-2 media gate produced, if the caller did not
+    # pass one explicitly. This is what wires media's processed/cover/cover.jpg
+    # into the freeze (so the packet + sign-off bind a real cover hash).
+    if processed_cover is None:
+        default_cover = store.job_dir(job_id) / "processed" / "cover" / COVER_NAME
+        if default_cover.exists():
+            processed_cover = default_cover
+
     cover_path: Path | None = None
     cover_sha: str | None = None
     if processed_cover is not None:
