@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field
@@ -205,7 +206,7 @@ def validate_llm_base_url(base_url: str) -> str:
     return host
 
 
-def _merge_list(llm: dict, field: str, value: str) -> None:
+def _merge_list(llm: dict[str, Any], field: str, value: str) -> None:
     """Append `value` to the list at llm[field] (creating it), no duplicates."""
     items = llm.get(field)
     if not isinstance(items, list):
@@ -230,7 +231,7 @@ def update_llm_config_file(
     call time (only the GUI's loopback path passes it). Returns the written
     path."""
     p = Path(path)
-    raw: dict = {}
+    raw: dict[str, Any] = {}
     if p.exists():
         loaded = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
         if not isinstance(loaded, dict):
