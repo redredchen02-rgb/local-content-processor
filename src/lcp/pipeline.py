@@ -156,8 +156,15 @@ class Pipeline:
         self.dry_run = dry_run
         self.crawler = crawler
         # dry_run is threaded into the client: in dry-run it never calls the API.
+        # The R40 escape hatch (private-CA bundle / explicit http hosts) is
+        # config-driven, so it is wired from config here, not just programmatic.
         if llm_client is None:
-            self.llm_client = LlmClient(config, dry_run=dry_run)
+            self.llm_client = LlmClient(
+                config,
+                dry_run=dry_run,
+                ca_bundle=config.llm.ca_bundle,
+                allow_http_hosts=config.llm.allow_http_hosts,
+            )
         else:
             # An injected client must HONOUR dry_run — otherwise Pipeline(
             # dry_run=True, llm_client=<live>) would silently hit the API. If the

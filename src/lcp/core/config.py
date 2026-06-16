@@ -58,6 +58,13 @@ class LlmConfig(BaseModel):
     timeout_seconds: int = 60
     max_retries: int = 3
     allowed_hosts: list[str] = Field(default_factory=list)
+    # R40 escape hatch, config-driven (defaults keep https-only, public-CA).
+    # ca_bundle: path to a private-CA bundle (extra trusted roots). This still
+    # verifies certs fully — there is NO verify=False path anywhere.
+    ca_bundle: str | None = None
+    # allow_http_hosts: explicit loopback/private hosts permitted over plain
+    # http (an internal endpoint), never the public internet.
+    allow_http_hosts: list[str] = Field(default_factory=list)
 
 
 class PublisherConfig(BaseModel):

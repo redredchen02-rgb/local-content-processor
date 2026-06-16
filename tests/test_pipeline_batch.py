@@ -378,6 +378,25 @@ def test_process_external_error_lands_process_failed_and_retries(store, audit):
 # --- dry_run cannot be bypassed by an injected live client -------------------
 
 
+def test_pipeline_threads_escape_hatch_from_config(store, audit):
+    """U7a: when the pipeline auto-builds the LlmClient, the R40 escape hatch
+    (ca_bundle / allow_http_hosts) is sourced from config, not left empty."""
+    from lcp.core.config import LlmConfig
+
+    cfg = Config(
+        llm=LlmConfig(
+            base_url="http://127.0.0.1:8000/v1",
+            model="m",
+            allowed_hosts=["127.0.0.1"],
+            ca_bundle="/etc/pki/private-ca.pem",
+            allow_http_hosts=["127.0.0.1"],
+        )
+    )
+    p = pl.Pipeline(cfg, store, audit, dry_run=True)
+    assert p.llm_client._ca_bundle == "/etc/pki/private-ca.pem"
+    assert p.llm_client._allow_http_hosts == frozenset({"127.0.0.1"})
+
+
 def test_dry_run_forces_injected_client_to_dry_mode(store, audit):
     """P3 regression: Pipeline(dry_run=True, llm_client=<live>) must NOT call the
     API — the injected client is forced into dry mode."""

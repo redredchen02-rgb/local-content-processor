@@ -36,6 +36,10 @@ llm:
   timeout_seconds: 60
   max_retries: 3
   allowed_hosts: []        # base_url host must be allowlisted (R40)
+  # R40 escape hatch (config-driven; safe defaults below). Leave as-is unless
+  # you run behind a private CA or talk to an internal loopback endpoint.
+  # ca_bundle: null        # path to a private-CA bundle; STILL verifies certs (never verify=False)
+  # allow_http_hosts: []   # explicit loopback/private hosts allowed over plain http (internal only)
 
 publisher:
   reviewers: []            # whitelist of reviewer names allowed to approve/reject

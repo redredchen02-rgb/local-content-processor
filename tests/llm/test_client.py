@@ -344,6 +344,77 @@ def test_ca_bundle_builds_verifying_http_client_not_verify_false(with_key):
 
 
 # --------------------------------------------------------------------------
+# R40 escape hatch is config-driven (U7a): ca_bundle + allow_http_hosts come
+# from LlmConfig and reach the client the way the pipeline wires them.
+# --------------------------------------------------------------------------
+
+def _client_from_config(cfg, *, factory):
+    """Build an LlmClient sourcing the escape hatch from config exactly like
+    Pipeline does — proving the fields are wired, not just constructor params."""
+    return LlmClient(
+        cfg,
+        client_factory=factory,
+        ca_bundle=cfg.llm.ca_bundle,
+        allow_http_hosts=cfg.llm.allow_http_hosts,
+    )
+
+
+def test_config_ca_bundle_reaches_client_builds_verifying_context(with_key):
+    # A private-CA bundle path set in CONFIG must reach the client and produce a
+    # verifying httpx client (real SSLContext), never verify=False.
+    import certifi
+    import httpx
+
+    cfg = _config(ca_bundle=certifi.where())
+    stub = StubOpenAI(response=_response("ok", "stop"))
+    client = _client_from_config(cfg, factory=stub.factory)
+    client.chat(system="r", user="d")
+    kw = StubOpenAI.last_init_kwargs
+    assert "http_client" in kw  # config ca_bundle -> custom httpx client
+    assert isinstance(kw["http_client"], httpx.Client)
+    assert "verify" not in kw  # NEVER disabled verification
+
+
+def test_config_http_loopback_allowed_when_in_allow_http_hosts(with_key):
+    # http base_url accepted ONLY when its host is in config.allow_http_hosts
+    # AND is loopback/private.
+    cfg = _config(
+        base_url="http://127.0.0.1:8000/v1",
+        allowed_hosts=["127.0.0.1"],
+        allow_http_hosts=["127.0.0.1"],
+    )
+    stub = StubOpenAI(response=_response("ok", "stop"))
+    client = _client_from_config(cfg, factory=stub.factory)
+    res = client.chat(system="r", user="d")
+    assert res.text == "ok"
+
+
+def test_config_http_loopback_rejected_without_allow_http_hosts(with_key):
+    # Same loopback host but NOT in config.allow_http_hosts -> rejected.
+    cfg = _config(
+        base_url="http://127.0.0.1:8000/v1",
+        allowed_hosts=["127.0.0.1"],
+        allow_http_hosts=[],
+    )
+    client = _client_from_config(cfg, factory=StubOpenAI().factory)
+    with pytest.raises(InputValidationError):
+        client.chat(system="r", user="d")
+
+
+def test_config_http_non_loopback_rejected_even_in_allow_http_hosts(with_key):
+    # A public host listed in config.allow_http_hosts is STILL rejected over
+    # http because it is not loopback/private (https mandatory on the internet).
+    cfg = _config(
+        base_url="http://llm.example.com/v1",
+        allowed_hosts=["llm.example.com"],
+        allow_http_hosts=["llm.example.com"],
+    )
+    client = _client_from_config(cfg, factory=StubOpenAI().factory)
+    with pytest.raises(InputValidationError):
+        client.chat(system="r", user="d")
+
+
+# --------------------------------------------------------------------------
 # dry-run: API NOT called
 # --------------------------------------------------------------------------
 
