@@ -1,7 +1,7 @@
 ---
 title: "refactor: Introduce mypy type gate — core strict + adapters ramp"
 type: refactor
-status: active
+status: completed
 date: 2026-06-16
 ---
 
@@ -179,7 +179,19 @@ as bug-fixes with care, not silenced with `# type: ignore`.
 - *Does yaml need stubs?* → **Yes** in the CI-representative env (mypy 1.20.2);
   add `types-PyYAML`.
 
-### Execution Outcome (Phases 1–3 shipped 2026-06-16)
+### Execution Outcome (ALL phases shipped 2026-06-16)
+
+**Phase 4 (Unit 5) also shipped this round.** Strict was extended to
+`lcp.pipeline` + `lcp.adapters.*` (only `cli.py`/`gui.py` stay non-strict). The
+~56 surfaced errors were fixed via parallel per-area subagents (storage / media /
+llm / publisher / processor / crawler), all annotation-only (type-arg generics,
+missing def signatures, explicit pipeline facade re-exports; scrapy/openai SDK
+objects typed `Any`). Final state: mypy strict-green on 49 files, **479 tests
+pass**, diff verified annotation-only (no logic change). Phase 4 review = inline
+self-review (annotation-only + full test/type coverage); the logic-bearing
+Phases 1–3 had full Tier-2 review.
+
+
 
 Units 1–4 implemented and committed on `feat/local-content-processor-mvp`
 (`0092306`..`e163423`): mypy 0 errors (49 files), pytest **479 passed** (+2 new
@@ -370,7 +382,7 @@ error in a core file → mypy fails; revert (do not commit).
 
 ---
 
-- [ ] **Unit 5 (Phase 4 ramp): Promote `lcp.adapters.*` (+ `pipeline.py`) to strict, area by area**
+- [x] **Unit 5 (Phase 4 ramp): Promote `lcp.adapters.*` (+ `pipeline.py`) to strict, area by area**
 
 **Goal:** Bring the adapter layer to the core's bar; shells stay non-strict.
 
