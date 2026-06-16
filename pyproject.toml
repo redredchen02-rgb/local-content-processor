@@ -17,7 +17,7 @@ media = ["pillow>=12.2,<13"]
 llm = ["openai>=2,<3"]
 dedup = ["datasketch>=1.6"]
 gui = ["pywebview>=6,<7"]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "mypy>=1.18,<2", "types-PyYAML"]
 
 [project.scripts]
 lcp = "lcp.cli:main"
@@ -32,3 +32,36 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+# --- Static type gate (two-tier) -------------------------------------------
+# Global baseline = NON-STRICT but ENFORCED: the whole package is checked and
+# must be error-free. The pure core (lcp.core.*) is held to a strict bundle.
+# RAMP: to tighten an adapter sub-package, add a strict override block for it
+# (mirror the lcp.core.* block below). The thin shells (cli.py / gui.py) stay
+# at the non-strict baseline on purpose (Click/webview glue).
+[tool.mypy]
+python_version = "3.11"
+files = ["src/lcp"]
+warn_unused_configs = true
+warn_redundant_casts = true
+
+# Strict bundle, scoped to the pure core (equivalent to --strict; the two
+# global-only flags above are the rest of --strict's expansion).
+[[tool.mypy.overrides]]
+module = "lcp.core.*"
+disallow_any_generics = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_untyped_decorators = true
+check_untyped_defs = true
+warn_return_any = true
+warn_unused_ignores = true
+no_implicit_reexport = true
+strict_equality = true
+extra_checks = true
+
+[[tool.mypy.overrides]]
+module = ["datasketch.*"]
+ignore_missing_imports = true
