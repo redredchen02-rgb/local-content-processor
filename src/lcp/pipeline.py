@@ -68,6 +68,17 @@ _CRAWL_STATUS_TO_STATE: dict[str, JobState] = {
 
 
 @dataclass(frozen=True)
+class Stage1Result:
+    """Outcome of Stage 1: the persisted record + the raw crawl status string.
+
+    The status is carried alongside the record so a shell can report it without
+    re-deriving the status->state mapping (which lives only in stage1)."""
+
+    record: JobRecord
+    crawl_status: str
+
+
+@dataclass(frozen=True)
 class ProcessResult:
     """Outcome of Stage 2 for one job: the draft + where the job came to rest."""
 
@@ -195,12 +206,17 @@ class Pipeline:
 
     # --- Stage 1: crawl / ingest --------------------------------------------
 
-    def stage1(self, spec: SourceSpec, *, ts: str) -> JobRecord:
+    def stage1(self, spec: SourceSpec, *, ts: str) -> Stage1Result:
         """Run Stage 1 (crawl or ingest) via the injected crawler, persist the
-        derived state, and return the job record.
+        derived state, and return the record + the raw crawl status.
 
         The crawler is injected (Scrapy / local-ingest / a fake) — the contract
-        is the same RawJobBundle either way (proves the seam is real)."""
+        is the same RawJobBundle either way (proves the seam is real). This is the
+        SINGLE owner of the Stage-1 sequence (create -> crawl -> map status ->
+        set_hashes -> set_state); both shells call it, so the mapping and the
+        never-park-at-NEW default live in exactly one place. The raw
+        ``crawl_status`` is returned alongside the record so a shell can report it
+        without re-deriving the mapping."""
         if self.crawler is None:
             raise InputValidationError("no crawler injected for Stage 1")
         existing = self.store.get_job(spec.job_id)
@@ -214,7 +230,8 @@ class Pipeline:
             source_html_sha256=bundle.manifest.hashes.source_html_sha256,
             source_text_sha256=bundle.manifest.hashes.source_text_sha256,
         )
-        return self.store.set_state(spec.job_id, target, updated_at=ts)
+        record = self.store.set_state(spec.job_id, target, updated_at=ts)
+        return Stage1Result(record=record, crawl_status=bundle.job_status)
 
     # --- Stage 2: process ----------------------------------------------------
 
@@ -477,7 +494,7 @@ class Pipeline:
                 f"--until must be 'draft' or 'review' (got {target!r})"
             )
 
-        rec = self.stage1(spec, ts=ts)
+        rec = self.stage1(spec, ts=ts).record
         if rec.state not in (JobState.CRAWLED, JobState.CRAWLED_WARN):
             return RunResult(
                 job_id=spec.job_id,

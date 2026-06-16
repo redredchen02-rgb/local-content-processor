@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from typing import Callable
 from urllib.parse import urlsplit
 
 from ...core.errors import ExternalServiceError, InputValidationError
@@ -151,3 +152,22 @@ class CrawlRunner:
             manifest=manifest,
             job_status=manifest.crawl_status,
         )
+
+
+class CrawlRunnerCrawler:
+    """Adapt the URL :class:`CrawlRunner` (whose ``crawl_url`` needs a boundary
+    timestamp) to the :class:`Crawler` contract (``crawl(spec) -> RawJobBundle``)
+    so BOTH shells can drive the network crawl through ``Pipeline.stage1`` exactly
+    like ingest — no shell re-implements Stage 1.
+
+    The ``ts_provider`` is the shell's boundary timestamp factory (``cli._now`` /
+    ``gui._now``), so the crawl's audit events still get a boundary-minted ts and
+    the lower layers stay deterministic. Lives here (not in a shell) so the GUI
+    and CLI share one adapter instead of each owning a copy."""
+
+    def __init__(self, runner: CrawlRunner, *, ts_provider: Callable[[], str]):
+        self._runner = runner
+        self._ts = ts_provider
+
+    def crawl(self, spec: SourceSpec) -> RawJobBundle:
+        return self._runner.crawl_url(spec, ts=self._ts())

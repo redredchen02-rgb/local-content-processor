@@ -51,7 +51,7 @@ from pathlib import Path
 from . import pipeline as pl
 from .core import config as _config
 from .adapters.crawler.base import SourceSpec
-from .adapters.crawler.crawl_runner import CrawlRunner
+from .adapters.crawler.crawl_runner import CrawlRunner, CrawlRunnerCrawler
 from .adapters.crawler.ingest import LocalIngestCrawler
 from .adapters.crawler.source_registry import SourceRegistry
 from .adapters.processor.sanitizer import escape_html, inert_link, sanitize_draft
@@ -126,19 +126,19 @@ class Api:
     # --- Stage 1: create + crawl / ingest ------------------------------------
 
     def create_and_crawl(self, job_id: str, url: str) -> dict:
-        """Mirror `crawl`: create the job (if new) and crawl a URL into a raw
-        bundle. Returns the resting state. SSRF/allowlist is enforced by the
-        runner's preflight (we never resolve the URL here)."""
+        """Mirror `crawl`: create + crawl a URL into a raw bundle through the SAME
+        Pipeline.stage1 the CLI and ingest use (no hand-rolled Stage 1, no private
+        status->state map). Returns the resting state. SSRF/allowlist is enforced
+        by the runner's preflight (we never resolve the URL here)."""
         try:
             c = self._ctx()
-            ts = _now()
             registry = SourceRegistry.from_config(c.config.crawler)
-            runner = CrawlRunner(
-                registry, timeout=c.config.crawler.timeout_seconds, audit=c.audit
+            crawler = CrawlRunnerCrawler(
+                CrawlRunner(
+                    registry, timeout=c.config.crawler.timeout_seconds, audit=c.audit
+                ),
+                ts_provider=_now,
             )
-            rec = c.store.get_job(job_id)
-            if rec is None:
-                c.store.create_job(job_id, created_at=ts)
             spec = SourceSpec(
                 job_id=job_id,
                 source_type=SourceType.URL,
@@ -146,25 +146,12 @@ class Api:
                 url=url,
                 max_assets=c.config.crawler.max_assets_per_job,
             )
-            bundle = runner.crawl_url(spec, ts=ts)
-            # Unknown crawl status -> CRAWL_FAILED (same default as
-            # pipeline.stage1); never leave the job parked at NEW.
-            from .core.state import JobState
-
-            target = pl._CRAWL_STATUS_TO_STATE.get(
-                bundle.job_status, JobState.CRAWL_FAILED
-            )
-            c.store.set_hashes(
-                job_id,
-                updated_at=ts,
-                source_html_sha256=bundle.manifest.hashes.source_html_sha256,
-                source_text_sha256=bundle.manifest.hashes.source_text_sha256,
-            )
-            c.store.set_state(job_id, target, updated_at=ts)
+            p = pl.Pipeline(c.config, c.store, c.audit, crawler=crawler)
+            res = p.stage1(spec, ts=_now())
             return {
                 "job_id": escape_html(job_id),
-                "crawl_status": escape_html(bundle.job_status),
-                "state": target.value,
+                "crawl_status": escape_html(res.crawl_status),
+                "state": res.record.state.value,
             }
         except LcpError as e:
             return _error_dict(e)
@@ -183,7 +170,7 @@ class Api:
                 local_dir=Path(directory),
                 max_assets=c.config.crawler.max_assets_per_job,
             )
-            rec = p.stage1(spec, ts=ts)
+            rec = p.stage1(spec, ts=ts).record
             return {"job_id": escape_html(job_id), "state": rec.state.value}
         except LcpError as e:
             return _error_dict(e)

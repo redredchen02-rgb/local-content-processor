@@ -23,7 +23,7 @@ import click
 
 from . import pipeline as pl
 from .adapters.crawler.base import SourceSpec
-from .adapters.crawler.crawl_runner import CrawlRunner
+from .adapters.crawler.crawl_runner import CrawlRunner, CrawlRunnerCrawler
 from .adapters.crawler.ingest import LocalIngestCrawler
 from .adapters.crawler.source_registry import SourceRegistry
 from .adapters.publisher import signoff
@@ -110,16 +110,15 @@ def crawl(ctx, url, input_file, job_id):
             raise UsageError(f"no URLs in {input_file}")
         url = urls[0]
 
+    # Route the URL crawl through Pipeline.stage1 (the single owner of the
+    # create -> crawl -> map-status -> set_hashes -> set_state sequence) using the
+    # shared CrawlRunnerCrawler adapter — no inline re-implementation of Stage 1.
     registry = SourceRegistry.from_config(c.config.crawler)
-    runner = CrawlRunner(
-        registry,
-        timeout=c.config.crawler.timeout_seconds,
-        audit=c.audit,
+    crawler = CrawlRunnerCrawler(
+        CrawlRunner(registry, timeout=c.config.crawler.timeout_seconds,
+                    audit=c.audit),
+        ts_provider=_now,
     )
-    ts = _now()
-    rec = c.store.get_job(job_id)
-    if rec is None:
-        c.store.create_job(job_id, created_at=ts)
     spec = SourceSpec(
         job_id=job_id,
         source_type=SourceType.URL,
@@ -127,23 +126,12 @@ def crawl(ctx, url, input_file, job_id):
         url=url,
         max_assets=c.config.crawler.max_assets_per_job,
     )
-    bundle = runner.crawl_url(spec, ts=ts)
-    # Unknown crawl status -> CRAWL_FAILED (same default as pipeline.stage1); we
-    # never leave the job parked at NEW on an unrecognised status.
-    from .core.state import JobState
-
-    target = pl._CRAWL_STATUS_TO_STATE.get(bundle.job_status, JobState.CRAWL_FAILED)
-    c.store.set_hashes(
-        job_id,
-        updated_at=ts,
-        source_html_sha256=bundle.manifest.hashes.source_html_sha256,
-        source_text_sha256=bundle.manifest.hashes.source_text_sha256,
-    )
-    c.store.set_state(job_id, target, updated_at=ts)
+    p = pl.Pipeline(c.config, c.store, c.audit, dry_run=c.dry_run, crawler=crawler)
+    res = p.stage1(spec, ts=_now())
     c.emit(
-        {"job_id": job_id, "crawl_status": bundle.job_status,
-         "state": target.value},
-        human=f"crawled {job_id}: {bundle.job_status}",
+        {"job_id": job_id, "crawl_status": res.crawl_status,
+         "state": res.record.state.value},
+        human=f"crawled {job_id}: {res.crawl_status}",
     )
 
 
@@ -164,7 +152,7 @@ def ingest(ctx, directory, job_id):
         local_dir=Path(directory),
         max_assets=c.config.crawler.max_assets_per_job,
     )
-    rec = p.stage1(spec, ts=ts)
+    rec = p.stage1(spec, ts=ts).record
     c.emit(
         {"job_id": job_id, "state": rec.state.value},
         human=f"ingested {job_id}: {rec.state.value}",
@@ -482,18 +470,6 @@ def gui(ctx):
         raise DependencyError(
             "GUI needs pywebview: pip install 'local-content-processor[gui]'"
         ) from e
-
-
-class CrawlRunnerCrawler:
-    """Adapt the URL CrawlRunner (which needs a ts) to the Crawler contract so
-    Pipeline.run_until can drive the network crawl path the same way as ingest."""
-
-    def __init__(self, runner: CrawlRunner, *, ts_provider):
-        self._runner = runner
-        self._ts = ts_provider
-
-    def crawl(self, spec: SourceSpec):
-        return self._runner.crawl_url(spec, ts=self._ts())
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -88,7 +88,7 @@ def _pipeline(store, audit, *, dry_run=False, source=CLEAN_SOURCE):
 
 def test_stage1_with_fake_crawler_reaches_crawled(store, audit):
     p = _pipeline(store, audit)
-    rec = p.stage1(_spec(store, "j1"), ts=TS)
+    rec = p.stage1(_spec(store, "j1"), ts=TS).record
     assert rec.state is JobState.CRAWLED
     assert (store.job_dir("j1") / "raw" / "source.txt").exists()
 
