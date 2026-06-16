@@ -227,7 +227,7 @@ graph TB
 
 ### Phase 1 — Foundation
 
-- [ ] **Unit 2: 專案骨架 + 三層分層 + config + OS 衛生基線**
+- [x] **Unit 2: 專案骨架 + 三層分層 + config + OS 衛生基線**
 
 **Goal:** 建立 三層（純核/adapters/UI 殼）骨架、pydantic 模型單一真相、config 與祕密載入、CLI 入口殼、OS 衛生基線。
 
@@ -259,7 +259,7 @@ graph TB
 
 **Verification:** core 無框架 import（grep/測試斷言）；umask/core-dump/遮罩生效；`.gitignore` 含 spikes/。
 
-- [ ] **Unit 3: Job store + 狀態機 + 0600 落盤/best-effort 刪除 + audit + PII 清單**
+- [x] **Unit 3: Job store + 狀態機 + 0600 落盤/best-effort 刪除 + audit + PII 清單**
 
 **Goal:** 持久層：SQLite 索引（PII-free）、folder-per-job **0600 明文 blob（落盤加密=post-MVP）**、原子提交 manifest、append-only audit（雜湊鏈，誠實 tamper-evident）、完整 transition table（含 SUPERSEDED/retry）、**PII 清單為 gating**。
 
