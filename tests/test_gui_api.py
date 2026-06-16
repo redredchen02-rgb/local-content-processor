@@ -457,6 +457,34 @@ def test_server_host_is_loopback_only():
     assert "0.0.0.0" not in src
 
 
+def test_launch_passes_only_valid_webview_start_kwargs(monkeypatch, tmp_path):
+    """Regression for the mypy-surfaced GUI bug: launch() previously passed
+    host=SERVER_HOST to webview.start(), which pywebview 6 does NOT accept
+    (TypeError on launch; loopback pinning silently unenforced). Assert launch()
+    only ever passes real webview.start parameters and never a host= kwarg
+    (loopback comes from pywebview's default bind, not from us)."""
+    import inspect
+
+    import pytest
+
+    webview = pytest.importorskip("webview")
+    real_params = set(inspect.signature(webview.start).parameters)
+    assert "host" not in real_params  # documents WHY we must not pass host=
+
+    captured: dict = {}
+    monkeypatch.setattr(webview, "create_window", lambda *a, **k: None)
+    monkeypatch.setattr(webview, "start", lambda *a, **k: captured.update(k))
+
+    import lcp.gui as gui
+
+    gui.launch(config_path=str(tmp_path / "config.yaml"))
+
+    assert captured, "webview.start was not called"
+    assert "host" not in captured  # the bug must not return
+    assert set(captured) <= real_params  # every kwarg is a real start() param
+    assert captured.get("http_server") is True
+
+
 def test_index_html_has_strict_csp():
     html = INDEX_HTML.read_text(encoding="utf-8")
     assert "Content-Security-Policy" in html

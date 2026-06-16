@@ -66,9 +66,12 @@ from .core.models import SourceType
 # The web/ assets directory served by pywebview's 127.0.0.1-only HTTP server.
 WEB_DIR = Path(__file__).resolve().parent / "web"
 
-# The server MUST bind loopback only — never the all-interfaces wildcard (which
-# would be off-host reachable). This constant is the single source of truth (a
-# test asserts it is 127.0.0.1).
+# pywebview's built-in HTTP server binds to this loopback address BY DEFAULT
+# (its server.address is hard-coded to 127.0.0.1 and bottle's default host is
+# loopback) — never the all-interfaces wildcard. There is NO supported `host`
+# argument to webview.start() (passing one raises TypeError), so we rely on and
+# document that loopback default. This constant records the expected bind
+# address; a test asserts launch() never passes an unsupported start() kwarg.
 SERVER_HOST = "127.0.0.1"
 
 
@@ -550,6 +553,7 @@ def launch(config_path: str | None = None):  # pragma: no cover - desktop only
         url=str(WEB_DIR / "index.html"),
         js_api=api,
     )
-    # http_server=True uses pywebview's built-in server; host is pinned to
-    # loopback so the window's assets are never reachable off-host.
-    webview.start(http_server=True, ssl=False, host=SERVER_HOST)
+    # http_server=True uses pywebview's built-in server, which binds to
+    # SERVER_HOST (loopback) by default, so the window's assets are never
+    # reachable off-host. There is no host= kwarg (passing one raises).
+    webview.start(http_server=True, ssl=False)
