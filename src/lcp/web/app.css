@@ -1,0 +1,14 @@
+/* Minimal styles. External file (not inline) to satisfy CSP style-src 'self'. */
+body { font-family: system-ui, sans-serif; margin: 1.5rem; max-width: 60rem; }
+header .note { color: #555; font-size: 0.9rem; }
+section { border-top: 1px solid #ddd; padding: 0.75rem 0; }
+h2 { font-size: 1.1rem; }
+table { border-collapse: collapse; width: 100%; margin-top: 0.5rem; }
+th, td { border: 1px solid #ddd; padding: 0.25rem 0.5rem; text-align: left; }
+.row { display: flex; align-items: center; gap: 0.5rem; margin: 0.35rem 0; flex-wrap: wrap; }
+.row label { min-width: 9rem; }
+input[type="text"] { flex: 1; min-width: 12rem; padding: 0.25rem; }
+.status { color: #044; font-weight: bold; min-height: 1.2em; }
+.field { margin: 0.25rem 0; }
+textarea { width: 100%; }
+button { padding: 0.25rem 0.75rem; cursor: pointer; }
