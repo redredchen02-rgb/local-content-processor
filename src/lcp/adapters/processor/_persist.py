@@ -17,8 +17,7 @@ the marker. All judgement still flows through ``core/state.validate_transition``
 
 from __future__ import annotations
 
-from ...core.errors import InputValidationError
-from ...core.state import JobState, ReviewReason, validate_transition
+from ...core.state import JobState, ReviewReason
 from ..storage.job_store import JobRecord, JobStore
 
 
@@ -33,44 +32,14 @@ def persist_gate_state(
 ) -> JobRecord:
     """Persist a Stage-2 gate's resting state as if from PROCESSING.
 
-    Validates ``PROCESSING -> target`` with the canonical state machine (so
-    illegal targets still raise), then writes the resting state + review_reason
-    through a fresh JobStore connection (WAL, busy_timeout — same as Unit 3).
-    The job must currently rest at a legal PROCESSING-predecessor (CRAWLED /
-    CRAWLED_WARN); otherwise we refuse, to keep the lifecycle honest."""
-    current = store.get_job(job_id)
-    if current is None:
-        raise InputValidationError(f"unknown job: {job_id}")
-    # The persisted predecessor must legally reach PROCESSING (i.e. the job is
-    # genuinely mid Stage-2), and PROCESSING must legally reach the target.
-    validate_transition(current.state, JobState.PROCESSING)
-    validate_transition(JobState.PROCESSING, target)
-
-    store.mark_processing(job_id)
-    conn = store._connect()
-    try:
-        conn.execute(
-            "UPDATE jobs SET state = ?, updated_at = ?, error_code = ?, "
-            "review_reason = ? WHERE job_id = ?",
-            (
-                target.value,
-                updated_at,
-                error_code,
-                review_reason.value if review_reason else None,
-                job_id,
-            ),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-    store.clear_processing(job_id)
-    return JobRecord(
-        job_id=job_id,
-        state=target,
-        created_at=current.created_at,
+    Thin processor-facing wrapper: the SQL + ``PROCESSING -> target`` validation
+    + ``.processing`` marker dance now live in :meth:`JobStore.persist_from_
+    processing` (single connection, JobStore owns its own schema). Kept as the
+    name the gate adapters import."""
+    return store.persist_from_processing(
+        job_id,
+        target,
         updated_at=updated_at,
-        source_html_sha256=current.source_html_sha256,
-        source_text_sha256=current.source_text_sha256,
-        error_code=error_code,
         review_reason=review_reason,
+        error_code=error_code,
     )

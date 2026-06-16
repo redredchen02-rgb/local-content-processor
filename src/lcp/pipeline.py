@@ -586,13 +586,9 @@ def list_jobs(
     if state is not None:
         st = resolve_state(state) if isinstance(state, str) else state
         return store.list_by_state(st)
-    out: list[JobRecord] = []
-    for st in JobState:
-        if st in TRANSIENT_STATES:
-            continue
-        out.extend(store.list_by_state(st))
-    out.sort(key=lambda r: (r.created_at, r.job_id))
-    return out
+    # No filter: one connection (list_all) instead of one per JobState. PROCESSING
+    # is never persisted, so transient states never appear.
+    return store.list_all()
 
 
 def batch_summary(store: JobStore) -> dict[str, int]:
@@ -602,14 +598,15 @@ def batch_summary(store: JobStore) -> dict[str, int]:
     a synthetic 'total'. PROCESSING is transient and never counted (not
     persisted). This is the pull-style summary the operator reads after a batch
     run — there is no push notification in the MVP."""
+    counts = store.counts_by_state()  # one GROUP BY query, not one per state
     summary: dict[str, int] = {}
-    total = 0
+    # Preserve the previous deterministic JobState-order output (the raw GROUP BY
+    # order is unspecified); transient states never appear in `counts`.
     for st in JobState:
         if st in TRANSIENT_STATES:
             continue
-        n = len(store.list_by_state(st))
+        n = counts.get(st.value, 0)
         if n:
             summary[st.value] = n
-            total += n
-    summary["total"] = total
+    summary["total"] = sum(summary.values())
     return summary

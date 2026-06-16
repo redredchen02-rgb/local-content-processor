@@ -150,3 +150,38 @@ def test_job_dir_permissions_restrictive(tmp_path):
     s.create_job("j1", created_at=TS)
     mode = os.stat(s.job_dir("j1")).st_mode & 0o777
     assert mode & 0o077 == 0  # no group/other access
+
+
+def test_list_all_and_counts_by_state(tmp_path):
+    """Batch-2 perf: list_all() / counts_by_state() do one query each."""
+    s = _store(tmp_path)
+    for jid in ("a", "b", "c"):
+        s.create_job(jid, created_at=TS)
+    s.set_state("b", JobState.CRAWLED, updated_at=TS)
+    # list_all returns every persisted job, ordered, no transient states
+    allrecs = s.list_all()
+    assert [r.job_id for r in allrecs] == ["a", "b", "c"]
+    states = {r.job_id: r.state for r in allrecs}
+    assert states["b"] is JobState.CRAWLED and states["a"] is JobState.NEW
+    # counts_by_state groups
+    counts = s.counts_by_state()
+    assert counts == {"new": 2, "crawled": 1}
+
+
+def test_persist_from_processing_validates_and_persists(tmp_path):
+    """persist_from_processing drives a legal PROCESSING->target in one conn,
+    refuses a transient target, and refuses an illegal predecessor."""
+    s = _store(tmp_path)
+    s.create_job("j", created_at=TS)
+    s.set_state("j", JobState.CRAWLED, updated_at=TS)  # legal PROCESSING predecessor
+    rec = s.persist_from_processing("j", JobState.BLOCKED, updated_at=TS,
+                                    review_reason=ReviewReason.RISK)
+    assert rec.state is JobState.BLOCKED
+    assert s.get_job("j").state is JobState.BLOCKED
+    assert not s.is_processing("j")  # marker cleared
+    # transient target refused
+    with pytest.raises(InputValidationError):
+        s.persist_from_processing("j", JobState.PROCESSING, updated_at=TS)
+    # unknown job refused
+    with pytest.raises(InputValidationError):
+        s.persist_from_processing("ghost", JobState.BLOCKED, updated_at=TS)

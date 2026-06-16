@@ -112,14 +112,17 @@ class JobStore:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, timeout=_BUSY_TIMEOUT_MS / 1000)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
+        # busy_timeout is per-connection, so it MUST be set here. journal_mode=WAL
+        # is a PERSISTENT database property (stored in the file header) set once in
+        # _init_db — re-issuing it on every connection was a wasted round-trip.
+        # The schema has no foreign keys, so PRAGMA foreign_keys was a no-op.
         conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
-        conn.execute("PRAGMA foreign_keys=ON")
         return conn
 
     def _init_db(self) -> None:
         conn = self._connect()
         try:
+            conn.execute("PRAGMA journal_mode=WAL")  # persistent; set once
             conn.executescript(_SCHEMA)
             conn.commit()
         finally:
@@ -265,6 +268,94 @@ class JobStore:
         finally:
             conn.close()
         return [_row_to_record(r) for r in rows]
+
+    def list_all(self) -> list[JobRecord]:
+        """All persisted jobs in ONE connection, ordered by (created_at, job_id).
+
+        PROCESSING is never persisted, so transient states never appear. Replaces
+        the per-state fan-out (one connection per JobState) the unfiltered
+        worklist used to do."""
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM jobs ORDER BY created_at, job_id"
+            ).fetchall()
+        finally:
+            conn.close()
+        return [_row_to_record(r) for r in rows]
+
+    def counts_by_state(self) -> dict[str, int]:
+        """Counts-by-state in ONE connection (GROUP BY) for the batch summary.
+
+        Returns {state_value: count}. PROCESSING is never persisted, so it never
+        appears. Replaces the per-state fan-out (one COUNT connection per state)."""
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT state, COUNT(*) AS n FROM jobs GROUP BY state"
+            ).fetchall()
+        finally:
+            conn.close()
+        return {r["state"]: r["n"] for r in rows}
+
+    def persist_from_processing(
+        self,
+        job_id: str,
+        target: JobState,
+        *,
+        updated_at: str,
+        review_reason: ReviewReason | None = None,
+        error_code: str | None = None,
+    ) -> JobRecord:
+        """Persist a Stage-2 gate's resting state as if from the transient
+        PROCESSING state, in a SINGLE connection (read + update).
+
+        This owns the SQL so processor adapters never reach into a private
+        connection. Validates ``persisted_current -> PROCESSING -> target`` via
+        the canonical state machine, drops/clears the ``.processing`` marker
+        around the write, and refuses to persist a transient target."""
+        if target in TRANSIENT_STATES:
+            raise InputValidationError(
+                f"cannot persist transient state {target.value} to SQLite"
+            )
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT * FROM jobs WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            if row is None:
+                raise InputValidationError(f"unknown job: {job_id}")
+            current = _row_to_record(row)
+            # Persisted predecessor must legally reach PROCESSING (job is genuinely
+            # mid Stage-2), and PROCESSING must legally reach the target.
+            validate_transition(current.state, JobState.PROCESSING)
+            validate_transition(JobState.PROCESSING, target)
+            self.mark_processing(job_id)
+            conn.execute(
+                "UPDATE jobs SET state = ?, updated_at = ?, error_code = ?, "
+                "review_reason = ? WHERE job_id = ?",
+                (
+                    target.value,
+                    updated_at,
+                    error_code,
+                    review_reason.value if review_reason else None,
+                    job_id,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        self.clear_processing(job_id)
+        return JobRecord(
+            job_id=job_id,
+            state=target,
+            created_at=current.created_at,
+            updated_at=updated_at,
+            source_html_sha256=current.source_html_sha256,
+            source_text_sha256=current.source_text_sha256,
+            error_code=error_code,
+            review_reason=review_reason,
+        )
 
     # --- transient PROCESSING marker (NOT persisted in SQLite) ---
 

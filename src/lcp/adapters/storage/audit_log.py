@@ -72,13 +72,42 @@ class AuditLog:
                 out.append(json.loads(raw))
         return out
 
+    def _last_line(self) -> str | None:
+        """The last non-empty line of audit.jsonl via a bounded BACKWARD read.
+
+        Reads only the tail (in 4 KiB blocks, expanding if the final record is
+        bigger), so append() is O(1) per call instead of re-parsing the whole
+        file — the previous _read_lines() made N appends O(N^2). Tolerates a
+        missing trailing newline and any number of trailing blank lines. Returns
+        None for an empty/whitespace-only file."""
+        if not self.path.exists():
+            return None
+        with self.path.open("rb") as f:
+            f.seek(0, os.SEEK_END)
+            pos = f.tell()
+            if pos == 0:
+                return None
+            block = 4096
+            data = b""
+            while pos > 0:
+                step = min(block, pos)
+                pos -= step
+                f.seek(pos)
+                data = f.read(step) + data
+                stripped = data.rstrip(b"\r\n")
+                nl = stripped.rfind(b"\n")
+                if nl != -1:
+                    return stripped[nl + 1:].decode("utf-8")
+            stripped = data.rstrip(b"\r\n")
+            return stripped.decode("utf-8") if stripped else None
+
     def _tail(self) -> tuple[int, str]:
-        """Return (next_seq, prev_hash) without parsing the full chain twice."""
-        lines = self._read_lines()
-        if not lines:
+        """Return (next_seq, prev_hash) by reading ONLY the last line (O(1))."""
+        last = self._last_line()
+        if last is None:
             return 0, GENESIS_HASH
-        last = lines[-1]
-        return last["seq"] + 1, last["hash"]
+        rec = json.loads(last)
+        return rec["seq"] + 1, rec["hash"]
 
     def append(
         self,

@@ -122,3 +122,32 @@ def test_chain_links_prev_hash(tmp_path):
     assert lines[0]["prev_hash"] == "0" * 64
     assert lines[1]["prev_hash"] == lines[0]["hash"]
     assert lines[2]["prev_hash"] == lines[1]["hash"]
+
+
+def test_last_line_bounded_read_edge_cases(tmp_path):
+    """Batch-2 perf: _tail reads only the last line via a bounded backward read.
+    Cover the tricky inputs that backward-reading must tolerate."""
+    log = _log(tmp_path)
+    p = tmp_path / "audit.jsonl"
+    assert log._last_line() is None  # nonexistent
+    p.write_text('{"seq":0,"hash":"a"}', encoding="utf-8")  # no trailing newline
+    assert log._last_line() == '{"seq":0,"hash":"a"}'
+    p.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    assert log._last_line() == "three"
+    p.write_text("one\ntwo\n\n\n", encoding="utf-8")  # trailing blank lines
+    assert log._last_line() == "two"
+    p.write_text("\n\n", encoding="utf-8")  # whitespace-only
+    assert log._last_line() is None
+
+
+def test_tail_handles_record_larger_than_block(tmp_path):
+    """A single record bigger than the 4 KiB read block must still be tailed
+    correctly (multi-block backward read), and the chain must keep going."""
+    log = _log(tmp_path)
+    big = "x" * 9000  # > 4096 -> forces the backward read to expand
+    log.append(ts=TS, stage="crawl", event="E0", job_id="j1", actor="m",
+               extra={"pad": big})
+    log.append(ts=TS, stage="crawl", event="E1", job_id="j1", actor="m")
+    assert log.verify_chain() is True
+    seq, _ = log._tail()
+    assert seq == 2
