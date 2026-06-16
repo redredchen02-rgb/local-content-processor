@@ -300,7 +300,7 @@ graph TB
 
 ### Phase 2 — Stage 1 Crawl / Ingest
 
-- [ ] **Unit 4: Crawl（Scrapy subprocess）+ crawler 抽象契約 + 本地匯入 + 網路/路徑護欄**
+- [x] **Unit 4: Crawl（Scrapy subprocess）+ crawler 抽象契約 + 本地匯入 + 網路/路徑護欄**
 
 **Goal:** 三種輸入 → raw_job_bundle（0600）；allowlist、限速、robots、SSRF/path-traversal、per-asset 狀態、不繞反爬；**定義 crawler 抽象契約（Scrapy 為第一實作）**。
 
@@ -340,7 +340,7 @@ graph TB
 
 ### Phase 3 — Stage 2 Process / Normalize
 
-- [ ] **Unit 5: 素材驗證 + 媒體標準化（Pillow + ffprobe）**
+- [x] **Unit 5: 素材驗證 + 媒體標準化（Pillow + ffprobe）**
 
 **Goal:** 素材完整性（含模糊/黑屏/解壓炸彈護欄）、圖片 800px + 1300×640 封面、影片規格檢查。純判斷與 I/O 分離。
 
@@ -372,7 +372,7 @@ graph TB
 
 **Verification:** 尺寸/規格正確；不可信媒體有資源/逾時護欄；純判斷可純測。
 
-- [ ] **Unit 6: 風控 + 查重閘門**
+- [x] **Unit 6: 風控 + 查重閘門**
 
 **Goal:** hard-stop 風控（紅線 + 日常誹謗/隱私/著作權，fail-closed）+ advisory/fail-loud 查重；輸出帶 `review_reason`。純判斷與索引 I/O 分離。
 
@@ -407,7 +407,7 @@ graph TB
 
 **Verification:** 紅線必 hard-stop；fail-closed 生效；無索引時誠實降級且永不 auto-reject；reason 結構化進 audit。
 
-- [ ] **Unit 7a: 內容組裝（LLM 受限改寫）+ 注入防護 + 失敗路徑**
+- [x] **Unit 7a: 內容組裝（LLM 受限改寫）+ 注入防護 + 失敗路徑**
 
 **Goal:** 用公司 OpenAI-compatible LLM 做受限改寫（抽取式+逐字引用+模板，零能力），含輸入端淨化、finish_reason 閘門、失敗路徑、dry-run mock。
 
@@ -440,7 +440,7 @@ graph TB
 
 **Verification:** 受限改寫引用可溯；注入無法劫持；finish_reason 閘門生效；dry-run 不打 API。
 
-- [ ] **Unit 7b: draft linter + grounding 驗證 + 輸出端淨化**
+- [x] **Unit 7b: draft linter + grounding 驗證 + 輸出端淨化**
 
 **Goal:** 驗結構/標題/標籤/分類/照搬/注入特徵 + grounding（逐字子字串 + 可選 NLI）；**輸出端淨化**（攻擊者可塑造字串轉義、linter 禁解析 URL）。
 
