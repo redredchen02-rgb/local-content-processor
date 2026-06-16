@@ -83,7 +83,7 @@ def _media_url_is_safe(url: str) -> bool:
         return False
 
 
-def extract_content(response) -> dict[str, Any]:
+def extract_content(response: Any) -> dict[str, Any]:
     """Pure-ish extraction from a Scrapy Response. Returns title, body text,
     image_urls, video_urls, rejected_media_urls, source_html, and resolved
     metadata.
@@ -146,7 +146,7 @@ def extract_content(response) -> dict[str, Any]:
 # Scrapy settings
 # --------------------------------------------------------------------------
 
-def build_settings(*, job_dir: Path, allow_domains: list[str], timeout: int) -> dict:
+def build_settings(*, job_dir: Path, allow_domains: list[str], timeout: int) -> dict[str, Any]:
     """Scrapy settings dict enforcing the plan's crawl policy."""
     raw = job_dir / "raw"
     return {
@@ -177,20 +177,20 @@ def build_settings(*, job_dir: Path, allow_domains: list[str], timeout: int) -> 
 # Spider (imported lazily so the module imports without scrapy where unused)
 # --------------------------------------------------------------------------
 
-def _make_spider_cls():
+def _make_spider_cls() -> type[Any]:
     import scrapy
 
     class ArticleSpider(scrapy.Spider):
         name = "lcp_article"
 
-        def __init__(self, start_url: str, allow_domains: list[str], **kw):
+        def __init__(self, start_url: str, allow_domains: list[str], **kw: Any) -> None:
             super().__init__(**kw)
             self.start_urls = [start_url]
             self.allowed_domains = allow_domains
-            self.extracted: dict | None = None
-            self.media_results: dict | None = None
+            self.extracted: dict[str, Any] | None = None
+            self.media_results: dict[str, Any] | None = None
 
-        def parse(self, response):
+        def parse(self, response: Any) -> Any:
             extracted = extract_content(response)
             self.extracted = extracted
             # Yield ONE item carrying media URLs so ImagesPipeline (image_urls
@@ -210,7 +210,7 @@ def _make_spider_cls():
 # Subprocess entrypoint
 # --------------------------------------------------------------------------
 
-def _run_spider(spec: SourceSpec, allow_domains: list[str], timeout: int) -> dict:
+def _run_spider(spec: SourceSpec, allow_domains: list[str], timeout: int) -> dict[str, Any]:
     """Run the Scrapy spider in-process (we are already in the subprocess).
     Returns the extracted dict, or {} on total failure."""
     from scrapy.crawler import CrawlerProcess
@@ -219,16 +219,16 @@ def _run_spider(spec: SourceSpec, allow_domains: list[str], timeout: int) -> dic
     settings = build_settings(
         job_dir=spec.job_dir, allow_domains=allow_domains, timeout=timeout
     )
-    holder: dict[str, dict] = {}
+    holder: dict[str, Any] = {}
 
     process = CrawlerProcess(settings=settings, install_root_handler=False)
 
-    def _item_scraped(item, response, spider):
+    def _item_scraped(item: Any, response: Any, spider: Any) -> None:
         # Capture the pipelines' download results ({url,path,checksum}).
         holder["images"] = item.get("images", [])
         holder["files"] = item.get("files", [])
 
-    def _spider_closed(spider):
+    def _spider_closed(spider: Any) -> None:
         if getattr(spider, "extracted", None):
             holder["extracted"] = spider.extracted
 
@@ -239,7 +239,7 @@ def _run_spider(spec: SourceSpec, allow_domains: list[str], timeout: int) -> dic
     crawler.signals.connect(_spider_closed, signal=signals.spider_closed)
     process.crawl(crawler, start_url=spec.url, allow_domains=allow_domains)
     process.start()  # blocks until done
-    extracted = holder.get("extracted", {})
+    extracted: dict[str, Any] = holder.get("extracted", {})
     if extracted:
         extracted["downloaded_images"] = holder.get("images", [])
         extracted["downloaded_files"] = holder.get("files", [])
@@ -248,7 +248,7 @@ def _run_spider(spec: SourceSpec, allow_domains: list[str], timeout: int) -> dic
 
 def write_bundle_from_extraction(
     spec: SourceSpec,
-    extracted: dict,
+    extracted: dict[str, Any],
     *,
     source_domain: str | None,
     fetched_at: str | None,
@@ -330,8 +330,8 @@ def _assets_from_pipeline_output(
     videos_store: Path,
     image_urls: list[str],
     video_urls: list[str],
-    downloaded_images: list[dict],
-    downloaded_files: list[dict],
+    downloaded_images: list[dict[str, Any]],
+    downloaded_files: list[dict[str, Any]],
     job_dir: Path,
     max_assets: int,
 ) -> list[AssetRef]:
@@ -345,7 +345,7 @@ def _assets_from_pipeline_output(
     img_by_url = {d.get("url"): d for d in downloaded_images if isinstance(d, dict)}
     vid_by_url = {d.get("url"): d for d in downloaded_files if isinstance(d, dict)}
 
-    def _add(url: str, kind: AssetKind, store: Path, by_url: dict) -> None:
+    def _add(url: str, kind: AssetKind, store: Path, by_url: dict[Any, Any]) -> None:
         if len(assets) >= max_assets:
             return
         result = by_url.get(url)

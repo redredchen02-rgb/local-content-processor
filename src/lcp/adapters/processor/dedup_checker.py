@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from ...core.rules import dedup_rules
 from ...core.rules.dedup_rules import (
@@ -95,7 +96,7 @@ def run_dedup_gate(
     site_index_path: str | Path | None = None,
     queries: list[DedupQuery] | None = None,
     actor: str = "system",
-    **score_params,
+    **score_params: Any,
 ) -> DedupGateOutcome:
     """Run the dedup gate: load the index, score, map, audit, persist.
 

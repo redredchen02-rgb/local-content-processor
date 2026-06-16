@@ -22,10 +22,11 @@ import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from ...core.config import MediaConfig
 from ...core.errors import ExternalServiceError, InputValidationError
-from ...core.models import AssetKind, AssetState
+from ...core.models import AssetKind, AssetRef, AssetState
 from ...core.rules import asset_rules
 from ...core.state import JobState
 from ..media import ffprobe, normalizer
@@ -43,10 +44,10 @@ class MediaGateOutcome:
     """What the gate did: per-asset report + the persisted state (if any)."""
 
     job_state: JobState | None  # None when all media OK / no media (caller continues)
-    report: dict = field(default_factory=dict)
+    report: dict[str, Any] = field(default_factory=dict)
 
 
-def _write_0600_json(path: Path, payload: dict) -> None:
+def _write_0600_json(path: Path, payload: dict[str, Any]) -> None:
     """Atomic 0600 write of the validation report (temp + fsync + chmod-before-
     replace), mirroring the rest of the storage layer."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -71,16 +72,16 @@ def _write_0600_json(path: Path, payload: dict) -> None:
 
 
 def _validate_images(
-    images: list, job_dir: Path, media: MediaConfig
-) -> tuple[list[dict], list[str], bool]:
+    images: list[AssetRef], job_dir: Path, media: MediaConfig
+) -> tuple[list[dict[str, Any]], list[str], bool]:
     """Normalize + judge each OK image. Returns (per-asset entries, OK output
     paths for the cover, any_needs_revision)."""
-    entries: list[dict] = []
+    entries: list[dict[str, Any]] = []
     ok_outputs: list[str] = []
     needs_revision = False
     out_dir = job_dir / "processed" / "images"
     for a in images:
-        entry: dict = {"kind": "image", "path": a.path}
+        entry: dict[str, Any] = {"kind": "image", "path": a.path}
         src = job_dir / a.path
         if not src.exists():
             entry.update(state=AssetState.FAILED.value, reasons=["file missing on disk"])
@@ -114,14 +115,14 @@ def _validate_images(
 
 
 def _validate_videos(
-    videos: list, job_dir: Path, media: MediaConfig
-) -> tuple[list[dict], bool]:
+    videos: list[AssetRef], job_dir: Path, media: MediaConfig
+) -> tuple[list[dict[str, Any]], bool]:
     """Probe + judge each OK video (spec + black detection). Returns (per-asset
     entries, any_needs_revision). DependencyError (no ffmpeg) propagates."""
-    entries: list[dict] = []
+    entries: list[dict[str, Any]] = []
     needs_revision = False
     for a in videos:
-        entry: dict = {"kind": "video", "path": a.path}
+        entry: dict[str, Any] = {"kind": "video", "path": a.path}
         src = job_dir / a.path
         if not src.exists():
             entry.update(state=AssetState.FAILED.value, reasons=["file missing on disk"])
@@ -176,8 +177,8 @@ def run_media_gate(
     job has no OK image/video assets (or no manifest)."""
     job_dir = store.job_dir(job_id)
     manifest = read_manifest(job_dir)
-    images: list = []
-    videos: list = []
+    images: list[AssetRef] = []
+    videos: list[AssetRef] = []
     if manifest is not None:
         images = [
             a for a in manifest.assets

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from typing import Callable
+from typing import Any, Callable
 from urllib.parse import urlsplit
 
 from ...core.errors import ExternalServiceError, InputValidationError
@@ -54,9 +54,9 @@ class CrawlRunner:
         audit: AuditLog | None = None,
         actor: str = "crawler",
         python_executable: str | None = None,
-        subprocess_runner=subprocess.run,
-        resolver=None,
-    ):
+        subprocess_runner: Any = subprocess.run,
+        resolver: Any = None,
+    ) -> None:
         self.registry = registry
         self.timeout = timeout
         self.audit = audit

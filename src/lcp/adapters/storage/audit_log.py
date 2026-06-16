@@ -21,6 +21,7 @@ import json
 import os
 import re
 from pathlib import Path
+from typing import Any
 
 try:
     import fcntl  # POSIX-only: used for an exclusive append lock.
@@ -45,12 +46,12 @@ _PROHIBITED_KEYS = frozenset(
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
-def _canonical(obj: dict) -> str:
+def _canonical(obj: dict[str, Any]) -> str:
     """Deterministic JSON for hashing: sorted keys, no whitespace, no NaN."""
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
-def _line_hash(prev_hash: str, payload: dict) -> str:
+def _line_hash(prev_hash: str, payload: dict[str, Any]) -> str:
     return hashlib.sha256(
         (prev_hash + _canonical(payload)).encode("utf-8")
     ).hexdigest()
@@ -62,10 +63,10 @@ class AuditLog:
     def __init__(self, path: str | os.PathLike[str]):
         self.path = Path(path)
 
-    def _read_lines(self) -> list[dict]:
+    def _read_lines(self) -> list[dict[str, Any]]:
         if not self.path.exists():
             return []
-        out: list[dict] = []
+        out: list[dict[str, Any]] = []
         for raw in self.path.read_text(encoding="utf-8").splitlines():
             raw = raw.strip()
             if raw:
@@ -118,8 +119,8 @@ class AuditLog:
         job_id: str,
         actor: str,
         artifact_sha256: str | None = None,
-        extra: dict | None = None,
-    ) -> dict:
+        extra: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Append one event and return the persisted record.
 
         `ts` is an ISO8601 UTC string supplied by the caller — we never call
@@ -151,7 +152,7 @@ class AuditLog:
                 fcntl.flock(f.fileno(), fcntl.LOCK_EX)
             try:
                 seq, prev_hash = self._tail()
-                payload: dict = {
+                payload: dict[str, Any] = {
                     "seq": seq,
                     "ts": ts,
                     "stage": stage,

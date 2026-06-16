@@ -26,9 +26,11 @@ concern, but it has the same no-side-effects discipline as the rule layer.
 from __future__ import annotations
 
 import html
+from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Any
 
-from ...core.draft import Draft
+from ...core.draft import Draft, MediaSection
 
 
 def escape_html(text: str | None) -> str:
@@ -70,7 +72,7 @@ class SanitizedMediaSection:
     caption: str
 
 
-def _sanitize_sections(sections) -> list[SanitizedMediaSection]:
+def _sanitize_sections(sections: Iterable[MediaSection]) -> list[SanitizedMediaSection]:
     return [
         SanitizedMediaSection(
             asset_ref=escape_html(s.asset_ref or ""),
@@ -80,7 +82,7 @@ def _sanitize_sections(sections) -> list[SanitizedMediaSection]:
     ]
 
 
-def sanitize_draft(draft: Draft, *, source_urls: list[str] | None = None) -> dict:
+def sanitize_draft(draft: Draft, *, source_urls: list[str] | None = None) -> dict[str, Any]:
     """Escape every attacker-shapeable field of a Draft into an inert dict.
 
     Returns a plain dict (not a Draft) whose every string value is already

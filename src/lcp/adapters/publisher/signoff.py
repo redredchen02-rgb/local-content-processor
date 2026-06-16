@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import Any
 
 from ...core.config import Config
 from ...core.draft import Draft
@@ -116,14 +117,15 @@ def _require_whitelisted(config: Config, reviewer: str) -> None:
         )
 
 
-def _freeze_hashes(store: JobStore, job_id: str) -> dict:
+def _freeze_hashes(store: JobStore, job_id: str) -> dict[str, Any]:
     manifest = read_review_manifest(store, job_id)
     if manifest is None or "freeze" not in manifest:
         raise InputValidationError(
             f"no review packet freeze record for job {job_id}; build the review "
             "packet first"
         )
-    return manifest["freeze"]
+    freeze: dict[str, Any] = manifest["freeze"]
+    return freeze
 
 
 def approve(
@@ -276,7 +278,7 @@ def reject(
 
     # Freeze is only meaningful for packet-bearing states. A NEEDS_HUMAN_REVIEW
     # job has no packet — requiring a freeze would dead-end it (the original bug).
-    freeze: dict = {}
+    freeze: dict[str, Any] = {}
     if record.state is not JobState.NEEDS_HUMAN_REVIEW:
         freeze = _freeze_hashes(store, job_id)
 

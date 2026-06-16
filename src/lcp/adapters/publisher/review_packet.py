@@ -36,6 +36,7 @@ import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from ...core.draft import Draft
 from ...core.errors import InputValidationError
@@ -299,12 +300,13 @@ def build_review_packet(
     )
 
 
-def read_review_manifest(store: JobStore, job_id: str) -> dict | None:
+def read_review_manifest(store: JobStore, job_id: str) -> dict[str, Any] | None:
     """Read the freeze record for a job, or None if no packet was built."""
     path = store.job_dir(job_id) / "review" / REVIEW_MANIFEST_NAME
     if not path.exists():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    return data
 
 
 def compute_body_sha256(draft: Draft) -> str:

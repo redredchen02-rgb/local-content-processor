@@ -106,13 +106,15 @@ class RunResult:
 
 # Persisted-draft I/O lives in the storage layer (adapters/storage/draft_store).
 # Re-exported here so the shells keep using pl.load_draft / pl.save_draft and the
-# publisher imports them from storage (not upward from this orchestrator).
+# publisher imports them from storage (not upward from this orchestrator). The
+# `X as X` form is an EXPLICIT re-export (required under no_implicit_reexport once
+# this module is strict-checked).
 from .adapters.storage.draft_store import (  # noqa: E402
-    _DRAFT_NAME,
-    _draft_path,
-    _read_source_text,
-    load_draft,
-    save_draft,
+    _DRAFT_NAME as _DRAFT_NAME,
+    _draft_path as _draft_path,
+    _read_source_text as _read_source_text,
+    load_draft as load_draft,
+    save_draft as save_draft,
 )
 
 

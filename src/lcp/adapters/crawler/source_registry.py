@@ -12,6 +12,7 @@ Matching: exact host or a subdomain of an allowed domain (e.g. allow
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -41,7 +42,7 @@ class SourceRegistry:
         self._entries: list[SourceEntry] = list(entries or [])
 
     @classmethod
-    def from_config(cls, crawler_config) -> "SourceRegistry":
+    def from_config(cls, crawler_config: Any) -> "SourceRegistry":
         """Build from a CrawlerConfig. allow_domains may be plain strings or
         "domain|legal basis" pairs (pipe-separated) so the basis can live in
         config.yaml without a schema change."""

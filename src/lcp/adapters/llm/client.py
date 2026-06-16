@@ -31,11 +31,15 @@ from __future__ import annotations
 import ipaddress
 import logging
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 from ...core.config import Config
 from ...core.errors import DependencyError, ExternalServiceError, InputValidationError
 from ...runtime_hardening import redact
+
+if TYPE_CHECKING:
+    import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +142,7 @@ def _validate_base_url(
     return scheme, host
 
 
-def _build_http_client(ca_bundle: str | None):
+def _build_http_client(ca_bundle: str | None) -> "httpx.Client | None":
     """Build an httpx client that trusts an extra CA bundle, WITHOUT disabling
     verification. Returns None when no bundle is supplied (SDK uses its default
     verifying client).
@@ -172,7 +176,7 @@ class LlmClient:
         dry_run: bool = False,
         ca_bundle: str | None = None,
         allow_http_hosts: list[str] | None = None,
-        client_factory=None,
+        client_factory: Any = None,
     ) -> None:
         """`client_factory` is the seam tests use to inject a stub openai client
         — by default it is the real `openai.OpenAI`. `allow_http_hosts` is the
@@ -191,7 +195,7 @@ class LlmClient:
     def model(self) -> str:
         return self._config.llm.model
 
-    def _ensure_client(self):
+    def _ensure_client(self) -> Any:
         if self._client is not None:
             return self._client
 
@@ -280,7 +284,7 @@ class LlmClient:
 
         return self._interpret(resp)
 
-    def _interpret(self, resp) -> ChatResult:
+    def _interpret(self, resp: Any) -> ChatResult:
         """Read finish_reason + content. Only 'stop' with non-empty content is
         clean; anything else -> needs_revision with a specific reason."""
         choices = getattr(resp, "choices", None) or []

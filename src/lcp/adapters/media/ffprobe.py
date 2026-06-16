@@ -22,6 +22,7 @@ import shutil
 import signal
 import subprocess
 from dataclasses import dataclass, field
+from typing import Any
 
 from lcp.core.errors import DependencyError, ExternalServiceError
 from lcp.runtime_hardening import minimal_env
@@ -54,7 +55,7 @@ class VideoInfo:
     duration_s: float | None = None
     bitrate_mbps: float | None = None
     has_audio: bool = False
-    raw: dict = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
 
 
 def _require(binary: str) -> str:
@@ -91,7 +92,7 @@ def _run(argv: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
         raise
 
 
-def _kill_group(proc: subprocess.Popen) -> None:
+def _kill_group(proc: subprocess.Popen[str]) -> None:
     """Best-effort kill of the child's entire process group, then reap it."""
     try:
         pgid = os.getpgid(proc.pid)
@@ -128,7 +129,9 @@ def _parse_rational_fps(value: str | None) -> float | None:
         return None
 
 
-def _first_stream(streams: list[dict], codec_type: str) -> dict | None:
+def _first_stream(
+    streams: list[dict[str, Any]], codec_type: str
+) -> dict[str, Any] | None:
     """Return the first stream of the given codec_type (don't assume index 0
     is video)."""
     for s in streams:
