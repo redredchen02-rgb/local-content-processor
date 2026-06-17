@@ -1,7 +1,7 @@
 ---
 title: "refactor: CUT de-watermark (Batch 2) and deliver the compliance-first pipeline"
 type: refactor
-status: active
+status: completed
 date: 2026-06-17
 deepened: 2026-06-17
 origin: docs/2026-06-17-dewatermark-go-no-go-runbook.md
