@@ -107,6 +107,26 @@ def test_gate_gaps_grouped_per_job_not_cross_job():
     assert gap.seconds == 30.0
 
 
+def test_reprocessed_job_yields_no_backward_run_boundary_gap():
+    # A job re-processed (retry/resolve -> re-process) re-emits the whole gate
+    # set with larger seqs. The last gate of run 1 paired with the first gate of
+    # run 2 (lint->risk) must NOT be reported as a gate interval.
+    events = [
+        _gate(0, EVENT_RISK_GATE, "j1", "pass", ts="2026-06-16T00:00:00Z", stage="risk"),
+        _gate(1, EVENT_LINT_GATE, "j1", "needs_revision", ts="2026-06-16T00:00:10Z",
+              stage="lint"),
+        # ... operator fixes hours later, re-runs:
+        _gate(40, EVENT_RISK_GATE, "j1", "pass", ts="2026-06-16T03:00:00Z", stage="risk"),
+        _gate(41, EVENT_LINT_GATE, "j1", "pass", ts="2026-06-16T03:00:10Z", stage="lint"),
+    ]
+    s = aggregate_audit(events)
+    transitions = {(g.from_stage, g.to_stage) for g in s.gate_gaps}
+    # forward risk->lint may appear; the backward lint->risk run boundary must not
+    assert ("lint", "risk") not in transitions
+    # and no gap should span the multi-hour wait between runs
+    assert all(g.seconds < 3600 for g in s.gate_gaps)
+
+
 def test_single_event_job_yields_no_gap():
     s = aggregate_audit([_gate(0, EVENT_RISK_GATE, "j1", "pass")])
     assert s.gate_gaps == []

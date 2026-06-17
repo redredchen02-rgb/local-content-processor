@@ -50,6 +50,21 @@ _GATE_PASS_STATUS: dict[str, frozenset[str]] = {
 
 _GATE_EVENTS: frozenset[str] = frozenset(_GATE_PASS_STATUS)
 
+# Canonical forward order of the gates within ONE pipeline run. Used to drop
+# backward "transitions" that are really run boundaries: a re-processed job
+# (retry / resolve -> re-process) re-emits the whole gate set with later seqs,
+# so a naive consecutive diff would pair the last gate of run 1 with the first
+# gate of run 2 (e.g. lint->risk) and report the hours-long operator wait
+# between runs as a gate interval. We only emit a gap when the gate position
+# strictly advances.
+_GATE_ORDER: dict[str, int] = {
+    EVENT_RISK_GATE: 0,
+    EVENT_DEDUP_GATE: 1,
+    EVENT_MEDIA_GATE: 2,
+    EVENT_GROUNDING_GATE: 3,
+    EVENT_LINT_GATE: 4,
+}
+
 
 @dataclass(frozen=True)
 class GateStat:
@@ -113,8 +128,8 @@ def aggregate_audit(events: list[dict[str, object]]) -> AuditSummary:
     intercepted: dict[str, set[str]] = {g: set() for g in _GATE_EVENTS}
     reasons: Counter[str] = Counter()
     daily: dict[str, set[str]] = {}
-    # job_id -> list of (seq, stage, ts) for gate events, to diff consecutively.
-    per_job: dict[str, list[tuple[int, str, str]]] = {}
+    # job_id -> list of (seq, stage, gate, ts) for gate events, diffed in order.
+    per_job: dict[str, list[tuple[int, str, str, str]]] = {}
 
     for ev in events:
         if not isinstance(ev, dict):
@@ -143,7 +158,7 @@ def aggregate_audit(events: list[dict[str, object]]) -> AuditSummary:
         seq = ev.get("seq")
         stage = ev.get("stage")
         if isinstance(seq, int) and isinstance(stage, str):
-            per_job.setdefault(job_id, []).append((seq, stage, ts))
+            per_job.setdefault(job_id, []).append((seq, stage, gate, ts))
 
     gates = [
         GateStat(gate=g, reached=len(reached[g]), intercepted=len(intercepted[g]))
@@ -153,8 +168,15 @@ def aggregate_audit(events: list[dict[str, object]]) -> AuditSummary:
 
     gaps: list[GateGap] = []
     for job_id, rows in per_job.items():
-        rows.sort()  # by seq, then stage/ts
-        for (_, from_stage, from_ts), (_, to_stage, to_ts) in zip(rows, rows[1:]):
+        rows.sort()  # by seq, then stage/gate/ts
+        for (_, from_stage, from_gate, from_ts), (_, to_stage, to_gate, to_ts) in zip(
+            rows, rows[1:]
+        ):
+            # Forward edges only: skip run-boundary / backward pairs (a re-run
+            # re-emits earlier gates with larger seq, which is NOT a real gate
+            # interval — see _GATE_ORDER).
+            if _GATE_ORDER.get(to_gate, -1) <= _GATE_ORDER.get(from_gate, -1):
+                continue
             a = _parse_ts_seconds(from_ts)
             b = _parse_ts_seconds(to_ts)
             if a is None or b is None:

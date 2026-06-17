@@ -572,6 +572,18 @@ def test_add_saved_source_rejects_empty(tmp_path):
     assert "error" in res
 
 
+def test_dashboard_stats_returns_envelope_on_unreadable_audit(tmp_path):
+    # A non-LcpError IO error (here: audit.jsonl is a directory -> read_text
+    # raises IsADirectoryError) must come back as a bridge-safe {error} dict,
+    # never a raw exception/stack across the bridge.
+    base = str(tmp_path)
+    (Path(base) / "audit.jsonl").mkdir(parents=True)  # unreadable as a file
+    api = _api(tmp_path, base)
+    res = api.dashboard_stats()
+    assert "error" in res
+    assert res["exit_code"] != 0
+
+
 def test_saved_source_plaintext_never_in_audit(tmp_path):
     base = str(tmp_path)
     api = _api(tmp_path, base)

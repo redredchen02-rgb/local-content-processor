@@ -480,6 +480,12 @@ class Api:
             }
         except LcpError as e:
             return _error_dict(e)
+        except Exception:  # noqa: BLE001 - bridge boundary, never leak a stack
+            # dashboard_stats reads audit.jsonl, which a background crawl/process
+            # thread is concurrently appending to. A non-LcpError IO/decode error
+            # (locked/corrupt file) must NOT cross the bridge as a raw exception
+            # (stack/path leak); return the same bridge-safe shape as _run_bg.
+            return {"error": "internal error", "exit_code": EXIT_INTERNAL}
 
     # --- Saved sources: input reuse (PII-exception table) ---------------------
 
