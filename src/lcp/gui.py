@@ -57,8 +57,10 @@ from .adapters.crawler.source_registry import SourceRegistry
 from .adapters.processor.sanitizer import escape_html, inert_link, sanitize_draft
 from .adapters.publisher import signoff
 from .adapters.publisher.review_packet import build_review_packet
+from .adapters.storage.audit_aggregate import aggregate_audit, summarize_gaps
 from .adapters.storage.audit_log import AuditLog
 from .adapters.storage.job_store import JobStore
+from .adapters.storage.source_store import SourceStore
 from .core.config import load_config
 from .core.errors import EXIT_INTERNAL, LcpError
 from .core.models import SourceType
@@ -104,6 +106,7 @@ class _Ctx:
         resolved = base_dir or self.config.storage.base_dir
         self.store = JobStore(base_dir=resolved)
         self.audit = AuditLog(Path(resolved) / "audit.jsonl")
+        self.sources = SourceStore(base_dir=resolved)
 
 
 class Api:
@@ -436,6 +439,102 @@ class Api:
         try:
             c = self._ctx()
             return {"summary": pl.batch_summary(c.store)}
+        except LcpError as e:
+            return _error_dict(e)
+
+    # --- Dashboard: accumulated metrics (read-only aggregation) ---------------
+
+    def dashboard_stats(self) -> dict:
+        """Accumulated operational metrics for the dashboard view.
+
+        Combines the PII-free jobs state counts (batch_summary) with an
+        aggregation over audit.jsonl (per-gate intercept rates, review-reason
+        counts, gate-to-gate intervals, daily throughput). Every value is a
+        number or an enum/code/date string from OUR OWN vocabulary, so no
+        escaping is needed; ``has_jobs`` lets the GUI render an onboarding empty
+        state instead of a wall of zeros on first run.
+
+        ``gate_intervals`` seconds INCLUDE operator wait time (ts is action time,
+        not compute time) — the GUI labels them accordingly and they are NOT an
+        optimization hint."""
+        try:
+            c = self._ctx()
+            summary = pl.batch_summary(c.store)
+            audit = aggregate_audit(c.audit.iter_events())
+            gates = [
+                {
+                    "gate": g.gate,
+                    "reached": g.reached,
+                    "intercepted": g.intercepted,
+                    "rate": g.rate,
+                }
+                for g in audit.gates
+            ]
+            return {
+                "has_jobs": summary.get("total", 0) > 0,
+                "summary": summary,
+                "gates": gates,
+                "review_reasons": audit.review_reasons,
+                "gate_intervals": summarize_gaps(audit.gate_gaps),
+                "daily_jobs": audit.daily_jobs,
+            }
+        except LcpError as e:
+            return _error_dict(e)
+        except Exception:  # noqa: BLE001 - bridge boundary, never leak a stack
+            # dashboard_stats reads audit.jsonl, which a background crawl/process
+            # thread is concurrently appending to. A non-LcpError IO/decode error
+            # (locked/corrupt file) must NOT cross the bridge as a raw exception
+            # (stack/path leak); return the same bridge-safe shape as _run_bg.
+            return {"error": "internal error", "exit_code": EXIT_INTERNAL}
+
+    # --- Saved sources: input reuse (PII-exception table) ---------------------
+
+    def saved_sources(self) -> dict:
+        """List reusable saved sources. ``label`` is escaped; ``source_ref`` is
+        returned INERT (escaped — for DISPLAY only, never an <a href>, never
+        fetched). ``source_ref_raw`` carries the verbatim value so the GUI can
+        pre-fill it into the create-job input — the GUI MUST assign it only to an
+        input ``.value`` (never innerHTML); submitting then re-runs the same
+        crawl validation (allow_domains/robots) as manual entry."""
+        try:
+            c = self._ctx()
+            rows = [
+                {
+                    "id": escape_html(s.id),
+                    "label": escape_html(s.label),
+                    "source_ref": inert_link(s.source_ref),
+                    "source_ref_raw": s.source_ref,
+                    "created_at": escape_html(s.created_at),
+                }
+                for s in c.sources.list_sources()
+            ]
+            return {"sources": rows, "count": len(rows)}
+        except LcpError as e:
+            return _error_dict(e)
+
+    def add_saved_source(self, label: str, source_ref: str) -> dict:
+        """Persist a reusable source (input reuse). Stored verbatim so it can be
+        re-submitted; returned escaped/inert. NEVER writes the plaintext to audit."""
+        try:
+            c = self._ctx()
+            s = c.sources.add_source(
+                label=label, source_ref=source_ref, created_at=_now()
+            )
+            return {
+                "id": escape_html(s.id),
+                "label": escape_html(s.label),
+                "source_ref": inert_link(s.source_ref),
+                "saved": True,
+            }
+        except LcpError as e:
+            return _error_dict(e)
+
+    def delete_saved_source(self, source_id: str) -> dict:
+        """Erase one saved source by opaque id (best-effort; see pii-inventory)."""
+        try:
+            c = self._ctx()
+            removed = c.sources.delete_source(source_id)
+            return {"id": escape_html(source_id), "removed": removed}
         except LcpError as e:
             return _error_dict(e)
 
