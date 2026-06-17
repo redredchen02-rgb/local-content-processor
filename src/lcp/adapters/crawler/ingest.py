@@ -9,6 +9,7 @@ rejected (plan path-traversal). Downloaded/copied media land 0600.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -86,11 +87,19 @@ class LocalIngestCrawler(Crawler):
         title = self._read_named(src, _TITLE_NAMES)
         body = self._read_named(src, _TEXT_NAMES)
 
-        # --- media assets ---
+        # --- media assets + completeness tracking (Unit 10) ---
+        # A material pack is mixed image/video/text in one folder. We never
+        # SILENTLY drop a file: unrecognised types and empty/unreadable media are
+        # recorded in a completeness report so the operator sees what was left
+        # out (decode/playability validation proper stays in the media gate,
+        # which already flags FAILED — we do the structural completeness here).
         assets: list[AssetRef] = []
+        skipped: list[dict[str, str]] = []
+        truncated = False
         count = 0
         for entry in sorted(src.iterdir()):
             if count >= spec.max_assets:
+                truncated = True
                 break
             # safe_join re-validates the member path stays within src (rejects
             # symlink-escape; resolve() catches a symlink pointing outside).
@@ -107,9 +116,15 @@ class LocalIngestCrawler(Crawler):
                 )
                 continue
             if not member.is_file():
+                if member.is_dir():
+                    skipped.append({"name": entry.name, "reason": "subfolder not scanned"})
                 continue
             kind = _kind_for(member)
             if kind is None:
+                # Not media — text inputs are handled separately; everything else
+                # is an unsupported type the operator should know was excluded.
+                if member.name not in _TEXT_NAMES and member.name not in _TITLE_NAMES:
+                    skipped.append({"name": member.name, "reason": "unsupported file type"})
                 continue
             count += 1
             try:
@@ -117,6 +132,16 @@ class LocalIngestCrawler(Crawler):
             except OSError as e:
                 assets.append(
                     AssetRef(kind=kind, path=member.name, state=AssetState.FAILED, note=str(e))
+                )
+                continue
+            if not data:
+                # Empty media is unopenable/unplayable — flag, never write a 0-byte
+                # asset the media gate would then have to fail.
+                assets.append(
+                    AssetRef(
+                        kind=kind, path=member.name, state=AssetState.FAILED,
+                        note="empty file (unopenable)",
+                    )
                 )
                 continue
             dest_dir = images_dir if kind is AssetKind.IMAGE else videos_dir
@@ -149,6 +174,35 @@ class LocalIngestCrawler(Crawler):
         )
         # create_only: never clobber an existing job's bundle (plan R11).
         write_manifest(spec.job_dir, manifest, create_only=True)
+
+        # Completeness report (Unit 10): what was imported vs flagged/skipped, so a
+        # mixed pack with missing or unopenable items is visible, not silent. PII-
+        # free: filenames are operator-chosen, not subject content.
+        ok_images = sum(
+            1 for a in assets if a.kind is AssetKind.IMAGE and a.state is AssetState.OK
+        )
+        ok_videos = sum(
+            1 for a in assets if a.kind is AssetKind.VIDEO and a.state is AssetState.OK
+        )
+        failed = [
+            {"name": Path(a.path).name, "reason": a.note or "failed"}
+            for a in assets if a.state is AssetState.FAILED
+        ]
+        report = {
+            "job_id": spec.job_id,
+            "has_title": bool(title),
+            "has_body": bool(body),
+            "imported_images": ok_images,
+            "imported_videos": ok_videos,
+            "failed": failed,
+            "skipped": skipped,
+            "truncated_at_max_assets": truncated,
+            "complete": not failed and not skipped and not truncated,
+        }
+        _write_0600(
+            raw_dir / "ingest_report.json",
+            json.dumps(report, ensure_ascii=False, indent=2).encode("utf-8"),
+        )
 
         return RawJobBundle(
             job_id=spec.job_id,

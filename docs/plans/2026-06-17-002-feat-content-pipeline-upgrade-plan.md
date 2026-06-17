@@ -351,7 +351,7 @@ graph TB
 
 ### Phase / Batch 2 — De-watermark (spike-gated; may be cut)
 
-- [ ] **Unit 6: De-watermark accuracy + latency SPIKE (go/no-go)**
+- [x] **Unit 6: De-watermark accuracy + latency SPIKE (go/no-go)** — harness mechanics done; real go/no-go pending operator samples
 
 **Goal:** Decide BUILD-or-CUT and engine choice with measured data on the operator's actual laptop. **This gates all of Batch 2.**
 
@@ -462,7 +462,7 @@ graph TB
 
 ### Phase / Batch 3 — Ingest (smallest, by-need)
 
-- [ ] **Unit 10: Mixed-folder material-pack ingest + completeness check**
+- [x] **Unit 10: Mixed-folder material-pack ingest + completeness check**
 
 **Goal:** Add ONLY the missing delta to local ingest: a completeness/openability check + the missing test. `LocalIngestCrawler.crawl()` ALREADY does mixed-folder import (classifies images/videos by extension, copies with 0600, path-traversal guard via `safe_join`) — do NOT re-implement folder iteration/classification/copy.
 
