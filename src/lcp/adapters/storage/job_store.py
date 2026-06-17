@@ -201,18 +201,31 @@ class JobStore:
 
         PROCESSING is transient: we do NOT write it to SQLite. Callers move the
         in-memory state through PROCESSING but only persist a resting state
-        (and drop a .processing marker file via mark_processing())."""
-        current = self.get_job(job_id)
-        if current is None:
-            raise InputValidationError(f"unknown job: {job_id}")
-        validate_transition(current.state, new_state)  # raises if illegal
-        if new_state in TRANSIENT_STATES:
-            raise InputValidationError(
-                f"cannot persist transient state {new_state.value} to SQLite; "
-                "use mark_processing() for the .processing marker instead"
-            )
+        (and drop a .processing marker file via mark_processing()).
+
+        Read + validate + update run in ONE connection under BEGIN IMMEDIATE, so
+        the write lock is held across the whole read->validate->update: a
+        concurrent writer cannot land a transition between our read and our write
+        (closes the read->update race the prior two-connection version had).
+        isolation_level=None disables sqlite3's legacy implicit-BEGIN layer so our
+        explicit BEGIN IMMEDIATE is the sole transaction control (relying on the
+        legacy layer suppressing its own BEGIN is version-fragile)."""
         conn = self._connect()
+        conn.isolation_level = None  # manual transaction control (see docstring)
         try:
+            conn.execute("BEGIN IMMEDIATE")  # take the WAL write lock before reading
+            row = conn.execute(
+                "SELECT * FROM jobs WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            if row is None:
+                raise InputValidationError(f"unknown job: {job_id}")
+            current = _row_to_record(row)
+            validate_transition(current.state, new_state)  # raises if illegal
+            if new_state in TRANSIENT_STATES:
+                raise InputValidationError(
+                    f"cannot persist transient state {new_state.value} to SQLite; "
+                    "use mark_processing() for the .processing marker instead"
+                )
             conn.execute(
                 "UPDATE jobs SET state = ?, updated_at = ?, error_code = ?, "
                 "review_reason = ? WHERE job_id = ?",
@@ -224,9 +237,9 @@ class JobStore:
                     job_id,
                 ),
             )
-            conn.commit()
+            conn.execute("COMMIT")
         finally:
-            conn.close()
+            conn.close()  # rolls back if we raised before COMMIT
         return JobRecord(
             job_id=job_id,
             state=new_state,
