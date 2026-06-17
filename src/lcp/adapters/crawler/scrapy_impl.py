@@ -10,9 +10,11 @@ non-negotiables:
 - RETRY_* + DOWNLOAD_TIMEOUT
 - ImagesPipeline/FilesPipeline with IMAGES_STORE/FILES_STORE under the job dir
 
-extract_content() is a pure function over a Scrapy Response so parse() can be
-unit-tested with a fabricated HtmlResponse (no network). The spider/parse path
-writes source.html/source.txt + sha256 and per-asset statuses into the bundle.
+The pure extraction policy lives in core/rules/extraction.py (strict-checked,
+testable with a fabricated HtmlResponse, no network); ``extract_content`` here is
+a thin adapter wrapper that injects this module's net_guard second-order SSRF
+check. The spider/parse path writes source.html/source.txt + sha256 and per-asset
+statuses into the bundle.
 """
 
 from __future__ import annotations
@@ -32,6 +34,8 @@ from ...core.models import (
     AssetState,
     SourceType,
 )
+from ...core.rules.extraction import classify_media_url
+from ...core.rules.extraction import extract_content as _core_extract
 from ..storage.manifest import write_manifest
 from . import net_guard
 from .base import RawJobBundle, SourceSpec
@@ -39,23 +43,10 @@ from .bundle import build_manifest, derive_status, sha256_bytes, sha256_text
 
 logger = logging.getLogger(__name__)
 
-# Image/video extensions used when classifying scraped media URLs.
-_IMAGE_EXT = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
-_VIDEO_EXT = (".mp4", ".webm", ".mov", ".m4v", ".mkv")
-
-
 # --------------------------------------------------------------------------
-# Pure extraction (testable with a fabricated Scrapy Response)
+# Second-order SSRF guard (I/O — stays in the adapter; injected into the pure
+# core extractor, core/rules/extraction.py, which does no I/O of its own)
 # --------------------------------------------------------------------------
-
-def _classify_media_url(url: str) -> AssetKind | None:
-    low = url.lower().split("?", 1)[0]
-    if low.endswith(_IMAGE_EXT):
-        return AssetKind.IMAGE
-    if low.endswith(_VIDEO_EXT):
-        return AssetKind.VIDEO
-    return None
-
 
 def _media_url_is_safe(url: str) -> bool:
     """SECOND-ORDER SSRF guard: validate a scraped media URL through net_guard
@@ -84,62 +75,11 @@ def _media_url_is_safe(url: str) -> bool:
 
 
 def extract_content(response: Any) -> dict[str, Any]:
-    """Pure-ish extraction from a Scrapy Response. Returns title, body text,
-    image_urls, video_urls, rejected_media_urls, source_html, and resolved
-    metadata.
-
-    De-dupes media URLs (plan edge: duplicate URLs skipped) AND validates every
-    scraped media URL through net_guard (second-order SSRF): a URL pointing at an
-    internal/metadata IP is NOT added to the download lists; it is recorded in
-    `rejected_media_urls` so write_bundle records it as a FAILED asset."""
-    title = (response.css("title::text").get() or "").strip()
-    if not title:
-        title = (response.css("h1::text").get() or "").strip()
-
-    # Body text: prefer <article>/<main>, else all <p>.
-    paras = response.css("article p::text, main p::text").getall()
-    if not paras:
-        paras = response.css("p::text").getall()
-    body = "\n".join(t.strip() for t in paras if t.strip()).strip()
-
-    image_urls: list[str] = []
-    video_urls: list[str] = []
-    rejected_media_urls: list[str] = []
-
-    def _accept(full: str, kind: AssetKind) -> None:
-        target = image_urls if kind is AssetKind.IMAGE else video_urls
-        if full in target or full in rejected_media_urls:
-            return  # de-dupe
-        if not _media_url_is_safe(full):
-            rejected_media_urls.append(full)  # second-order SSRF -> drop
-            return
-        target.append(full)
-
-    for src in response.css("img::attr(src)").getall():
-        _accept(response.urljoin(src), AssetKind.IMAGE)
-
-    for src in response.css("video::attr(src), video source::attr(src)").getall():
-        _accept(response.urljoin(src), AssetKind.VIDEO)
-
-    # Also classify links pointing at media files.
-    for href in response.css("a::attr(href)").getall():
-        full = response.urljoin(href)
-        kind = _classify_media_url(full)
-        if kind is not None:
-            _accept(full, kind)
-
-    return {
-        "title": title,
-        "body": body,
-        "image_urls": image_urls,
-        "video_urls": video_urls,
-        "rejected_media_urls": rejected_media_urls,
-        "source_html": response.text,
-        "metadata": {
-            "url": response.url,
-            "status": getattr(response, "status", None),
-        },
-    }
+    """Adapter wrapper over the pure core extractor: run it with this adapter's
+    net_guard second-order SSRF check injected. The DNS check is I/O, so it stays
+    here (``_media_url_is_safe``), never in core. parse()/write_bundle and the
+    crawl tests keep calling this single-arg form unchanged."""
+    return _core_extract(response, is_media_url_safe=_media_url_is_safe)
 
 
 # --------------------------------------------------------------------------
@@ -296,7 +236,7 @@ def write_bundle_from_extraction(
     for url in extracted.get("rejected_media_urls", []):
         if len(assets) >= spec.max_assets:
             break
-        kind = _classify_media_url(url) or AssetKind.IMAGE
+        kind = classify_media_url(url) or AssetKind.IMAGE
         assets.append(
             AssetRef(
                 kind=kind,
