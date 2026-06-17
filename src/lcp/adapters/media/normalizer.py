@@ -83,6 +83,17 @@ def _cover_cells(n: int, cw: int, ch: int) -> list[tuple[int, int, int, int]]:
     ]
 
 
+def cover_cell_rects(
+    n: int, cover_width: int = 1300, cover_height: int = 640
+) -> list[tuple[int, int, int, int]]:
+    """Public view of the cover layout placement rects for ``n`` (1-4) tiles.
+
+    Re-derives the exact ``(left, top, width, height)`` cells ``make_cover``
+    uses, so the cover-safe-area check (Unit 2) can reason about placement
+    without ``make_cover`` having to change its return type."""
+    return _cover_cells(max(1, min(n, 4)), cover_width, cover_height)
+
+
 @dataclass
 class NormalizedImage:
     """Result of normalizing one body image."""

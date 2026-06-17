@@ -29,7 +29,7 @@ from ...core.errors import ExternalServiceError, InputValidationError
 from ...core.models import AssetKind, AssetRef, AssetState
 from ...core.rules import asset_rules
 from ...core.state import JobState
-from ..media import ffprobe, normalizer
+from ..media import cover_checks, ffprobe, normalizer
 from ..storage.audit_log import AuditLog
 from ..storage.job_store import JobStore
 from ..storage.manifest import read_manifest
@@ -194,9 +194,12 @@ def run_media_gate(
     needs_revision = img_needs or vid_needs
 
     cover_rel: str | None = None
+    cover_preview_rel: str | None = None
+    cover_advisories: dict[str, list[str]] = {"geometry": [], "aesthetic": []}
     if ok_outputs:
+        cover_tiles = ok_outputs[:4]
         cover_path = normalizer.make_cover(
-            ok_outputs[:4],
+            cover_tiles,
             job_dir / "processed" / "cover" / "cover.jpg",
             cover_width=media_config.cover_width,
             cover_height=media_config.cover_height,
@@ -208,11 +211,36 @@ def run_media_gate(
             pass
         cover_rel = str(Path(cover_path).relative_to(job_dir))
 
+        # Advisory-only cover checks (never needs_revision) + safe-area preview.
+        advisory = cover_checks.evaluate_cover(
+            cover_path,
+            len(cover_tiles),
+            cover_width=media_config.cover_width,
+            cover_height=media_config.cover_height,
+        )
+        cover_advisories = {
+            "geometry": advisory.geometry,
+            "aesthetic": advisory.aesthetic,
+        }
+        preview_path = cover_checks.write_safe_area_preview(
+            cover_path,
+            job_dir / "processed" / "cover" / "cover_safe_area.jpg",
+            cover_width=media_config.cover_width,
+            cover_height=media_config.cover_height,
+        )
+        try:
+            os.chmod(preview_path, 0o600)
+        except OSError:
+            pass
+        cover_preview_rel = str(Path(preview_path).relative_to(job_dir))
+
     report = {
         "job_id": job_id,
         "image_count": len(images),
         "video_count": len(videos),
         "cover": cover_rel,
+        "cover_preview": cover_preview_rel,
+        "cover_advisories": cover_advisories,
         "assets": img_entries + vid_entries,
         "status": "needs_revision" if needs_revision else "pass",
     }
@@ -234,6 +262,8 @@ def run_media_gate(
             "video_count": len(videos),
             "needs_revision_count": nr_count,
             "has_cover": cover_rel is not None,
+            "cover_advisory_count": len(cover_advisories["geometry"])
+            + len(cover_advisories["aesthetic"]),
             "status": report["status"],
         },
     )
