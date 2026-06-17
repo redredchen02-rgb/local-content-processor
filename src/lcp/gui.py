@@ -465,7 +465,12 @@ class Api:
 
     def get_settings(self) -> dict:
         """Non-secret LLM settings + whether an api_key is set. NEVER returns the
-        key (only a boolean). All strings escaped for safe rendering."""
+        key (only a boolean). All strings escaped for safe rendering.
+
+        ``allow_domains`` is exposed READ-ONLY (escaped) so the GUI onboarding can
+        show whether the crawler allowlist is configured (a non-empty list) —
+        there is no write path here; the allowlist stays a config.yaml-only
+        compliance decision."""
         try:
             c = self._ctx()
             llm = c.config.llm
@@ -473,6 +478,7 @@ class Api:
                 "base_url": escape_html(llm.base_url),
                 "model": escape_html(llm.model),
                 "allowed_hosts": [escape_html(h) for h in llm.allowed_hosts],
+                "allow_domains": [escape_html(d) for d in c.config.crawler.allow_domains],
                 "api_key_set": c.config.has_api_key(),
                 "config_path": escape_html(str(self._settings_path())),
             }
