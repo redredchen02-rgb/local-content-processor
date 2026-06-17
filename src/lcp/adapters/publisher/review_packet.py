@@ -58,14 +58,23 @@ def _draft_body_text(draft: Draft) -> str:
     """The canonical body text whose hash sign-off binds to.
 
     We join the substantive sections deterministically so a change anywhere in
-    the article body (intro / quick facts / event body / faq / summary) changes
-    the hash. Title and cover are hashed separately (the freeze covers body +
-    title + cover, plan)."""
+    the article body (intro / quick facts / event body / faq / summary / AI
+    captions + subheads) changes the hash. Title and cover are hashed separately
+    (the freeze covers body + title + cover, plan).
+
+    AI structural pieces (captions / subheads — Unit 4) are net-new content; they
+    are bound HERE so a post-freeze edit of an AI caption/subhead is caught by
+    ``approve``'s hash check rather than slipping through unreviewed. Empty
+    captions/subheads contribute nothing (filtered), so a caption-free draft
+    hashes identically to before this change (backward compatible)."""
     parts: list[str] = [draft.intro, draft.event_body, draft.summary]
     parts.extend(draft.quick_facts)
     for item in draft.faq:
         parts.append(item.question)
         parts.append(item.answer)
+    parts.extend(draft.subheads)
+    parts.extend(s.caption for s in draft.image_sections)
+    parts.extend(s.caption for s in draft.video_sections)
     return "\n".join(p for p in parts if p)
 
 
