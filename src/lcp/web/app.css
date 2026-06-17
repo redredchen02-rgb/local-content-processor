@@ -167,6 +167,14 @@ button[disabled] { opacity: .45; cursor: not-allowed; }
   .pill { margin-left: 0; }
 }
 
+/* SETUP readiness checklist + config.yaml handoff (P2.1) */
+.ready-list { margin: var(--sp-3) 0; }
+.ready-row { padding: var(--sp-1) 0; }
+.handoff { border: 1px solid var(--line); border-radius: var(--radius-md); padding: var(--sp-3); margin-top: var(--sp-3); background: var(--paper-2); }
+.handoff pre { font-family: var(--font-mono); font-size: var(--fs-300); background: var(--paper); border: 1px solid var(--line);
+  padding: var(--sp-2); border-radius: var(--radius-sm); overflow-x: auto; user-select: all; }
+.handoff code { font-family: var(--font-mono); }
+
 @media (prefers-reduced-motion: reduce) {
   .spin { animation: none; }
 }

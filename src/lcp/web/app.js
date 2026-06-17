@@ -728,7 +728,7 @@ async function afterAction(res, okLabel) {
   if (isError(res)) { renderError($("job-status"), res); return; }
   const newState = res.state ? lexState(res.state).title : "完成";
   renderSuccess($("job-status"), okLabel, "→ " + newState);
-  refreshReadyPill();
+  computeReadiness();
   if (currentJobId) {
     const note = $("job-status").firstChild;
     await openJob(currentJobId);
@@ -843,7 +843,7 @@ function bindCreate() {
   });
 }
 
-// --- SETUP: LLM settings + readiness pill (full readiness lands in P2.1) -----
+// --- SETUP: LLM settings + readiness checklist + soft gating (P2.1) ----------
 
 const READY = { pipelineReady: false, signoffReady: false };
 
@@ -865,19 +865,108 @@ async function saveSettings() {
   if (isError(res)) { setText($("settings-status"), inlineError(res)); return; }
   setKeyState(res.api_key_set);
   setText($("settings-status"), "已储存" + (res.key_saved ? "（api_key 已更新）" : ""));
-  refreshReadyPill();
+  renderReadiness(await computeReadiness());
 }
 
-async function refreshReadyPill() {
-  const a = api(); if (!a) return;
+// readiness: P1 endpoint, P2 key (GUI-editable); P3 allowlist, P4 reviewers
+// (config.yaml-only, R33). Phase 0 exposes allow_domains so P3 is a real bool;
+// 'unknown' is a defensive fallback only if a backend ever drops the key.
+async function computeReadiness() {
+  const a = api();
+  if (!a) return { error: true };
   const s = await a.get_settings();
   const r = await a.reviewers();
-  READY.pipelineReady = !isError(s) && !!(s.base_url && s.model && s.api_key_set);
-  READY.signoffReady = !isError(r) && !!(r.reviewers && r.reviewers.length > 0);
-  const ready = READY.pipelineReady && READY.signoffReady;
+  if (isError(s)) { applyPill(false, false); return { error: true, exit_code: s.exit_code, msg: s.error, config_path: s.config_path }; }
+  const p1 = !!(s.base_url && s.model);
+  const p2 = s.api_key_set === true;
+  const p3 = ("allow_domains" in s) ? (s.allow_domains.length > 0) : "unknown";
+  const p4 = !isError(r) && !!(r.reviewers && r.reviewers.length > 0);
+  applyPill(p1 && p2, p4);
+  return { p1: p1, p2: p2, p3: p3, p4: p4, config_path: s.config_path, pipelineReady: p1 && p2, signoffReady: p4 };
+}
+
+function applyPill(pipelineReady, signoffReady) {
+  READY.pipelineReady = pipelineReady;
+  READY.signoffReady = signoffReady;
+  const ready = pipelineReady && signoffReady;
   const pill = $("ready-pill");
   setText(pill, ready ? "● 就绪" : "⚠ 需设定");
   pill.className = "pill " + (ready ? "pill--ready" : "pill--block");
+}
+
+function readyRow(label, status, consequence, fixer) {
+  const row = el("div"); row.className = "ready-row";
+  const pill = el("span");
+  if (status === true) { setText(pill, "● 已设"); pill.className = "badge badge--go"; }
+  else if (status === "unknown") { setText(pill, "◐ 无法确认"); pill.className = "badge badge--neutral"; }
+  else { setText(pill, "○ 缺"); pill.className = "badge badge--caution"; }
+  row.appendChild(pill);
+  row.appendChild(el("strong", " " + label));
+  row.appendChild(el("span", " — " + consequence));
+  const who = el("span", "（" + fixer + "）"); who.className = "hint";
+  row.appendChild(who);
+  return row;
+}
+
+function renderReadiness(r) {
+  const c = $("setup-readiness");
+  clear(c);
+  if (r.error) { renderError(c, { error: r.msg || "读取设定失败", exit_code: r.exit_code }); return; }
+
+  // gate banner — variant A / B / C. C-partial (p3 'unknown') only pre-Phase-0;
+  // never shows green when something is unconfirmed.
+  let variant, title;
+  const n = [r.p1, r.p2, r.p3 === true, r.p4].filter(Boolean).length;
+  if (!r.p1 || !r.p2) { variant = "attention"; title = "⚠ 设定未完成 — " + n + "/4 就绪"; }
+  else if (r.p3 === "unknown") { variant = "attention"; title = "◐ 大致就绪——允许清单无法核对（首次抓取才是真测试）"; }
+  else if (r.p3 !== true || !r.p4) { variant = "attention"; title = "⚠ 还需一次性技术设定（见下方交接）"; }
+  else { variant = "success"; title = "● 全部就绪"; }
+  renderBanner_(c, variant, title, "");
+
+  const list = el("div"); list.className = "ready-list";
+  list.appendChild(readyRow("模型 endpoint", r.p1, "process 需要它；没设处理时会报「还没设定好」", "可在此编辑"));
+  list.appendChild(readyRow("模型 API key", r.p2, "同上；存在 OS keyring", "可在此编辑"));
+  list.appendChild(readyRow("爬虫允许清单 allow_domains", r.p3, "空清单会拒绝每个抓取网址", "config.yaml only（合规边界）"));
+  list.appendChild(readyRow("审阅者白名单 reviewers", r.p4, "空名单会让全部签核被阻", "config.yaml only（签核归属）"));
+  c.appendChild(list);
+
+  if (r.p3 !== true || !r.p4) {
+    const card = el("div"); card.className = "handoff";
+    card.appendChild(el("strong", "在 config.yaml 加入（一次性技术设定，GUI 不改这些）："));
+    const path = el("p"); path.appendChild(el("span", "档案："));
+    path.appendChild(el("code", r.config_path || "config.yaml")); card.appendChild(path);
+    const pre = el("pre");
+    pre.textContent = "crawler:\n  allow_domains:\n    - your-allowlisted-site.example\npublisher:\n  reviewers:\n    - 你的名字";
+    card.appendChild(pre);
+    card.appendChild(el("p", "改完点「重新检查」。署名＝署名，非身分验证。"));
+    const recheck = button("重新检查", "btn-secondary");
+    recheck.addEventListener("click", async function () { renderReadiness(await computeReadiness()); });
+    card.appendChild(recheck);
+    c.appendChild(card);
+  }
+}
+
+// advisory base_url check — NON-authoritative; server's validate_llm_base_url wins
+function advisoryBaseUrl() {
+  const v = $("settings-base-url").value.trim();
+  const out = $("base-url-advisory");
+  if (!v) { setText(out, ""); return; }
+  let msg = "";
+  const m = v.match(/^([a-z]+):\/\//i);
+  if (!m) msg = "需以 http(s):// 开头";
+  else {
+    const scheme = m[1].toLowerCase();
+    if (scheme !== "http" && scheme !== "https") msg = "scheme 须是 http 或 https";
+    else if (scheme === "http" && !/^https?:\/\/(localhost|127\.|\[::1\])/i.test(v)) msg = "http 仅限本机 loopback，其余须用 https";
+    else if (!v.replace(/\/+$/, "").endsWith("/v1")) msg = "须以 /v1 结尾";
+  }
+  setText(out, msg ? "⚠ " + msg + "（存档时以服务器为准）" : "✓ 看起来没问题");
+}
+
+async function openSetup() {
+  showView("setup");
+  await loadSettings();
+  renderReadiness(await computeReadiness());
 }
 
 // --- wiring -----------------------------------------------------------------
@@ -885,18 +974,28 @@ async function refreshReadyPill() {
 function bind() {
   $("nav-inbox").addEventListener("click", function () { showView("inbox"); refreshInbox(); });
   $("nav-new").addEventListener("click", function () { $("create-job-id").value = ""; openCreate(null); });
-  $("nav-setup").addEventListener("click", function () { showView("setup"); loadSettings(); });
+  $("nav-setup").addEventListener("click", openSetup);
   $("job-back").addEventListener("click", function () { showView("inbox"); refreshInbox(); });
   $("setup-back").addEventListener("click", function () { showView("inbox"); refreshInbox(); });
   $("refresh-inbox").addEventListener("click", refreshInbox);
   $("btn-save-settings").addEventListener("click", saveSettings);
+  $("settings-base-url").addEventListener("input", advisoryBaseUrl);
   bindCreate();
 }
 
 async function init() {
   bind();
-  showView("inbox");
-  await refreshReadyPill();
+  const r = await computeReadiness();
+  if (r && !r.error && !r.pipelineReady) {
+    // first run / unconfigured: open SETUP and focus the first thing to fix
+    await loadSettings();
+    renderReadiness(r);
+    showView("setup");
+    const f = $("settings-base-url");
+    if (f && f.focus) f.focus();
+  } else {
+    showView("inbox");
+  }
   refreshInbox();
 }
 
