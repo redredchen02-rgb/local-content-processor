@@ -236,9 +236,24 @@ def read_attestation(store: JobStore, job_id: str) -> DewatermarkAttestation | N
         return None
     if not data.get("attested"):
         return None
+    # A corrupt/tampered attestation missing its binding fields must read back as
+    # NOT attested (stay locked) — never an attestation with empty provenance
+    # (mirror read_submitter's defensive check above).
+    submitter = data.get("submitter")
+    reviewer = data.get("reviewer")
+    evidence_sha256 = data.get("evidence_sha256")
+    if not (
+        isinstance(submitter, str)
+        and submitter
+        and isinstance(reviewer, str)
+        and reviewer
+        and isinstance(evidence_sha256, str)
+        and evidence_sha256
+    ):
+        return None
     return DewatermarkAttestation(
         job_id=job_id,
-        submitter=str(data.get("submitter", "")),
-        reviewer=str(data.get("reviewer", "")),
-        evidence_sha256=str(data.get("evidence_sha256", "")),
+        submitter=submitter,
+        reviewer=reviewer,
+        evidence_sha256=evidence_sha256,
     )

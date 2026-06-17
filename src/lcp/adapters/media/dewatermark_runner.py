@@ -69,7 +69,11 @@ class DewatermarkRunner:
             proc = self._run(
                 cmd,
                 timeout=self.config.timeout_seconds,
-                env=minimal_env(),  # scrubbed: no secrets, no main-venv leakage
+                # scrubbed env: no secrets, no main-venv leakage. Force the engine
+                # OFFLINE (HF/transformers default to online) so it can NEVER
+                # silently fetch model weights from the network — weights must be
+                # local + pinned; a fetch attempt fails instead of downloading.
+                env=minimal_env(extra={"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"}),
                 capture_output=True,
                 text=True,
             )

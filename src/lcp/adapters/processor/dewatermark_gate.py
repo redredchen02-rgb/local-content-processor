@@ -15,8 +15,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from PIL import Image
+
 from ...core.config import InpaintConfig
-from ...core.errors import ExternalServiceError
+from ...core.errors import ExternalServiceError, InputValidationError
 from ...core.models import AssetKind, AssetState
 from ...core.state import JobState
 from ..media.dewatermark_runner import DewatermarkRunner
@@ -81,15 +83,16 @@ def run_dewatermark_gate(
             new_assets.append(a)
             continue
         try:
-            from PIL import Image
-
             with Image.open(src) as im:
                 size = im.size
             mask_path = write_box_mask(size, boxes, job_dir / "processed" / "masks" / (Path(a.path).name + ".mask.png"))
             run.remove(src=src, mask=mask_path, dst=src)
-        except ExternalServiceError:
-            # low-confidence / engine failure / out-of-scope -> needs_revision,
-            # NEVER a silent partial. Mark the asset and stop publishing it.
+        except (ExternalServiceError, OSError, InputValidationError):
+            # engine failure / low-confidence / out-of-scope, OR an unreadable
+            # asset (corrupt/truncated image -> OSError) / missing source
+            # (InputValidationError) -> needs_revision, NEVER a silent partial or
+            # an uncaught crash. A missing ENGINE still raises DependencyError,
+            # which propagates as exit 3 (mirror missing-ffmpeg, by design).
             failed = True
             new_assets.append(a.model_copy(update={
                 "state": AssetState.NEEDS_REVISION,

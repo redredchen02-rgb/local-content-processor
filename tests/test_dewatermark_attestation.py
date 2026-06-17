@@ -100,3 +100,16 @@ def test_disclaimer_verbatim(tmp_path):
     att_file = json.loads((store.job_dir("j1") / "review" / "dewatermark_attestation.json").read_text(encoding="utf-8"))
     assert att_file["disclaimer"] == dw.DEWATERMARK_DISCLAIMER
     assert "ATTESTATION, NOT AUTHENTICATION" in dw.DEWATERMARK_DISCLAIMER
+
+
+def test_read_attestation_rejects_corrupt_file_missing_fields(tmp_path):
+    # A tampered/corrupt attestation (attested:true but missing binding fields)
+    # must read back as None (locked), not an attestation with empty provenance.
+    store, _, _ = _ctx(tmp_path)
+    review = store.job_dir("j1") / "review"
+    review.mkdir(parents=True, exist_ok=True)
+    (review / "dewatermark_attestation.json").write_text(
+        json.dumps({"job_id": "j1", "attested": True, "submitter": "bob"}),
+        encoding="utf-8",
+    )
+    assert dw.read_attestation(store, "j1") is None

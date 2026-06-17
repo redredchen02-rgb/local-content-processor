@@ -167,3 +167,45 @@ def test_gate_no_mask_configured_is_noop(tmp_path):
     )
     assert out.job_state is None and out.cleaned == 0
     assert out.report["status"] == "no_mask"
+
+
+# --- pre-merge review hardening ----------------------------------------------
+
+
+def test_runner_forces_offline_weight_env(tmp_path):
+    # Offline-weights contract: the engine subprocess must run with HF/transformers
+    # OFFLINE so it can never silently download model weights from the network.
+    captured = {}
+
+    def _capture(cmd, **kwargs):
+        captured.update(kwargs)
+        out = cmd[cmd.index("--output") + 1]
+        Image.new("RGB", (20, 20), (10, 20, 30)).save(out, format="JPEG")
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    cfg = InpaintConfig(enabled=True, engine_cmd=["fake"])
+    runner = DewatermarkRunner(cfg, subprocess_runner=_capture)
+    src = tmp_path / "a.jpg"
+    Image.new("RGB", (20, 20)).save(src)
+    mask = tmp_path / "m.png"
+    build_box_mask((20, 20), [(1, 1, 5, 5)]).save(mask)
+    runner.remove(src=src, mask=mask, dst=tmp_path / "out.jpg")
+    env = captured.get("env", {})
+    assert env.get("HF_HUB_OFFLINE") == "1"
+    assert env.get("TRANSFORMERS_OFFLINE") == "1"
+
+
+def test_gate_unreadable_image_is_needs_revision_not_crash(tmp_path):
+    # A corrupt/unreadable asset must fail CLOSED (needs_revision), never crash the
+    # gate with an uncaught image-decode error (OSError/UnidentifiedImageError).
+    store = _job_with_image(tmp_path, processing=True)
+    (store.job_dir("j1") / "raw" / "images" / "a.jpg").write_bytes(b"not a real jpeg")
+    audit = AuditLog(tmp_path / "audit.jsonl")
+    out = run_dewatermark_gate(
+        job_id="j1", store=store, audit=audit, ts=TS, attestation=ATT,
+        inpaint_config=_cfg(), runner=DewatermarkRunner(_cfg(), subprocess_runner=_fake_engine()),
+    )
+    assert out.job_state is JobState.NEEDS_REVISION
+    m = read_manifest(store.job_dir("j1"))
+    assert m.assets[0].state is AssetState.NEEDS_REVISION
+    assert m.assets[0].watermark_removed is False
