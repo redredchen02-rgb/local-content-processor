@@ -1,7 +1,7 @@
 ---
 title: "feat: Content Pipeline Upgrade — watermark / cover / AI copy templates / ingest"
 type: feat
-status: active
+status: batch-1-complete
 date: 2026-06-17
 origin: docs/brainstorms/2026-06-17-content-pipeline-upgrade-requirements.md
 ---
@@ -170,7 +170,7 @@ graph TB
 
 **Verification:** A measurable review-touch baseline + target exist and gate Batch-1 sign-off; the R4/R5 miss-rate bar exists before AI-copy throughput ships.
 
-- [ ] **Unit 1: Watermark-ADD Pillow primitive**
+- [x] **Unit 1: Watermark-ADD Pillow primitive**
 
 **Goal:** A shared `add_watermark(image, kind)` primitive (logo + text modes, corner anchor, opacity, margin) reused by body images and cover.
 
@@ -202,7 +202,7 @@ graph TB
 
 **Verification:** Body + cover outputs carry the official mark at configured position; JPEGs are valid RGB; dry-run produces none.
 
-- [ ] **Unit 2: Cover watermark + safe-area advisory**
+- [x] **Unit 2: Cover watermark + safe-area advisory**
 
 **Goal:** Watermark the cover once (via U1) and add compose-time safe-area geometry + Pillow aesthetic heuristics with a preview overlay.
 
@@ -232,7 +232,7 @@ graph TB
 
 **Verification:** Cover carries one watermark; geometry warnings are deterministic; aesthetic notes are advisory-only; preview shows the safe box.
 
-- [ ] **Unit 3: Prompt-template management + template linter**
+- [x] **Unit 3: Prompt-template management + template linter**
 
 **Goal:** Per-栏目 templates (config-overrides-first) rendered into a hardcoded shell via `str.format_map` allowlist, with a linter treating templates as a checked object.
 
@@ -264,7 +264,7 @@ graph TB
 
 **Verification:** Operators select/edit per-栏目 templates; malicious templates can't reach SYSTEM or rewrite constraints; malicious slot VALUES are datamarked; lint runs on save + import.
 
-- [ ] **Unit 4: AI captions / FAQ / subheads + grounding contract + freeze-binding extension**
+- [x] **Unit 4: AI captions / FAQ / subheads + grounding contract + freeze-binding extension**
 
 **Goal:** Generate the net-new structural pieces, give them a grounding contract, and extend the freeze hash so reviewed AI content can't be silently edited after freeze.
 
