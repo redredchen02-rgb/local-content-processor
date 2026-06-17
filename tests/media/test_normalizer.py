@@ -111,6 +111,28 @@ def test_exif_transpose_applied(tmp_path):
     assert res.width >= res.height
 
 
+def test_normalize_strips_exif_pii_from_output(tmp_path):
+    # Standing PII invariant (plan Unit 1): a source carrying EXIF -- including a
+    # GPS IFD -- must yield an output JPEG with NO EXIF/GPS. A guarantee, not an
+    # accident of convert("RGB"); pin it so a future exif= on save cannot silently
+    # re-leak coordinates.
+    img = Image.new("RGB", (1200, 800), (123, 50, 50))
+    exif = img.getexif()
+    exif[0x0110] = "SecretCam"  # Model -- a plain EXIF tag
+    gps = exif.get_ifd(0x8825)  # GPS IFD
+    gps[1] = "N"  # GPSLatitudeRef (ASCII; rational GPSLatitude omitted -- Pillow's
+    # rational writer is finicky and the Model tag already proves EXIF is present)
+    src = tmp_path / "geo.jpg"
+    img.save(src, format="JPEG", exif=exif)
+    assert len(Image.open(src).getexif()) > 0  # source really carries EXIF
+
+    dst = tmp_path / "out.jpg"
+    normalizer.normalize_image(src, dst, max_width=800)
+    out_exif = Image.open(dst).getexif()
+    assert len(out_exif) == 0  # no EXIF survives on the output
+    assert 0x8825 not in out_exif  # specifically no GPS IFD
+
+
 # --- decompression bomb -------------------------------------------------------
 
 

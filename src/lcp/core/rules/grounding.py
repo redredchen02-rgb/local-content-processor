@@ -174,7 +174,10 @@ class SubstringOverlapStrategy:
 
 
 def _split_claims(draft: Draft) -> list[str]:
-    """Narrative claims to verify: the event_body sentences + faq answers.
+    """Narrative claims to verify: event_body sentences + faq answers + the
+    net-new AI structural pieces (image/video captions + subheads, Unit 4).
+    Captions/subheads are generated content, so they must be grounded too — an
+    ungrounded caption routes the job to human review, never silently passes.
     Pure splitting on sentence boundaries / newlines — no URL parsing."""
     claims: list[str] = []
     for chunk in _sentences(draft.event_body):
@@ -184,6 +187,14 @@ def _split_claims(draft: Draft) -> list[str]:
         ans = item.answer.strip()
         if len(ans) >= _MIN_CLAIM_CHARS:
             claims.append(ans)
+    for section in (*draft.image_sections, *draft.video_sections):
+        cap = section.caption.strip()
+        if len(cap) >= _MIN_CLAIM_CHARS:
+            claims.append(cap)
+    for sub in draft.subheads:
+        s = sub.strip()
+        if len(s) >= _MIN_CLAIM_CHARS:
+            claims.append(s)
     return claims
 
 

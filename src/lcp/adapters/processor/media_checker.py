@@ -24,12 +24,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ...core.config import MediaConfig
+from ...core.config import MediaConfig, WatermarkConfig
 from ...core.errors import ExternalServiceError, InputValidationError
 from ...core.models import AssetKind, AssetRef, AssetState
 from ...core.rules import asset_rules
 from ...core.state import JobState
-from ..media import ffprobe, normalizer
+from ..media import cover_checks, ffprobe, normalizer
 from ..storage.audit_log import AuditLog
 from ..storage.job_store import JobStore
 from ..storage.manifest import read_manifest
@@ -74,8 +74,10 @@ def _write_0600_json(path: Path, payload: dict[str, Any]) -> None:
 def _validate_images(
     images: list[AssetRef], job_dir: Path, media: MediaConfig
 ) -> tuple[list[dict[str, Any]], list[str], bool]:
-    """Normalize + judge each OK image. Returns (per-asset entries, OK output
-    paths for the cover, any_needs_revision)."""
+    """Normalize + judge each OK image (always CLEAN — no watermark). Returns
+    (per-asset entries, OK output paths, any_needs_revision). Keeping the
+    normalized files clean lets the cover compose from un-watermarked tiles; the
+    body watermark is a separate pass applied AFTER the cover is composed."""
     entries: list[dict[str, Any]] = []
     ok_outputs: list[str] = []
     needs_revision = False
@@ -163,6 +165,30 @@ def _validate_videos(
     return entries, needs_revision
 
 
+def _watermark_body_images(
+    paths: list[str], watermark: WatermarkConfig
+) -> None:
+    """Apply the official body watermark in place to each normalized body image.
+
+    Runs only when watermarking is enabled and AFTER the cover is composed from
+    the clean tiles. A corrupt/missing watermark asset surfaces as an
+    InputValidationError from add_watermark — let it propagate (the operator
+    chose to watermark; failing silently would publish unmarked images)."""
+    from PIL import Image
+
+    from ..media.watermark import add_watermark
+
+    for p in paths:
+        with Image.open(p) as img:
+            img.load()
+            marked = add_watermark(img, watermark, kind="body")
+        marked.save(p, format="JPEG", quality=90, optimize=True, progressive=True)
+        try:
+            os.chmod(p, 0o600)
+        except OSError:
+            pass
+
+
 def run_media_gate(
     *,
     job_id: str,
@@ -170,6 +196,7 @@ def run_media_gate(
     audit: AuditLog,
     ts: str,
     media_config: MediaConfig,
+    watermark: WatermarkConfig | None = None,
     actor: str = "system",
 ) -> MediaGateOutcome:
     """Validate + normalize the job's media, write the validation report, and park
@@ -194,13 +221,21 @@ def run_media_gate(
     needs_revision = img_needs or vid_needs
 
     cover_rel: str | None = None
+    cover_preview_rel: str | None = None
+    cover_advisories: dict[str, list[str]] = {"geometry": [], "aesthetic": []}
     if ok_outputs:
+        cover_tiles = ok_outputs[:4]
+        # The cover is composed from the still-CLEAN normalized tiles and
+        # watermarked ONCE here (watermark=...). The body-image watermark pass
+        # runs AFTER this, so tiles are clean at compose time and the cover never
+        # inherits per-tile marks. (Passing a None/disabled config is a no-op.)
         cover_path = normalizer.make_cover(
-            ok_outputs[:4],
+            cover_tiles,
             job_dir / "processed" / "cover" / "cover.jpg",
             cover_width=media_config.cover_width,
             cover_height=media_config.cover_height,
             quality=media_config.image_quality,
+            watermark=watermark,
         )
         try:
             os.chmod(cover_path, 0o600)
@@ -208,11 +243,42 @@ def run_media_gate(
             pass
         cover_rel = str(Path(cover_path).relative_to(job_dir))
 
+        # Advisory-only cover checks (never needs_revision) + safe-area preview.
+        advisory = cover_checks.evaluate_cover(
+            cover_path,
+            len(cover_tiles),
+            cover_width=media_config.cover_width,
+            cover_height=media_config.cover_height,
+        )
+        cover_advisories = {
+            "geometry": advisory.geometry,
+            "aesthetic": advisory.aesthetic,
+        }
+        preview_path = cover_checks.write_safe_area_preview(
+            cover_path,
+            job_dir / "processed" / "cover" / "cover_safe_area.jpg",
+            cover_width=media_config.cover_width,
+            cover_height=media_config.cover_height,
+        )
+        try:
+            os.chmod(preview_path, 0o600)
+        except OSError:
+            pass
+        cover_preview_rel = str(Path(preview_path).relative_to(job_dir))
+
+        # Body watermark pass: applied AFTER the cover composed from clean tiles,
+        # so each published body image carries the official mark but the cover
+        # never inherits per-tile marks (it was marked once, above).
+        if watermark is not None and watermark.enabled:
+            _watermark_body_images(ok_outputs, watermark)
+
     report = {
         "job_id": job_id,
         "image_count": len(images),
         "video_count": len(videos),
         "cover": cover_rel,
+        "cover_preview": cover_preview_rel,
+        "cover_advisories": cover_advisories,
         "assets": img_entries + vid_entries,
         "status": "needs_revision" if needs_revision else "pass",
     }
@@ -234,6 +300,9 @@ def run_media_gate(
             "video_count": len(videos),
             "needs_revision_count": nr_count,
             "has_cover": cover_rel is not None,
+            "watermarked": bool(watermark is not None and watermark.enabled),
+            "cover_advisory_count": len(cover_advisories["geometry"])
+            + len(cover_advisories["aesthetic"]),
             "status": report["status"],
         },
     )

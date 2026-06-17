@@ -183,15 +183,42 @@ class Api:
 
     # --- Stage 2: process ----------------------------------------------------
 
-    def process(self, job_id: str, title: str = "", dry_run: bool = False) -> dict:
+    def templates(self) -> dict:
+        """List the per-栏目 template categories the operator can apply (Unit 5).
+        Names only — the template bodies never cross the bridge."""
+        try:
+            from .adapters.llm import templates as tmpl
+
+            c = self._ctx()
+            return {"categories": [escape_html(x) for x in tmpl.list_template_categories(c.config)]}
+        except LcpError as e:
+            return _error_dict(e)
+
+    def process(
+        self,
+        job_id: str,
+        title: str = "",
+        dry_run: bool = False,
+        watermark: bool | None = None,
+        template: str | None = None,
+        ai_copy: bool = False,
+        dewatermark: bool = False,
+    ) -> dict:
         """Mirror `process`: risk + dedup gates -> assemble -> lint + ground.
 
         Honours dry_run (LLM not called). Stops at the first gate that parks the
-        job and reports the resting state."""
+        job and reports the resting state. watermark/template/ai_copy/dewatermark
+        are process-time inputs (1:1 with the CLI flags)."""
         try:
             c = self._ctx()
             p = pl.Pipeline(c.config, c.store, c.audit, dry_run=bool(dry_run))
-            res = p.process(job_id, ts=_now(), title=title)
+            res = p.process(
+                job_id, ts=_now(), title=title,
+                watermark=watermark,
+                template=template or None,
+                ai_copy=bool(ai_copy),
+                dewatermark=bool(dewatermark),
+            )
             return {
                 "job_id": escape_html(job_id),
                 "state": res.final_state.value,
@@ -233,9 +260,23 @@ class Api:
         """Background variant of create_and_crawl (long network task)."""
         return self._run_bg(job_id, lambda: self.create_and_crawl(job_id, url))
 
-    def process_async(self, job_id: str, title: str = "", dry_run: bool = False) -> dict:
+    def process_async(
+        self,
+        job_id: str,
+        title: str = "",
+        dry_run: bool = False,
+        watermark: bool | None = None,
+        template: str | None = None,
+        ai_copy: bool = False,
+        dewatermark: bool = False,
+    ) -> dict:
         """Background variant of process (long LLM task)."""
-        return self._run_bg(job_id, lambda: self.process(job_id, title, dry_run))
+        return self._run_bg(
+            job_id,
+            lambda: self.process(
+                job_id, title, dry_run, watermark, template, ai_copy, dewatermark
+            ),
+        )
 
     def job_status(self, job_id: str) -> dict:
         """Read a background task's status: running | done | error | unknown.
@@ -304,6 +345,97 @@ class Api:
             sanitized["job_id"] = escape_html(job_id)
             sanitized["state"] = rec.state.value if rec else None
             return sanitized
+        except LcpError as e:
+            return _error_dict(e)
+
+    def cover_report(self, job_id: str) -> dict:
+        """Cover safe-area advisories + preview/cover paths from the media gate's
+        validation report (Unit 5). Advisory text only — never a hard gate. All
+        strings are escaped; paths are inert text (the GUI shows them, the
+        loopback server does not serve job dirs, so no <img> is embedded)."""
+        try:
+            import json
+
+            c = self._ctx()
+            report_path = c.store.job_dir(job_id) / "processed" / "validation_report.json"
+            if not report_path.exists():
+                return {"job_id": escape_html(job_id), "has_report": False}
+            data = json.loads(report_path.read_text(encoding="utf-8"))
+            adv = data.get("cover_advisories") or {}
+            return {
+                "job_id": escape_html(job_id),
+                "has_report": True,
+                "cover": escape_html(data["cover"]) if data.get("cover") else None,
+                "cover_preview": (
+                    escape_html(data["cover_preview"]) if data.get("cover_preview") else None
+                ),
+                "geometry": [escape_html(g) for g in adv.get("geometry", [])],
+                "aesthetic": [escape_html(a) for a in adv.get("aesthetic", [])],
+            }
+        except (LcpError, OSError, ValueError) as e:
+            if isinstance(e, LcpError):
+                return _error_dict(e)
+            return {"job_id": escape_html(job_id), "has_report": False}
+
+    # --- de-watermark attestation (Batch 2, default-locked) ------------------
+
+    def dewatermark_disclaimer(self) -> dict:
+        """The verbatim DEWATERMARK_DISCLAIMER (attestation != authentication)."""
+        from .adapters.publisher.dewatermark import DEWATERMARK_DISCLAIMER
+
+        return {"disclaimer": escape_html(DEWATERMARK_DISCLAIMER)}
+
+    def dewatermark_status(self, job_id: str) -> dict:
+        """Locked/unlocked state for the GUI: is a submitter recorded, is the job
+        attested, and is an engine actually installed (else removal can't run)."""
+        try:
+            from .adapters.publisher.dewatermark import read_attestation, read_submitter
+
+            c = self._ctx()
+            att = read_attestation(c.store, job_id)
+            sub = read_submitter(c.store, job_id)
+            return {
+                "job_id": escape_html(job_id),
+                "submitter": escape_html(sub) if sub else None,
+                "attested": att is not None,
+                "reviewer": escape_html(att.reviewer) if att else None,
+                "engine_ready": bool(c.config.inpaint.enabled and c.config.inpaint.engine_cmd),
+            }
+        except LcpError as e:
+            return _error_dict(e)
+
+    def request_dewatermark(self, job_id: str, submitter: str) -> dict:
+        """Record the submitter (party 1) of a de-watermark request."""
+        try:
+            from .adapters.publisher.dewatermark import request_dewatermark
+
+            c = self._ctx()
+            sub = request_dewatermark(job_id, submitter, store=c.store, audit=c.audit, ts=_now())
+            return {"job_id": escape_html(job_id), "submitter": escape_html(sub)}
+        except LcpError as e:
+            return _error_dict(e)
+
+    def attest_dewatermark(self, job_id: str, reviewer: str, evidence_ref: str) -> dict:
+        """Approve a de-watermark (party 2): whitelisted reviewer != submitter +
+        license evidence. Fail-closed; raw evidence never crosses the bridge."""
+        try:
+            from .adapters.publisher.dewatermark import (
+                DEWATERMARK_DISCLAIMER,
+                attest_dewatermark,
+            )
+
+            c = self._ctx()
+            att = attest_dewatermark(
+                job_id, reviewer, evidence_ref,
+                config=c.config, store=c.store, audit=c.audit, ts=_now(),
+            )
+            return {
+                "job_id": escape_html(job_id),
+                "attested": True,
+                "reviewer": escape_html(att.reviewer),
+                "submitter": escape_html(att.submitter),
+                "disclaimer": escape_html(DEWATERMARK_DISCLAIMER),
+            }
         except LcpError as e:
             return _error_dict(e)
 

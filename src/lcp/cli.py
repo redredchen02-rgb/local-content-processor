@@ -165,18 +165,38 @@ def ingest(ctx, directory, job_id):
 @cli.command()
 @click.option("--job-id", "job_id", required=True)
 @click.option("--title", default="", help="Working title (lint/risk input)")
+@click.option(
+    "--watermark/--no-watermark", "watermark", default=None,
+    help="Apply (or skip) the official watermark; default follows config",
+)
+@click.option(
+    "--template", "template", default=None,
+    help="Per-栏目 prompt template to apply (category name)",
+)
+@click.option(
+    "--ai-copy", "ai_copy", is_flag=True, default=False,
+    help="Also generate AI captions/FAQ/subheads (all need human review)",
+)
+@click.option(
+    "--dewatermark", "dewatermark", is_flag=True, default=False,
+    help="Run the de-watermark gate (attested-only; default-locked, owned/licensed)",
+)
 @click.pass_context
-def process(ctx, job_id, title):
+def process(ctx, job_id, title, watermark, template, ai_copy, dewatermark):
     """Stage 2: risk gate, media validation/normalization, dedup gate, assemble,
     lint + ground.
 
     Honours --dry-run: the LLM is NOT called and no external system is mutated
     (the draft is marked not-executed; deterministic local stages incl. media
     still run). Stops at the first gate that parks the job (BLOCKED / DUPLICATE /
-    NEEDS_*)."""
+    NEEDS_*). --watermark/--template/--ai-copy are process-time inputs."""
     c = Ctx(ctx.obj)
     p = pl.Pipeline(c.config, c.store, c.audit, dry_run=c.dry_run)
-    res = p.process(job_id, ts=_now(), title=title)
+    res = p.process(
+        job_id, ts=_now(), title=title,
+        watermark=watermark, template=template, ai_copy=ai_copy,
+        dewatermark=dewatermark,
+    )
     c.emit(
         {
             "job_id": job_id,
@@ -190,6 +210,44 @@ def process(ctx, job_id, title):
             + (f" (stopped at {res.stopped_at})" if res.stopped_at else "")
             + (" [dry-run]" if res.dry_run else "")
         ),
+    )
+
+
+# --- De-watermark attestation (Batch 2, default-locked) ----------------------
+
+
+@cli.command(name="dewatermark-request")
+@click.option("--job-id", "job_id", required=True)
+@click.option("--submitter", required=True, help="Person submitting the request (party 1)")
+@click.pass_context
+def dewatermark_request(ctx, job_id, submitter):
+    """Record the SUBMITTER of a de-watermark request (must differ from the
+    independent reviewer who later attests)."""
+    from .adapters.publisher.dewatermark import request_dewatermark
+
+    c = Ctx(ctx.obj)
+    sub = request_dewatermark(job_id, submitter, store=c.store, audit=c.audit, ts=_now())
+    c.emit({"job_id": job_id, "submitter": sub}, human=f"de-watermark submitter recorded: {sub}")
+
+
+@cli.command(name="dewatermark-attest")
+@click.option("--job-id", "job_id", required=True)
+@click.option("--reviewer", required=True, help="Whitelisted reviewer != submitter (party 2)")
+@click.option("--evidence", "evidence", required=True,
+              help="Verifiable license-evidence ref (contract id / URL / proof)")
+@click.pass_context
+def dewatermark_attest(ctx, job_id, reviewer, evidence):
+    """Independent reviewer attests an owned/licensed de-watermark (party 2).
+    Fail-closed: reviewer must be whitelisted AND differ from the submitter."""
+    from .adapters.publisher.dewatermark import attest_dewatermark
+
+    c = Ctx(ctx.obj)
+    att = attest_dewatermark(
+        job_id, reviewer, evidence, config=c.config, store=c.store, audit=c.audit, ts=_now()
+    )
+    c.emit(
+        {"job_id": job_id, "attested": True, "reviewer": att.reviewer, "submitter": att.submitter},
+        human=f"de-watermark attested by {att.reviewer} (submitter {att.submitter})",
     )
 
 

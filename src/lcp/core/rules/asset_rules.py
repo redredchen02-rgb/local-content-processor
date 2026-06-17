@@ -193,6 +193,122 @@ def judge_video(
     return _needs_revision(reasons) if reasons else _passed()
 
 
+# --- Cover advisory checks (plan Unit 2) -------------------------------------
+#
+# These are ADVISORY, never needs_revision: geometry checks auto-WARN (they are
+# deterministic arithmetic), aesthetics SOFT-suggest, and OCR-class checks
+# (text / 3rd-party watermark in the cover) are not feasibly automatable on the
+# Pillow-only stack — surfaced as a human-preview note, not a gate. Thresholds
+# are starting points to calibrate on the operator's own sample.
+
+DEFAULT_COVER_SAFE_MARGIN_FRAC = 0.1  # 10% -> safe box (130,64,1170,576) at 1300x640
+DEFAULT_BORDER_MAX_MEAN = 24.0  # near-black strip mean (8-bit luminance)
+DEFAULT_BORDER_MAX_STD = 8.0  # ...with low variance == a flat letterbox bar
+DEFAULT_TOP_HEAVY_RATIO = 1.6  # upper/lower edge-energy ratio
+DEFAULT_COVER_BUSY_ENTROPY = 7.4  # Shannon entropy (bits) of the luminance
+
+
+def cover_safe_box(
+    cover_w: int, cover_h: int, margin_frac: float = DEFAULT_COVER_SAFE_MARGIN_FRAC
+) -> tuple[int, int, int, int]:
+    """The safe rectangle (left, top, right, bottom) at ``margin_frac`` inset."""
+    mx = int(cover_w * margin_frac)
+    my = int(cover_h * margin_frac)
+    return mx, my, cover_w - mx, cover_h - my
+
+
+def tile_center_outside_safe(
+    rect: tuple[int, int, int, int], safe_box: tuple[int, int, int, int]
+) -> bool:
+    """True if a tile's CENTER falls in the unsafe margin band.
+
+    ``rect`` is ``(left, top, width, height)`` from compose placement. Using the
+    center (not the full rect) keeps a centered full-bleed or split tile from
+    always tripping, while a tile whose focal center lands in the crop/overlay
+    margin is flagged."""
+    left, top, w, h = rect
+    cx, cy = left + w / 2, top + h / 2
+    sl, st, sr, sb = safe_box
+    return not (sl <= cx <= sr and st <= cy <= sb)
+
+
+def is_strip_border(
+    mean: float,
+    std: float,
+    *,
+    max_mean: float = DEFAULT_BORDER_MAX_MEAN,
+    max_std: float = DEFAULT_BORDER_MAX_STD,
+) -> bool:
+    """True if an edge strip reads as a flat (near-black) letterbox bar: low mean
+    AND low variance. Std (not extrema) avoids false positives from JPEG noise."""
+    return mean <= max_mean and std <= max_std
+
+
+def is_top_heavy(
+    upper_energy: float,
+    lower_energy: float,
+    *,
+    ratio: float = DEFAULT_TOP_HEAVY_RATIO,
+) -> bool:
+    """True if the upper half carries disproportionately more edge energy."""
+    if lower_energy <= 0:
+        return upper_energy > 0
+    return upper_energy / lower_energy > ratio
+
+
+def is_busy(entropy: float, *, threshold: float = DEFAULT_COVER_BUSY_ENTROPY) -> bool:
+    """True if luminance entropy is high enough to read as a crowded cover."""
+    return entropy > threshold
+
+
+@dataclass(frozen=True)
+class CoverAdvisory:
+    """Advisory-only cover findings. NEVER needs_revision (plan Unit 2)."""
+
+    geometry: list[str] = field(default_factory=list)  # deterministic auto-warn
+    aesthetic: list[str] = field(default_factory=list)  # soft suggestions
+
+    @property
+    def has_any(self) -> bool:
+        return bool(self.geometry or self.aesthetic)
+
+
+def judge_cover(
+    *,
+    tile_rects: list[tuple[int, int, int, int]],
+    cover_w: int,
+    cover_h: int,
+    border_strips: dict[str, tuple[float, float]],
+    upper_energy: float,
+    lower_energy: float,
+    entropy: float,
+    margin_frac: float = DEFAULT_COVER_SAFE_MARGIN_FRAC,
+    border_max_mean: float = DEFAULT_BORDER_MAX_MEAN,
+    border_max_std: float = DEFAULT_BORDER_MAX_STD,
+    top_heavy_ratio: float = DEFAULT_TOP_HEAVY_RATIO,
+    busy_entropy: float = DEFAULT_COVER_BUSY_ENTROPY,
+) -> CoverAdvisory:
+    """Combine measured cover facts into advisory notes (no pass/fail)."""
+    geometry: list[str] = []
+    aesthetic: list[str] = []
+
+    safe = cover_safe_box(cover_w, cover_h, margin_frac)
+    for i, rect in enumerate(tile_rects):
+        if tile_center_outside_safe(rect, safe):
+            geometry.append(f"tile {i + 1} center falls outside the safe area")
+
+    for side, (mean, std) in border_strips.items():
+        if is_strip_border(mean, std, max_mean=border_max_mean, max_std=border_max_std):
+            geometry.append(f"{side} edge looks like a black/letterbox border")
+
+    if is_top_heavy(upper_energy, lower_energy, ratio=top_heavy_ratio):
+        aesthetic.append("composition looks top-heavy (subject weighted to the top)")
+    if is_busy(entropy, threshold=busy_entropy):
+        aesthetic.append("cover looks busy/crowded — consider fewer elements")
+
+    return CoverAdvisory(geometry=geometry, aesthetic=aesthetic)
+
+
 def judge_black_segments(
     intervals: list[tuple[float, float]],
     duration: float | None,

@@ -41,6 +41,42 @@ class MediaConfig(BaseModel):
     max_video_size_mb: int = 500
 
 
+class WatermarkConfig(BaseModel):
+    """Official-watermark ADD settings (plan Unit 1). A brand mark, not a claim
+    of authorship; never persists a secret. Logo assets are pre-sized per
+    surface (body ~800px vs cover 1300x640)."""
+
+    enabled: bool = False
+    mode: str = "text"  # "logo" | "text"
+    text: str = ""  # text mode: the mark string
+    logo_body_path: str | None = None  # logo mode: pre-sized body asset
+    logo_cover_path: str | None = None  # logo mode: pre-sized cover asset
+    font_path: str | None = None  # text mode: truetype; None -> Pillow default
+    font_size: int = 28
+    position: str = "bottom-right"  # top/bottom-left/right | center
+    opacity: float = 0.6  # 0..1, clamped
+    margin: int = 16
+    color: tuple[int, int, int] = (255, 255, 255)
+
+
+class InpaintConfig(BaseModel):
+    """Isolated de-watermark engine settings (plan Unit 8, Batch 2).
+
+    DEFAULT-DISABLED and engine-ABSENT: with no ``engine_cmd`` the runner raises
+    DependencyError (mirror missing-ffmpeg), so nothing de-watermarks until an
+    operator deliberately installs an isolated engine. The engine runs as a
+    subprocess with a scrubbed env (never the main venv's torch/opencv). Masks
+    come from a config fixed-box or an operator-drawn box — no auto-detect v1."""
+
+    enabled: bool = False
+    # The engine invocation, e.g. ["/path/to/inpaint-venv/bin/python", "-m", "engine"].
+    # Empty -> DependencyError at call time (default-locked).
+    engine_cmd: list[str] = Field(default_factory=list)
+    timeout_seconds: int = 120
+    # Default fixed-box masks (x0,y0,x1,y1) applied when no operator box is given.
+    default_boxes: list[tuple[int, int, int, int]] = Field(default_factory=list)
+
+
 class ContentConfig(BaseModel):
     title_min_chars: int = 25
     title_max_chars: int = 35
@@ -79,10 +115,16 @@ class Config(BaseModel):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     crawler: CrawlerConfig = Field(default_factory=CrawlerConfig)
     media: MediaConfig = Field(default_factory=MediaConfig)
+    watermark: WatermarkConfig = Field(default_factory=WatermarkConfig)
+    inpaint: InpaintConfig = Field(default_factory=InpaintConfig)
     content: ContentConfig = Field(default_factory=ContentConfig)
     llm: LlmConfig = Field(default_factory=LlmConfig)
     publisher: PublisherConfig = Field(default_factory=PublisherConfig)
     categories: dict[str, list[str]] = Field(default_factory=dict)
+    # Per-栏目 operator prompt templates (plan Unit 3). A checked object: each is
+    # linted (template_lint) and rendered into the DEVELOPER task slot via a
+    # str.format_map allowlist — NEVER into the hardcoded SYSTEM message.
+    templates: dict[str, str] = Field(default_factory=dict)
 
     def llm_api_key(self) -> str:
         """Resolve the LLM api_key from keyring, then env. Never from file."""

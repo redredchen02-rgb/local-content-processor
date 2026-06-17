@@ -61,6 +61,20 @@ function labeled(label, node) {
   wrap.appendChild(node);
   return wrap;
 }
+function watermarkSelect() {
+  // Tri-state so the operator can leave watermark on "follow config" (the
+  // bridge's null) instead of a plain checkbox that always sends an explicit
+  // true/false and would silently override config.watermark.enabled.
+  const s = el("select");
+  const opts = [["", "跟随设置（默认）"], ["on", "开"], ["off", "关"]];
+  for (let i = 0; i < opts.length; i++) {
+    const o = el("option", opts[i][1]);
+    o.value = opts[i][0];
+    s.appendChild(o);
+  }
+  s.value = "";
+  return s;
+}
 function setBusy(btn, on) {
   if (on) btn.setAttribute("disabled", "");
   else btn.removeAttribute("disabled");
@@ -166,6 +180,12 @@ function renderInfo(container, title, detail) {
 
 const POLL_MS = 1500;
 const POLL_CAP = 120; // ~90s; the spinner must never spin forever
+// De-watermark inpaint is CPU-heavy and runs per image — a 90s cap would show a
+// false timeout. Raise it for those jobs (still bounded, just much longer).
+const POLL_CAP_INPAINT = 800; // ~20min
+function capFor(kind) {
+  return (kind === "process_dewatermark") ? POLL_CAP_INPAINT : POLL_CAP;
+}
 const pollers = {}; // jobId -> {kind, ticks, startedAt, errors, box, timer}
 
 function clearPoller(jobId) {
@@ -229,7 +249,7 @@ function enterProgress(jobId, kind) {
 function startPoll(jobId, kind) {
   clearPoller(jobId);
   const ui = mountSpinner(kind);
-  pollers[jobId] = { kind: kind, ticks: 0, errors: 0, ui: ui, timer: null };
+  pollers[jobId] = { kind: kind, ticks: 0, errors: 0, ui: ui, timer: null, cap: capFor(kind) };
   pollTick(jobId);
 }
 
@@ -263,7 +283,7 @@ async function pollTick(jobId) {
     case "running":
       p.ticks += 1;
       updateSpinner(p);
-      if (p.ticks >= POLL_CAP) { capReached(jobId); return; }
+      if (p.ticks >= (p.cap || POLL_CAP)) { capReached(jobId); return; }
       schedule(jobId);
       return;
     case "done": {
@@ -615,6 +635,55 @@ async function openJob(jobId) {
   const reviewers = await a.reviewers();
   renderActions(rec.state, rec.review_reason, reviewers);
   await renderPacket(jobId);
+  await renderDewatermark(jobId, reviewers);
+}
+
+// De-watermark attestation panel (Batch 2). Default-LOCKED: shows the locked
+// state + a submitter/reviewer/evidence form, or the already-attested state.
+// All text via textContent; honesty note from LEX.honesty. Owned/licensed only.
+async function renderDewatermark(jobId, reviewers) {
+  const a = api();
+  if (!a || !a.dewatermark_status) return;
+  const st = await a.dewatermark_status(jobId);
+  if (isError(st)) return;
+  const view = $("job-packet");
+  const box = el("div"); box.className = "dewm-panel";
+  box.appendChild(el("h3", "去水印（仅自有／授权 · 需独立复核）"));
+  const note = el("p"); note.className = "honesty";
+  setText(note, (LEX.honesty && LEX.honesty.dewatermark_attest) || "");
+  box.appendChild(note);
+
+  if (st.attested) {
+    const ok = el("p", "已具结：复核者 " + (st.reviewer || "") + "（提交人 " + (st.submitter || "") + "）");
+    ok.className = "dewm-attested";
+    box.appendChild(ok);
+    if (!st.engine_ready) box.appendChild(el("p", "注意：本机尚未安装去水印引擎，处理时会回报缺少依赖。"));
+    view.appendChild(box);
+    return;
+  }
+
+  // Not attested -> locked. Show submitter record + independent-reviewer attest.
+  const sub = textInput("提交人（你）");
+  if (st.submitter) sub.value = st.submitter;
+  const recBtn = button("记录提交人", "btn-secondary");
+  recBtn.addEventListener("click", async function () {
+    afterAction(await a.request_dewatermark(jobId, sub.value), "已记录提交人");
+  });
+  box.appendChild(labeled("提交人：", sub));
+  box.appendChild(recBtn);
+
+  const rev = reviewerSelect(reviewers || { reviewers: [] });
+  const evid = textInput("授权依据（合同号 / URL / 权属证明）");
+  const attestBtn = button("独立复核并具结", "btn-primary");
+  attestBtn.addEventListener("click", async function () {
+    if (!evid.value.trim()) { setText($("job-status"), "请先填授权依据。"); return; }
+    afterAction(await a.attest_dewatermark(jobId, rev.value, evid.value), "已具结去水印");
+  });
+  box.appendChild(labeled("独立复核者：", rev));
+  box.appendChild(labeled("授权依据：", evid));
+  box.appendChild(attestBtn);
+  if (!st.engine_ready) box.appendChild(el("p", "提示：本机尚未安装去水印引擎，具结后处理仍会回报缺少依赖。"));
+  view.appendChild(box);
 }
 
 function renderBanner(state, reason) {
@@ -648,6 +717,28 @@ function reviewerSelect(reviewers) {
     opt.value = name;
     sel.appendChild(opt);
   });
+  return sel;
+}
+function templateSelect() {
+  // A <select> of 栏目 templates. Default empty option = no template (the
+  // assemble path runs exactly as before). Populated async from a.templates();
+  // names arrive pre-escaped from the bridge and are assigned via textContent.
+  const sel = el("select");
+  sel.className = "template-pick";
+  const none = el("option", "（不套用模板）");
+  none.value = "";
+  sel.appendChild(none);
+  const a = api();
+  if (a && a.templates) {
+    Promise.resolve(a.templates()).then(function (res) {
+      if (!res || isError(res) || !res.categories) return;
+      res.categories.forEach(function (name) {
+        const opt = el("option", name);
+        opt.value = name;
+        sel.appendChild(opt);
+      });
+    });
+  }
   return sel;
 }
 function reviewersEmpty(reviewers) {
@@ -736,16 +827,30 @@ function buildActionRow(act, reviewers, reason) {
     const title = textInput("标题（可留空）");
     const dry = checkbox();
     const dryL = el("label"); dryL.appendChild(dry); dryL.appendChild(el("span", " 安全预览"));
+    // process-time inputs (Unit 5): watermark (tri-state), 栏目 template, AI 文案
+    const wm = watermarkSelect();
+    const tmpl = templateSelect();
+    const ai = checkbox();
+    const aiL = el("label"); aiL.appendChild(ai); aiL.appendChild(el("span", " AI 图说/FAQ/小标题（待审）"));
     const btn = button(act.label, "btn-primary");
     btn.addEventListener("click", async function () {
       if (!a || pollers[currentJobId]) return;
       setBusy(btn, true);
-      const kick = await a.process_async(currentJobId, title.value, dry.checked);
+      // watermark tri-state: "" = follow config (null), "on" = true, "off" = false
+      const wmChoice = wm.value === "" ? null : wm.value === "on";
+      const kick = await a.process_async(
+        currentJobId, title.value, dry.checked, wmChoice, tmpl.value || null, ai.checked
+      );
       setBusy(btn, false);
       if (isError(kick)) { renderError($("job-status"), kick); return; }
       enterProgress(currentJobId, dry.checked ? "process_dry" : "process");
     });
-    row.appendChild(title); row.appendChild(dryL); row.appendChild(btn);
+    row.appendChild(title);
+    row.appendChild(labeled("栏目模板：", tmpl));
+    row.appendChild(labeled("水印：", wm));
+    row.appendChild(aiL);
+    row.appendChild(dryL);
+    row.appendChild(btn);
     return row;
   }
 
@@ -918,6 +1023,26 @@ async function renderPacket(jobId) {
     const chip = el("span", "frozen hash " + res.body_sha256); chip.className = "hash-chip"; card.appendChild(chip);
   }
   view.appendChild(card);
+  await renderCoverReport(jobId, view);
+}
+
+async function renderCoverReport(jobId, view) {
+  const a = api();
+  if (!a || !a.cover_report) return;
+  const res = await a.cover_report(jobId);
+  if (isError(res) || !res || !res.has_report || !res.cover) return;
+  const box = el("div"); box.className = "cover-report";
+  box.appendChild(el("h3", "封面检查（建议性 · 不拦截）"));
+  packetField(box, "封面", res.cover);
+  if (res.cover_preview) packetField(box, "安全区预览图", res.cover_preview);
+  const geo = res.geometry || [], aes = res.aesthetic || [];
+  if (!geo.length && !aes.length) {
+    box.appendChild(el("p", "没有封面警告。"));
+  } else {
+    if (geo.length) { box.appendChild(el("strong", "几何警告：")); geo.forEach(function (g) { box.appendChild(el("div", "• " + g)); }); }
+    if (aes.length) { box.appendChild(el("strong", "美学建议：")); aes.forEach(function (s) { box.appendChild(el("div", "• " + s)); }); }
+  }
+  view.appendChild(box);
 }
 
 function packetField(container, label, value) {

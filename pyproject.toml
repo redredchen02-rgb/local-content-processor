@@ -17,6 +17,10 @@ media = ["pillow>=12.2,<13"]
 llm = ["openai>=2,<3"]
 dedup = ["datasketch>=1.6"]
 gui = ["pywebview>=6,<7"]
+# De-watermark engine (Batch 2) lives in its OWN isolated environment, invoked as
+# a subprocess — these deps must NEVER enter the main venv (they hard-pin an old
+# Pillow / pull torch). Install separately; the runner shells out to it.
+inpaint = ["onnxruntime>=1.17"]
 dev = ["pytest>=8", "mypy>=1.18,<2", "types-PyYAML"]
 
 [project.scripts]

@@ -74,6 +74,11 @@ class Draft(BaseModel):
     video_sections: list[MediaSection] = Field(default_factory=list)  # 影片介紹
     faq: list[FaqItem] = Field(default_factory=list)  # FAQ
     summary: str = ""  # 結尾
+    # AI-generated structural pieces (Unit 4): grouping subheads + title
+    # candidates. Net-new content — born needs_human_review like the rest, bound
+    # into the freeze hash (subheads) so a post-freeze edit is detectable.
+    subheads: list[str] = Field(default_factory=list)  # 分組小標題
+    title_candidates: list[str] = Field(default_factory=list)  # 標題候選
 
     # Classification / metadata (light here; full lint is Unit 7b, R17).
     tags: list[str] = Field(default_factory=list)

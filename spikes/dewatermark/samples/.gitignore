@@ -1,0 +1,7 @@
+# Operator's owned/licensed de-watermark samples — NEVER commit image data.
+# Keep only the scaffold (bucket dirs via .gitkeep + this file + the README).
+*
+!.gitignore
+!README.md
+!*/
+!.gitkeep
