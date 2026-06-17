@@ -1,7 +1,7 @@
 ---
 title: "refactor: Surgical architecture / performance / type-gate cleanup"
 type: refactor
-status: active
+status: completed
 date: 2026-06-17
 deepened: 2026-06-17
 ---
@@ -397,7 +397,7 @@ callers repointed: cli.py:49, gui.py:105 (load_config); client.py:216 (resolve_a
 
 ### Phase 1 — Performance + correctness (lowest risk)
 
-- [ ] **Unit 1: `JobStore.set_state` single-connection + `BEGIN IMMEDIATE`**
+- [x] **Unit 1: `JobStore.set_state` single-connection + `BEGIN IMMEDIATE`**
 
 **Goal:** Replace the two-connection `set_state` with one connection that, under
 an explicit `BEGIN IMMEDIATE` (with `isolation_level=None`), reads → validates →
@@ -460,7 +460,7 @@ refusal + marker-free + contention tests pass; `./.venv/bin/mypy` clean.
 
 ### Phase 2 — Restore the core boundary + kill the real duplication
 
-- [ ] **Unit 2: Split `core/config.py` into pure schema + I/O adapter**
+- [x] **Unit 2: Split `core/config.py` into pure schema + I/O adapter**
 
 **Goal:** Remove all I/O from the pure core into `adapters/storage/config_io.py`,
 preserving the secret-resolution order, the keyring-exception swallow, the
@@ -518,7 +518,7 @@ provider-error secret redaction) before moving it.
 **Verification:** Full suite green; grep proves core purity + no cycle; redaction
 test passes; `./.venv/bin/mypy` clean.
 
-- [ ] **Unit 3: Two shared wiring helpers (`build_crawler` + `now`)**
+- [x] **Unit 3: Two shared wiring helpers (`build_crawler` + `now`)**
 
 **Goal:** Extract the only genuinely-duplicated wiring — the 3× verbatim
 crawler-construction block and the 2× `_now()` — into existing strict-covered
@@ -567,7 +567,7 @@ existing `lcp.adapters.*` wildcard).
 
 ### Phase 3 — Targeted layering cleanups
 
-- [ ] **Unit 4: Move the *pure* extraction judgement into `core/rules/extraction.py`**
+- [x] **Unit 4: Move the *pure* extraction judgement into `core/rules/extraction.py`**
 
 **Goal:** Relocate only the genuinely-pure extraction policy (title/body fallback,
 `_classify_media_url` extension classification, in-list media de-dupe) out of the
@@ -619,7 +619,7 @@ before splitting.
 judgement but **retaining** the SSRF check; extraction strict-checked under
 `lcp.core.*`; `./.venv/bin/mypy` clean.
 
-- [ ] **Unit 5: Route `signoff.resolve`'s lint verdict through the processor**
+- [x] **Unit 5: Route `signoff.resolve`'s lint verdict through the processor**
 
 **Goal:** Stop the publisher from re-deciding a lint verdict. Add a
 processor-owned boolean (e.g. `relint_clears_hold(...) -> bool`); `signoff.resolve`
@@ -667,7 +667,7 @@ fail path (not just "refuses").
 **Verification:** Full suite green; grep confirms the dropped import; audit-stream
 + refusal-message/exit-code characterization match; `./.venv/bin/mypy` clean.
 
-- [ ] **Unit 6: `@bridge_safe` decorator + `dedup_checker` params dataclass**
+- [x] **Unit 6: `@bridge_safe` decorator + `dedup_checker` params dataclass**
 
 **Goal:** Collapse the ~21 repeated `try/except LcpError → _error_dict` blocks in
 `gui.py` into one `@bridge_safe` decorator (reproducing the exact error dict +
