@@ -485,8 +485,11 @@ class Api:
 
     def saved_sources(self) -> dict:
         """List reusable saved sources. ``label`` is escaped; ``source_ref`` is
-        returned INERT (never an <a href>, never fetched) — the GUI pre-fills it
-        into the create-job input, where the normal submit path re-validates it."""
+        returned INERT (escaped — for DISPLAY only, never an <a href>, never
+        fetched). ``source_ref_raw`` carries the verbatim value so the GUI can
+        pre-fill it into the create-job input — the GUI MUST assign it only to an
+        input ``.value`` (never innerHTML); submitting then re-runs the same
+        crawl validation (allow_domains/robots) as manual entry."""
         try:
             c = self._ctx()
             rows = [
@@ -494,6 +497,7 @@ class Api:
                     "id": escape_html(s.id),
                     "label": escape_html(s.label),
                     "source_ref": inert_link(s.source_ref),
+                    "source_ref_raw": s.source_ref,
                     "created_at": escape_html(s.created_at),
                 }
                 for s in c.sources.list_sources()

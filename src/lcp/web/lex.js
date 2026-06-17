@@ -57,6 +57,32 @@ const LEX = {
   "honesty": {
     "dedup": "查重仅代表本工具处理过此内容、不代表站上不存在；请自行复查站点。",
     "backfill_attest": "你是在具结，不是证明，我们不会抓取或核对这个网址。"
+  },
+  "dashboard": {
+    "title": "累积总览",
+    "subtitle": "这条流水线到目前为止帮你处理了多少、拦下多少。",
+    "empty_title": "还没有累积",
+    "empty_body": "这些数字会随你处理 job 慢慢累积——建立第一个工作后再回来看。",
+    "section_states": "目前各状态",
+    "section_gates": "各关卡拦截率",
+    "section_reasons": "人工处理原因",
+    "section_intervals": "关卡间隔（含等待）",
+    "section_daily": "每日产量",
+    "intervals_caveat": "此为相邻关卡的时间差，包含等你处理的等待时间，不是机器计算耗时——仅供参考。",
+    "col_reached": "到达",
+    "col_intercepted": "拦下",
+    "col_rate": "拦截率",
+    "col_count": "次数",
+    "col_avg": "平均(秒)",
+    "col_max": "最长(秒)",
+    "no_intercepts": "目前没有关卡拦截纪录。",
+    "gate": {
+      "RISK_GATE": "风险",
+      "DEDUP_GATE": "查重",
+      "LINT_GATE": "结构检查",
+      "GROUNDING_GATE": "出处核对",
+      "MEDIA_GATE": "媒体检查"
+    }
   }
 };
 
