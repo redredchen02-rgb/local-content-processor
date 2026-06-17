@@ -68,7 +68,7 @@ def test_app_js_wires_new_surface():
     src = APP_JS.read_text(encoding="utf-8")
     assert "templateSelect" in src
     assert "cover_report" in src
-    # process_async is called with the 6 process-time args
-    assert "wm.checked" in src and "ai.checked" in src
+    # process_async is called with the process-time args (watermark is tri-state)
+    assert "watermarkSelect" in src and "wmChoice" in src and "ai.checked" in src
     # render discipline: no innerHTML sink anywhere
     assert "innerHTML" not in src

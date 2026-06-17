@@ -61,6 +61,20 @@ function labeled(label, node) {
   wrap.appendChild(node);
   return wrap;
 }
+function watermarkSelect() {
+  // Tri-state so the operator can leave watermark on "follow config" (the
+  // bridge's null) instead of a plain checkbox that always sends an explicit
+  // true/false and would silently override config.watermark.enabled.
+  const s = el("select");
+  const opts = [["", "跟随设置（默认）"], ["on", "开"], ["off", "关"]];
+  for (let i = 0; i < opts.length; i++) {
+    const o = el("option", opts[i][1]);
+    o.value = opts[i][0];
+    s.appendChild(o);
+  }
+  s.value = "";
+  return s;
+}
 function setBusy(btn, on) {
   if (on) btn.setAttribute("disabled", "");
   else btn.removeAttribute("disabled");
@@ -813,9 +827,8 @@ function buildActionRow(act, reviewers, reason) {
     const title = textInput("标题（可留空）");
     const dry = checkbox();
     const dryL = el("label"); dryL.appendChild(dry); dryL.appendChild(el("span", " 安全预览"));
-    // process-time inputs (Unit 5): watermark toggle, 栏目 template, AI 文案
-    const wm = checkbox();
-    const wmL = el("label"); wmL.appendChild(wm); wmL.appendChild(el("span", " 打官方水印"));
+    // process-time inputs (Unit 5): watermark (tri-state), 栏目 template, AI 文案
+    const wm = watermarkSelect();
     const tmpl = templateSelect();
     const ai = checkbox();
     const aiL = el("label"); aiL.appendChild(ai); aiL.appendChild(el("span", " AI 图说/FAQ/小标题（待审）"));
@@ -823,9 +836,10 @@ function buildActionRow(act, reviewers, reason) {
     btn.addEventListener("click", async function () {
       if (!a || pollers[currentJobId]) return;
       setBusy(btn, true);
-      // watermark: null = follow config; checkbox makes it an explicit true/false
+      // watermark tri-state: "" = follow config (null), "on" = true, "off" = false
+      const wmChoice = wm.value === "" ? null : wm.value === "on";
       const kick = await a.process_async(
-        currentJobId, title.value, dry.checked, wm.checked, tmpl.value || null, ai.checked
+        currentJobId, title.value, dry.checked, wmChoice, tmpl.value || null, ai.checked
       );
       setBusy(btn, false);
       if (isError(kick)) { renderError($("job-status"), kick); return; }
@@ -833,7 +847,7 @@ function buildActionRow(act, reviewers, reason) {
     });
     row.appendChild(title);
     row.appendChild(labeled("栏目模板：", tmpl));
-    row.appendChild(wmL);
+    row.appendChild(labeled("水印：", wm));
     row.appendChild(aiL);
     row.appendChild(dryL);
     row.appendChild(btn);
