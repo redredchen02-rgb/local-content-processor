@@ -28,6 +28,7 @@ from pathlib import Path
 
 from PIL import Image, ImageFilter, ImageOps, ImageStat
 
+from lcp.core.config import WatermarkConfig
 from lcp.core.errors import InputValidationError
 from lcp.core.rules import asset_rules
 from lcp.core.rules.asset_rules import Decision
@@ -150,12 +151,14 @@ def normalize_image(
     min_width: int = asset_rules.DEFAULT_MIN_WIDTH,
     min_height: int = asset_rules.DEFAULT_MIN_HEIGHT,
     blur_threshold: float = asset_rules.DEFAULT_BLUR_VARIANCE_THRESHOLD,
+    watermark: WatermarkConfig | None = None,
 ) -> NormalizedImage:
     """Normalize one body image to <= ``max_width`` wide, proportional JPEG.
 
     Pipeline: open(guarded) -> exif_transpose -> thumbnail(LANCZOS) ->
-    save(JPEG, quality, optimize, progressive). Measures blur on the resized
-    image and asks ``asset_rules`` for the pass/needs_revision decision.
+    [optional official watermark] -> save(JPEG, quality, optimize, progressive).
+    Blur is measured on the CLEAN resized image (before the mark) and handed to
+    ``asset_rules`` for the pass/needs_revision decision.
     """
     img = _open_guarded(src_path)
     try:
@@ -167,6 +170,11 @@ def normalize_image(
 
         variance = measure_laplacian_variance(img)
         w, h = img.size
+
+        if watermark is not None and watermark.enabled:
+            from .watermark import add_watermark  # lazy: avoids import cycle
+
+            img = add_watermark(img, watermark, kind="body")
 
         out = Path(dst_path)
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -202,12 +210,15 @@ def make_cover(
     cover_height: int = 640,
     quality: int = 90,
     background: tuple[int, int, int] = (17, 17, 17),
+    watermark: WatermarkConfig | None = None,
 ) -> str:
     """Compose a ``cover_width`` x ``cover_height`` JPEG cover from 1-4 sources.
 
     Uses a fixed layout table and ``ImageOps.fit`` (LANCZOS, centered) so each
     cell is cropped-to-fill without distortion. Sources beyond 4 are ignored;
-    zero sources is a usage error.
+    zero sources is a usage error. The cover is composed from CLEAN tiles and
+    then, if enabled, watermarked ONCE after compose (so the mark is not
+    inherited per-tile).
     """
     if not src_paths:
         raise InputValidationError("make_cover requires at least one source image")
@@ -232,6 +243,13 @@ def make_cover(
                 canvas.paste(tile, (cx, cy))
             finally:
                 img.close()
+
+        if watermark is not None and watermark.enabled:
+            from .watermark import add_watermark  # lazy: avoids import cycle
+
+            marked = add_watermark(canvas, watermark, kind="cover")
+            canvas.close()
+            canvas = marked
 
         out = Path(dst_path)
         out.parent.mkdir(parents=True, exist_ok=True)

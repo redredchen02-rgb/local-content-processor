@@ -41,6 +41,24 @@ class MediaConfig(BaseModel):
     max_video_size_mb: int = 500
 
 
+class WatermarkConfig(BaseModel):
+    """Official-watermark ADD settings (plan Unit 1). A brand mark, not a claim
+    of authorship; never persists a secret. Logo assets are pre-sized per
+    surface (body ~800px vs cover 1300x640)."""
+
+    enabled: bool = False
+    mode: str = "text"  # "logo" | "text"
+    text: str = ""  # text mode: the mark string
+    logo_body_path: str | None = None  # logo mode: pre-sized body asset
+    logo_cover_path: str | None = None  # logo mode: pre-sized cover asset
+    font_path: str | None = None  # text mode: truetype; None -> Pillow default
+    font_size: int = 28
+    position: str = "bottom-right"  # top/bottom-left/right | center
+    opacity: float = 0.6  # 0..1, clamped
+    margin: int = 16
+    color: tuple[int, int, int] = (255, 255, 255)
+
+
 class ContentConfig(BaseModel):
     title_min_chars: int = 25
     title_max_chars: int = 35
@@ -79,6 +97,7 @@ class Config(BaseModel):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     crawler: CrawlerConfig = Field(default_factory=CrawlerConfig)
     media: MediaConfig = Field(default_factory=MediaConfig)
+    watermark: WatermarkConfig = Field(default_factory=WatermarkConfig)
     content: ContentConfig = Field(default_factory=ContentConfig)
     llm: LlmConfig = Field(default_factory=LlmConfig)
     publisher: PublisherConfig = Field(default_factory=PublisherConfig)
