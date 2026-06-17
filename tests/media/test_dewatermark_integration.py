@@ -209,3 +209,45 @@ def test_gate_unreadable_image_is_needs_revision_not_crash(tmp_path):
     m = read_manifest(store.job_dir("j1"))
     assert m.assets[0].state is AssetState.NEEDS_REVISION
     assert m.assets[0].watermark_removed is False
+
+
+def test_runner_failure_leaves_source_untouched(tmp_path):
+    # In-place de-watermark (dst == src): an engine that writes then FAILS must not
+    # corrupt the original asset — the runner only os.replace()s onto dst on success.
+    cfg = InpaintConfig(enabled=True, engine_cmd=["fake"])
+    runner = DewatermarkRunner(cfg, subprocess_runner=_fake_engine(rc=1))
+    src = tmp_path / "a.jpg"
+    Image.new("RGB", (40, 30), (1, 2, 3)).save(src)
+    original = src.read_bytes()
+    mask = tmp_path / "m.png"
+    build_box_mask((40, 30), [(1, 1, 5, 5)]).save(mask)
+    with pytest.raises(ExternalServiceError):
+        runner.remove(src=src, mask=mask, dst=src)  # dst == src, in-place
+    assert src.read_bytes() == original  # original survived the failed run
+
+
+def test_gate_skips_already_cleaned_asset_on_rerun(tmp_path):
+    # Idempotency: a second gate pass must NOT re-inpaint an already-cleaned asset
+    # (no engine re-call, no drift) — it keeps the prior provenance and is a no-op.
+    store = _job_with_image(tmp_path)
+    audit = AuditLog(tmp_path / "audit.jsonl")
+    out1 = run_dewatermark_gate(
+        job_id="j1", store=store, audit=audit, ts=TS, attestation=ATT,
+        inpaint_config=_cfg(), runner=DewatermarkRunner(_cfg(), subprocess_runner=_fake_engine()),
+    )
+    assert out1.cleaned == 1
+
+    calls = {"n": 0}
+
+    def _counting(cmd, **kwargs):
+        calls["n"] += 1
+        out = cmd[cmd.index("--output") + 1]
+        Image.new("RGB", (40, 30)).save(out, format="JPEG")
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    out2 = run_dewatermark_gate(
+        job_id="j1", store=store, audit=audit, ts=TS, attestation=ATT,
+        inpaint_config=_cfg(), runner=DewatermarkRunner(_cfg(), subprocess_runner=_counting),
+    )
+    assert calls["n"] == 0  # already-cleaned asset was skipped, engine not re-called
+    assert out2.cleaned == 0

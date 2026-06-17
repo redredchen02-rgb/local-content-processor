@@ -77,6 +77,12 @@ def run_dewatermark_gate(
         if a.kind is not AssetKind.IMAGE or a.state is not AssetState.OK:
             new_assets.append(a)
             continue
+        if a.watermark_removed:
+            # Idempotent re-run: an asset cleaned in a prior pass is NOT re-inpainted
+            # (engines need not be deterministic) — keep its provenance and skip it,
+            # so a retry only re-processes the assets that still need it.
+            new_assets.append(a)
+            continue
         src = job_dir / a.path
         if dry_run:
             # dry-run: no engine call, no cleaned output written.
