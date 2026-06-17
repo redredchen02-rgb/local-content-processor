@@ -1,14 +1,94 @@
-/* Minimal styles. External file (not inline) to satisfy CSP style-src 'self'. */
-body { font-family: system-ui, sans-serif; margin: 1.5rem; max-width: 60rem; }
-header .note { color: #555; font-size: 0.9rem; }
-section { border-top: 1px solid #ddd; padding: 0.75rem 0; }
-h2 { font-size: 1.1rem; }
-table { border-collapse: collapse; width: 100%; margin-top: 0.5rem; }
-th, td { border: 1px solid #ddd; padding: 0.25rem 0.5rem; text-align: left; }
+/* External file (not inline) to satisfy CSP style-src 'self'.
+ *
+ * P0 MINIMAL styles — enough for the three-view shell, state badges, bands, and
+ * banners to be legible and demoable. The full design-token system (6 colour
+ * families, frozen skin, typography scale, responsive breakpoint, motion) is
+ * Unit P1.3 and will REPLACE most of this. Keep additions here functional. */
+
+body { font-family: system-ui, -apple-system, "PingFang TC", "Microsoft JhengHei", sans-serif;
+  margin: 0 auto; padding: 0 1.5rem 3rem; max-width: 64rem; color: #1a1d21; line-height: 1.55; }
+h2 { font-size: 1.15rem; }
+h3 { font-size: 1rem; }
+
+/* persistent shell */
+header { position: sticky; top: 0; background: #fff; border-bottom: 1px solid #d4d8df;
+  padding: 0.5rem 0; margin-bottom: 1rem; z-index: 1; }
+header .note { color: #555; font-size: 0.85rem; margin: 0.25rem 0 0; }
+.topbar { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.topbar h1 { font-size: 1.2rem; margin: 0; }
+.nav { display: flex; gap: 0.4rem; }
+.nav button[aria-current="page"] { font-weight: 700; text-decoration: underline; }
+.pill { margin-left: auto; font-size: 0.8rem; padding: 2px 0.6rem; border-radius: 999px; border: 1px solid currentColor; }
+.pill--ready { color: #145129; background: #e3f3e8; }
+.pill--block { color: #6b4900; background: #fdf3da; }
+
+.view-head { display: flex; align-items: center; gap: 0.75rem; }
+.back { background: none; border: none; color: #143a73; cursor: pointer; padding: 0.25rem 0; }
+
+/* form rows (kept) */
 .row { display: flex; align-items: center; gap: 0.5rem; margin: 0.35rem 0; flex-wrap: wrap; }
 .row label { min-width: 9rem; }
 input[type="text"] { flex: 1; min-width: 12rem; padding: 0.25rem; }
 .status { color: #044; font-weight: bold; min-height: 1.2em; }
 .field { margin: 0.25rem 0; }
-textarea { width: 100%; }
 button { padding: 0.25rem 0.75rem; cursor: pointer; }
+button[disabled] { opacity: 0.45; cursor: not-allowed; }
+:where(input, select, button, a):focus-visible { outline: 3px solid #1f6fd6; outline-offset: 2px; }
+
+/* state badge (text label carries the non-colour signal; glyph decorative) */
+.badge { display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.78rem; font-weight: 500;
+  padding: 2px 0.5rem; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+.badge--neutral, .badge--unknown { background: #eceef2; color: #3c424a; }
+.badge--ready, .badge--go { background: #e3f3e8; color: #145129; }
+.badge--busy { background: #e4eefb; color: #143a73; }
+.badge--caution, .badge--review { background: #fdf3da; color: #6b4900; }
+.badge--retry { background: #fdf3da; color: #6b4900; }
+.badge--stop { background: #fce6e4; color: #8a1209; }
+.badge--frozen { background: #e9e7f7; color: #342a78; }
+.badge--done { background: #e3f3e8; color: #145129; }
+.badge--void { background: #e6e7ea; color: #4a4f59; text-decoration: line-through; }
+
+/* inbox bands + rows */
+.band { border-top: 1px solid #d4d8df; padding: 0.5rem 0; }
+.band-head { display: flex; align-items: center; gap: 0.5rem; }
+.job-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.35rem 0.5rem; flex-wrap: wrap;
+  box-shadow: inset 4px 0 0 #b9bfc8; margin: 0.2rem 0; }
+.job-row.lane--stop { box-shadow: inset 4px 0 0 #c2342a; }
+.job-row.lane--review, .job-row.lane--caution, .job-row.lane--retry { box-shadow: inset 4px 0 0 #c8901b; }
+.job-row.lane--frozen { box-shadow: inset 4px 0 0 #6a5acd; }
+.job-id { font-family: ui-monospace, Menlo, monospace; }
+.job-why { color: #3c424a; }
+.job-when { color: #5e6671; font-size: 0.8rem; margin-left: auto; }
+.counts { color: #5e6671; font-size: 0.8rem; }
+.empty { color: #5e6671; font-style: italic; }
+
+/* banners */
+.banner { border-left: 3px solid currentColor; padding: 0.5rem 0.75rem; margin: 0.5rem 0; border-radius: 4px; }
+.banner-head { margin-bottom: 0.25rem; }
+.banner p { margin: 0.25rem 0; }
+.banner--state { background: #f5f6f8; color: #3c424a; }
+.banner--success { background: #e3f3e8; color: #145129; }
+.banner--error { background: #fce6e4; color: #8a1209; }
+.banner--attention { background: #fdf3da; color: #6b4900; }
+.tone--stop { background: #fce6e4; color: #8a1209; }
+.tone--frozen { background: #e9e7f7; color: #342a78; }
+.tone--review, .tone--caution { background: #fdf3da; color: #6b4900; }
+.reason-note { margin-top: 0.4rem; padding-top: 0.4rem; border-top: 1px dashed currentColor; }
+
+/* action region */
+.action-row, .hold-panel { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+  margin: 0.4rem 0; padding: 0.4rem 0; }
+.hold-panel { flex-direction: column; align-items: flex-start; border: 1px solid #c8901b; border-radius: 6px; padding: 0.6rem; }
+.btn-primary { background: #2f8f4e; color: #fff; border: 1px solid #2f8f4e; border-radius: 4px; }
+.btn-secondary { background: #fff; border: 1px solid #3c424a; border-radius: 4px; }
+.btn-danger { background: #fff; color: #8a1209; border: 1px solid #c2342a; border-radius: 4px; }
+.hint { color: #5e6671; font-size: 0.8rem; }
+.honesty-callout { color: #6b4900; background: #fdf3da; border: 1px solid #c8901b; padding: 0.3rem 0.5rem; border-radius: 4px; }
+.disclaimer { color: #5e6671; font-size: 0.78rem; white-space: pre-wrap; }
+.link-toggle { background: none; border: none; color: #143a73; cursor: pointer; padding: 0; font-size: 0.85rem; }
+.tech-detail code { font-family: ui-monospace, Menlo, monospace; font-size: 0.8rem; color: #5e6671; word-break: break-all; }
+
+/* review packet card; frozen skin (SC6 — minimal here, P1.3 elaborates) */
+.packet { border: 1px solid #d4d8df; border-radius: 6px; padding: 0.75rem; margin-top: 0.75rem; }
+.packet.is-frozen { border: 2px solid #6a5acd; background: #f6f5fc; }
+.packet .field { margin: 0.3rem 0; }
