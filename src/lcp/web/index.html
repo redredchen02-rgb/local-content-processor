@@ -1,11 +1,12 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-Hant">
 <head>
   <meta charset="utf-8">
   <!--
-    Strict CSP (R41, plan line 524): no inline anything, scripts/styles/images
-    from 'self' only, object-src 'none'. img-src 'self' lets cover.jpg load from
-    the 127.0.0.1-only built-in server while still blocking remote beacons.
+    Strict CSP (R41): no inline anything, scripts/styles/images from 'self' only,
+    object-src 'none'. img-src 'self' lets cover.jpg load from the 127.0.0.1-only
+    built-in server while still blocking remote beacons. UNCHANGED across the
+    UI/UX rebuild — it is the last line behind the textContent discipline.
   -->
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none'; script-src 'self'; img-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'">
@@ -14,135 +15,97 @@
   <link rel="stylesheet" href="app.css">
 </head>
 <body>
+  <!-- Persistent shell: nav (3 views) + always-on honesty note + readiness pill -->
   <header>
-    <h1>Local Content Processor</h1>
-    <p class="note">The machine never auto-publishes. Sign-off is attribution, not authentication.</p>
+    <div class="topbar">
+      <h1>Local Content Processor</h1>
+      <nav class="nav">
+        <button id="nav-inbox" type="button" aria-current="page">收件匣</button>
+        <button id="nav-new" type="button">+ 新工作</button>
+        <button id="nav-setup" type="button">设定 ⚙</button>
+      </nav>
+      <span id="ready-pill" class="pill"></span>
+    </div>
+    <p class="note">机器永不自动上架。签核＝署名，非身分验证。</p>
   </header>
 
-  <!-- LLM settings: base_url/model -> config.yaml; api_key -> OS keyring ONLY -->
-  <section id="settings">
-    <h2>LLM settings</h2>
-    <p class="note">api_key is stored in the OS keyring — never written to a file, never shown here.</p>
-    <div class="row">
-      <label for="settings-base-url">Base URL (must end with /v1)</label>
-      <input id="settings-base-url" type="text" autocomplete="off" spellcheck="false">
-    </div>
-    <div class="row">
-      <label for="settings-model">Model</label>
-      <input id="settings-model" type="text" autocomplete="off" spellcheck="false">
-    </div>
-    <div class="row">
-      <label for="settings-api-key">API key</label>
-      <input id="settings-api-key" type="password" autocomplete="off">
-      <span id="settings-key-state" class="status"></span>
-    </div>
-    <button id="btn-save-settings" type="button">Save settings</button>
-    <p id="settings-status" class="status"></p>
-  </section>
+  <main>
+    <!-- ===== INBOX (default landing): counts + worklist in 4 derived bands ===== -->
+    <section id="view-inbox" class="view">
+      <div class="view-head">
+        <h2>收件匣</h2>
+        <button id="refresh-inbox" type="button">重新整理</button>
+      </div>
+      <div id="inbox-bands"></div>
+      <p id="inbox-counts" class="counts"></p>
+    </section>
 
-  <!-- Home: counts-by-state (G7) -->
-  <section id="home">
-    <h2>Summary</h2>
-    <button id="refresh-summary" type="button">Refresh</button>
-    <table id="summary-table">
-      <thead><tr><th>State</th><th>Count</th></tr></thead>
-      <tbody id="summary-body"></tbody>
-    </table>
-  </section>
+    <!-- ===== JOB workspace: one selected job, only its legal actions ===== -->
+    <section id="view-job" class="view" hidden>
+      <button id="job-back" type="button" class="back">‹ 收件匣</button>
+      <h2 id="job-title">工作</h2>
 
-  <!-- Worklist (G7) -->
-  <section id="worklist">
-    <h2>Worklist</h2>
-    <label for="state-filter">Filter by state:</label>
-    <select id="state-filter">
-      <option value="">(all)</option>
-      <option value="pending">review pending</option>
-      <option value="approved">approved</option>
-      <option value="blocked">blocked</option>
-      <option value="duplicate">duplicate</option>
-      <option value="needs-review">needs human review</option>
-      <option value="processed">processed</option>
-      <option value="published">published recorded</option>
-    </select>
-    <button id="refresh-jobs" type="button">Refresh</button>
-    <table id="jobs-table">
-      <thead><tr><th>Job</th><th>State</th><th>Reason</th><th>Updated</th><th></th></tr></thead>
-      <tbody id="jobs-body"></tbody>
-    </table>
-  </section>
+      <!-- create mode (shown for "+ 新工作" and for re-crawl of new/crawl_failed) -->
+      <div id="job-create" hidden>
+        <div class="row">
+          <label for="create-job-id">工作 id</label>
+          <input id="create-job-id" type="text" autocomplete="off">
+        </div>
+        <div class="row" role="radiogroup" aria-label="来源">
+          <label><input id="create-mode-url" type="radio" name="create-mode" checked> 爬一个网址</label>
+          <label><input id="create-mode-dir" type="radio" name="create-mode"> 匯入资料夹</label>
+        </div>
+        <div class="row" id="create-url-row">
+          <label for="create-url">网址</label>
+          <input id="create-url" type="text" autocomplete="off">
+        </div>
+        <div class="row" id="create-dir-row" hidden>
+          <label for="create-dir">资料夹路径</label>
+          <input id="create-dir" type="text" autocomplete="off">
+        </div>
+        <div class="row">
+          <label for="create-dry"><input id="create-dry" type="checkbox"> 安全预览（dry-run，不连模型）</label>
+          <button id="btn-create" type="button" class="btn-primary">建立并抓取</button>
+        </div>
+        <p id="create-status" class="status" aria-live="polite"></p>
+      </div>
 
-  <!-- Create / run -->
-  <section id="actions">
-    <h2>Create &amp; run</h2>
-    <div class="row">
-      <label for="job-id">Job id</label>
-      <input id="job-id" type="text" autocomplete="off">
-    </div>
-    <div class="row">
-      <label for="crawl-url">Crawl URL</label>
-      <input id="crawl-url" type="text" autocomplete="off">
-      <button id="btn-crawl" type="button">Create &amp; crawl</button>
-    </div>
-    <div class="row">
-      <label for="ingest-dir">Ingest dir</label>
-      <input id="ingest-dir" type="text" autocomplete="off">
-      <button id="btn-ingest" type="button">Ingest</button>
-    </div>
-    <div class="row">
-      <label for="proc-title">Title</label>
-      <input id="proc-title" type="text" autocomplete="off">
-      <label for="proc-dry"><input id="proc-dry" type="checkbox"> dry-run</label>
-      <button id="btn-process" type="button">Process</button>
-      <button id="btn-packet" type="button">Build review packet</button>
-    </div>
-    <p id="action-status" class="status"></p>
-  </section>
+      <div id="job-banner"></div>
+      <div id="job-inflight" aria-live="polite"></div>
+      <div id="job-actions"></div>
+      <div id="job-packet"></div>
+      <div id="job-status" class="status-area" aria-live="polite"></div>
+    </section>
 
-  <!-- Job detail / packet view -->
-  <section id="detail">
-    <h2>Job detail</h2>
-    <button id="btn-load-packet" type="button">Load packet for job id above</button>
-    <div id="packet-view"></div>
-  </section>
+    <!-- ===== SETUP: one-time technical setup (R33). Readiness checklist lands in P2.1. ===== -->
+    <section id="view-setup" class="view" hidden>
+      <button id="setup-back" type="button" class="back">‹ 收件匣</button>
+      <!-- LLM settings: base_url/model -> config.yaml; api_key -> OS keyring ONLY -->
+      <section id="settings">
+        <h2>设定（一次性技术设定 — 日常工作不需要这些）</h2>
+        <p class="note">api_key 存在 OS keyring — 永不写入档案、永不在此显示。</p>
+        <div class="row">
+          <label for="settings-base-url">Base URL（须以 /v1 结尾）</label>
+          <input id="settings-base-url" type="text" autocomplete="off" spellcheck="false">
+          <span id="base-url-advisory" class="hint"></span>
+        </div>
+        <div class="row">
+          <label for="settings-model">Model</label>
+          <input id="settings-model" type="text" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="row">
+          <label for="settings-api-key">API key</label>
+          <input id="settings-api-key" type="password" autocomplete="off">
+          <span id="settings-key-state" class="status"></span>
+        </div>
+        <button id="btn-save-settings" type="button" class="btn-primary">储存设定</button>
+        <p id="settings-status" class="status" aria-live="polite"></p>
+      </section>
+      <div id="setup-readiness"></div>
+    </section>
+  </main>
 
-  <!-- Sign-off -->
-  <section id="signoff">
-    <h2>Sign-off</h2>
-    <div class="row">
-      <label for="reviewer">Reviewer</label>
-      <select id="reviewer"></select>
-      <button id="btn-approve" type="button">Approve</button>
-    </div>
-    <div class="row">
-      <label for="reject-reason">Reject reason</label>
-      <input id="reject-reason" type="text" autocomplete="off">
-      <button id="btn-reject" type="button">Reject</button>
-    </div>
-    <div class="row">
-      <label for="new-job-id">Supersede with new job id</label>
-      <input id="new-job-id" type="text" autocomplete="off">
-      <button id="btn-supersede" type="button">Supersede</button>
-    </div>
-    <h3>Disclaimer</h3>
-    <textarea id="disclaimer" rows="4" readonly></textarea>
-  </section>
-
-  <!-- Backfill (responsibility loop, R37) -->
-  <section id="backfill">
-    <h2>Record publish (backfill)</h2>
-    <div class="row">
-      <label for="published-url">Published URL</label>
-      <input id="published-url" type="text" autocomplete="off">
-    </div>
-    <div class="row">
-      <label for="attest">
-        <input id="attest" type="checkbox">
-        I confirm the published version IS the signed-off version
-      </label>
-      <button id="btn-backfill" type="button">Record publish</button>
-    </div>
-  </section>
-
+  <script src="lex.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

@@ -158,6 +158,61 @@ def test_get_settings_key_set_via_env_without_revealing(tmp_path, monkeypatch):
     assert SECRET not in str(res2)  # the bool, never the secret
 
 
+# --- get_settings: allow_domains is exposed READ-ONLY (Phase 0, onboarding P3) -
+
+
+def _write_crawler_config(tmp_path, allow_domains):
+    """Write a minimal config.yaml carrying a crawler.allow_domains list."""
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        yaml.safe_dump({"crawler": {"allow_domains": allow_domains}}),
+        encoding="utf-8",
+    )
+    return cfg
+
+
+def test_get_settings_exposes_allow_domains(tmp_path, monkeypatch):
+    monkeypatch.setattr(keyring, "get_password", lambda *a, **k: None)
+    _write_crawler_config(tmp_path, ["a.example", "b.example"])
+    res = _api(tmp_path).get_settings()
+    assert "error" not in res, res
+    assert res["allow_domains"] == ["a.example", "b.example"]
+
+
+def test_get_settings_empty_allow_domains_is_empty_list(tmp_path, monkeypatch):
+    """Default/empty allowlist surfaces as [] so onboarding reads P3 as MISSING."""
+    monkeypatch.setattr(keyring, "get_password", lambda *a, **k: None)
+    _write_crawler_config(tmp_path, [])
+    res = _api(tmp_path).get_settings()
+    assert res["allow_domains"] == []
+
+
+def test_get_settings_allow_domains_are_html_escaped(tmp_path, monkeypatch):
+    """Mirror the allowed_hosts escaping: never pass a raw HTML-special value to
+    the bridge (defence in depth — the GUI also renders via textContent)."""
+    monkeypatch.setattr(keyring, "get_password", lambda *a, **k: None)
+    _write_crawler_config(tmp_path, ["a&b<x"])
+    res = _api(tmp_path).get_settings()
+    assert res["allow_domains"] == ["a&amp;b&lt;x"]
+    assert "a&b<x" not in res["allow_domains"]
+
+
+def test_get_settings_returns_a_known_fixed_key_set(tmp_path, monkeypatch):
+    """Scope guard (review): Phase 0 adds EXACTLY one key (allow_domains) — no
+    other config (reviewers/storage/...) leaks into the settings bridge dict."""
+    monkeypatch.setattr(keyring, "get_password", lambda *a, **k: None)
+    _write_crawler_config(tmp_path, ["a.example"])
+    res = _api(tmp_path).get_settings()
+    assert set(res.keys()) == {
+        "base_url",
+        "model",
+        "allowed_hosts",
+        "allow_domains",
+        "api_key_set",
+        "config_path",
+    }
+
+
 # --- config-level helpers ----------------------------------------------------
 
 
