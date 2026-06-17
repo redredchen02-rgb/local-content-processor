@@ -356,6 +356,13 @@ def test_resolve_grounding_hold_relint_clean_promotes(config, store, audit):
     )
     assert rec.new_state is JobState.PROCESSED
     assert store.get_job("jg").state is JobState.PROCESSED
+    # U5: the re-lint emits exactly ONE LINT_GATE event, with the resolving
+    # reviewer as actor (NOT a literal "human") — the accountability identity.
+    from lcp.adapters.processor.draft_linter import EVENT_LINT_GATE
+
+    lint_events = [l for l in audit._read_lines() if l["event"] == EVENT_LINT_GATE]
+    assert len(lint_events) == 1
+    assert lint_events[0]["actor"] == REVIEWER
 
 
 def test_resolve_grounding_relint_dirty_lint_refuses(config, store, audit):
@@ -364,11 +371,15 @@ def test_resolve_grounding_relint_dirty_lint_refuses(config, store, audit):
     source = "華山文創園區本週末舉辦美食市集。"
     draft = _draft(title="短")  # below title_min_chars -> lint fails
     _nhr_job(store, "jgd", ReviewReason.GROUNDING, draft=draft, source_text=source)
-    with pytest.raises(InputValidationError):
+    with pytest.raises(InputValidationError) as ei:
         signoff.resolve(
             "jgd", REVIEWER, config=config, store=store, audit=audit, ts=TS,
             relint=True,
         )
+    # U5: signoff keeps the exact operator-facing refusal (message + exit code);
+    # only the lint PASS/refuse verdict moved into the processor boolean.
+    assert "re-lint still fails" in str(ei.value)
+    assert ei.value.exit_code == 2
     assert store.get_job("jgd").state is JobState.NEEDS_HUMAN_REVIEW
 
 

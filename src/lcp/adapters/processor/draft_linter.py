@@ -185,6 +185,38 @@ def relint_after_grounding_cleared(
     return DraftLintOutcome(lint=lint_result, grounding=None, job_state=None)
 
 
+def relint_clears_hold(
+    *,
+    job_id: str,
+    draft: Draft,
+    source_text: str,
+    lint_config: LintConfig,
+    audit: AuditLog,
+    ts: str,
+    has_videos: bool = False,
+    actor: str = "human",
+) -> bool:
+    """Re-run lint for the grounding-cleared resolve path and report whether it
+    CLEARS the hold (a clean lint PASS).
+
+    Owns the lint PASS/refuse *interpretation* so the publisher (signoff.resolve)
+    no longer imports LintStatus — it consumes only this boolean and keeps the
+    state transition + the operator-facing refusal. Emits the SAME single
+    LINT_GATE audit event (actor=<the resolving reviewer>) as
+    relint_after_grounding_cleared (this delegates to it)."""
+    outcome = relint_after_grounding_cleared(
+        job_id=job_id,
+        draft=draft,
+        source_text=source_text,
+        lint_config=lint_config,
+        audit=audit,
+        ts=ts,
+        has_videos=has_videos,
+        actor=actor,
+    )
+    return outcome.lint is not None and outcome.lint.passed
+
+
 def _run_lint(
     draft: Draft,
     lint_config: LintConfig,
