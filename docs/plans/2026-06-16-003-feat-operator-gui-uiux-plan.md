@@ -180,7 +180,7 @@ graph TB
 
 ### Phase 0 — 后端单行只读扩展
 
-- [ ] **Unit 0.1: `get_settings()` 返回 `allow_domains`（只读、已转义）**
+- [x] **Unit 0.1: `get_settings()` 返回 `allow_domains`（只读、已转义）**
 
 **Goal:** 把 onboarding 前置 P3（crawler allowlist 是否就绪）从「无法核对」翻成真信号，删除「假绿色」风险与 C-partial 双路径。
 
@@ -235,7 +235,7 @@ graph TB
 
 ### Phase P0 — 让它跑 + 状态驱动 + 易读性（弃用修复，关闭 G2/G3，使 G7 首次可端到端）
 
-- [ ] **Unit P0.1: IA 三视图骨架 + 导航 + `openJob`（杀 `#job-id` 输入框）**
+- [x] **Unit P0.1: IA 三视图骨架 + 导航 + `openJob`（杀 `#job-id` 输入框）**
 
 **Goal:** 把 7-section 单滚动改为 INBOX/JOB/SETUP 三视图，用 `element.hidden` 切换；用 `openJob(job_id)` + `currentJobId` 模块变量取代共享 `#job-id` 文本框。
 
@@ -264,7 +264,7 @@ graph TB
 
 ---
 
-- [ ] **Unit P0.2: 状态门控动作区 + Inbox 4-band 分桶（G2）**
+- [x] **Unit P0.2: 状态门控动作区 + Inbox 4-band 分桶（G2）**
 
 **Goal:** JOB 工作台只渲染当前状态合法的动作（从 `_TRANSITIONS` 导出）；Inbox 按派生分组（需要你 / 被机器拦下 / 进行中 / 已结案）分桶，blocked/duplicate 始终展开。
 
@@ -297,7 +297,7 @@ graph TB
 
 ---
 
-- [ ] **Unit P0.3: `lex.js` 翻译层 + 三 renderer + `handleResult` 重写（G3）**
+- [x] **Unit P0.3: `lex.js` 翻译层 + 三 renderer + `handleResult` 重写（G3）**
 
 **Goal:** 把后端闭合枚举（16 个 JobState 含瞬态 processing + 3 reason + exit-code 桶）翻成人话（标题 + 为什么 + 下一步），三个渲染点消费；取代 `error (N): …` 与原始 reason 码。
 
