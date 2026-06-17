@@ -44,16 +44,15 @@ share a SQLite handle. The GUI polls state via :meth:`Api.job_status` /
 
 from __future__ import annotations
 
-import datetime as _dt
 import threading
 from pathlib import Path
 
 from . import pipeline as pl
 from .core import config as _config
+from .adapters.clock import now as _now
 from .adapters.crawler.base import SourceSpec
-from .adapters.crawler.crawl_runner import CrawlRunner, CrawlRunnerCrawler
+from .adapters.crawler.factory import build_crawler
 from .adapters.crawler.ingest import LocalIngestCrawler
-from .adapters.crawler.source_registry import SourceRegistry
 from .adapters.processor.sanitizer import escape_html, inert_link, sanitize_draft
 from .adapters.publisher import signoff
 from .adapters.publisher.review_packet import build_review_packet
@@ -75,12 +74,6 @@ WEB_DIR = Path(__file__).resolve().parent / "web"
 # document that loopback default. This constant records the expected bind
 # address; a test asserts launch() never passes an unsupported start() kwarg.
 SERVER_HOST = "127.0.0.1"
-
-
-def _now() -> str:
-    """ISO8601 UTC timestamp. Api is the GUI's I/O boundary, so it mints the
-    timestamp here (mirrors cli._now()), keeping core/adapters deterministic."""
-    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _error_dict(err: LcpError) -> dict:
@@ -138,13 +131,7 @@ class Api:
         by the runner's preflight (we never resolve the URL here)."""
         try:
             c = self._ctx()
-            registry = SourceRegistry.from_config(c.config.crawler)
-            crawler = CrawlRunnerCrawler(
-                CrawlRunner(
-                    registry, timeout=c.config.crawler.timeout_seconds, audit=c.audit
-                ),
-                ts_provider=_now,
-            )
+            crawler = build_crawler(c.config, c.audit, _now)
             spec = SourceSpec(
                 job_id=job_id,
                 source_type=SourceType.URL,
