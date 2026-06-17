@@ -1002,8 +1002,43 @@ async function init() {
   refreshInbox();
 }
 
-if (window.pywebview) {
-  window.addEventListener("pywebviewready", init);
-} else {
-  window.addEventListener("DOMContentLoaded", init);
+// Bootstrap. In pywebview the window.pywebview object + .api are injected AFTER
+// the page loads and announced by the `pywebviewready` event — so a parse-time
+// `if (window.pywebview)` check ALWAYS fails and would silently never wire the
+// bridge. We instead: (1) always subscribe to pywebviewready (covers "not yet
+// fired"), (2) immediately boot if the bridge is already present (covers
+// "already fired" / fast inject), and (3) fall back to a plain DOM boot for the
+// CLI/GUI-parity browser case where pywebview never appears. A run-once guard
+// makes every path idempotent. CSP/R41-safe: external JS, event wiring only.
+let _booted = false;
+function boot() {
+  if (_booted) return;
+  _booted = true;
+  init();
+}
+function whenDom(fn) {
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", fn, { once: true });
+  } else {
+    fn();
+  }
+}
+// (1) bridge may arrive later — always listen.
+window.addEventListener("pywebviewready", function () { whenDom(boot); }, { once: true });
+if (window.pywebview && window.pywebview.api) {
+  // (2) bridge already injected (event may have fired before this script ran).
+  whenDom(boot);
+} else if (typeof window.pywebview === "undefined") {
+  // (3) No bridge at parse time. This is EITHER real pywebview whose bridge is
+  //     not injected yet (the COMMON case — inject happens after load and fires
+  //     pywebviewready, handled by (1)) OR a plain browser where the event never
+  //     fires (CLI/GUI parity). Danger: a 0ms fallback runs on DOMContentLoaded,
+  //     BEFORE pywebviewready, and would boot init() against a not-yet-ready
+  //     bridge — reproducing the exact bug we are fixing. So this timer is a LAST
+  //     RESORT only: long enough that a real bridge always wins via (1) first
+  //     (boot() is idempotent, so that makes this a harmless no-op). It only
+  //     actually boots when pywebview never appears at all (real browser).
+  whenDom(function () {
+    setTimeout(boot, 3000);
+  });
 }

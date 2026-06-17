@@ -562,4 +562,7 @@ def launch(config_path: str | None = None):  # pragma: no cover - desktop only
     # http_server=True uses pywebview's built-in server, which binds to
     # SERVER_HOST (loopback) by default, so the window's assets are never
     # reachable off-host. There is no host= kwarg (passing one raises).
-    webview.start(http_server=True, ssl=False)
+    # debug=True enables the WKWebView Web Inspector (right-click > Inspect
+    # Element) so a silent JS failure is diagnosable. Loopback-only http_server
+    # is unchanged; this only affects local devtools availability.
+    webview.start(http_server=True, ssl=False, debug=True)
