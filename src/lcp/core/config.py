@@ -102,6 +102,10 @@ class Config(BaseModel):
     llm: LlmConfig = Field(default_factory=LlmConfig)
     publisher: PublisherConfig = Field(default_factory=PublisherConfig)
     categories: dict[str, list[str]] = Field(default_factory=dict)
+    # Per-栏目 operator prompt templates (plan Unit 3). A checked object: each is
+    # linted (template_lint) and rendered into the DEVELOPER task slot via a
+    # str.format_map allowlist — NEVER into the hardcoded SYSTEM message.
+    templates: dict[str, str] = Field(default_factory=dict)
 
     def llm_api_key(self) -> str:
         """Resolve the LLM api_key from keyring, then env. Never from file."""
