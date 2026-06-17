@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # ffprobe/ffmpeg are needed by the media tests (otherwise they skip).
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      # Install the package editable with every functional extra the tests
+      # exercise (crawl=scrapy, media=pillow, llm=openai, dedup=datasketch).
+      # gui=pywebview is omitted (needs a GUI backend); gui.py's lazy `import
+      # webview` is handled by a mypy missing-import override so the type gate
+      # stays green here, and the launch() regression test importorskips webview.
+      - name: Install package + test deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[crawl,media,llm,dedup,dev]"
+
+      # Static type gate: lcp.core.* strict, whole package non-strict (config in
+      # pyproject [tool.mypy]). Blocks the build on any type regression.
+      - name: Type-check (mypy)
+        run: mypy
+
+      - name: Run tests
+        run: pytest -q

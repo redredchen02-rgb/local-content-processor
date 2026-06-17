@@ -1,7 +1,7 @@
 ---
 title: "feat: Local Content Processor — MVP (Crawl → Process → Review packet)"
 type: feat
-status: active
+status: completed
 date: 2026-06-16
 deepened: 2026-06-16
 origin: docs/brainstorms/2026-06-16-local-content-processor-requirements.md
@@ -110,10 +110,10 @@ Greenfield（已驗證：repo 內僅有 origin 文件、非 git repo、無程式
 - **R42 抹除義務**：使用者確認**無具名法定抹除義務** ✅ → 落盤加密/crypto-shred 降 post-MVP，MVP 採 best-effort unlink + 誠實標註。
 
 ### Deferred to Implementation
-- **公司 LLM 端點確切規格**（base_url 後綴、模型名、認證 header、串流/限流）：向內部團隊取得；Unit 7a 以 adapter 隔離。
+- ~~**公司 LLM 端點確切規格**~~ **已取得並接上（2026-06-16）**：base_url `https://la-sealion.inaiai.com/v1`、model `gemma4-31b-heretic`、api_key 走 OS keyring（不入檔）；端到端連通測試通過。可由 GUI Settings 面板或 `config.yaml` + keyring 設定。
 - **目標機 ffmpeg filter 預設值**：落地前跑 `ffmpeg -h filter=blackdetect` 對齊。
 - **模糊/黑屏/dedup 門檻數值**：Unit 1 spike + 自家語料校準。
-- **grounding 自動驗證強度**（子字串 only vs +NLI/MiniCheck）：由 Unit 1 spike 可達準確度決定（origin Deferred）。
+- **grounding 自動驗證強度**（子字串 only vs +NLI/MiniCheck）：~~由 Unit 1 spike 可達準確度決定~~ **已決（2026-06-16）：MVP = substring-only + fail-closed；+NLI 延後待真實語料**（見 Unit 1 / spike README）。
 - **（已右整）落盤加密/crypto-shred 移 post-MVP**（使用者確認無具名抹除義務）；MVP 採 best-effort unlink + 誠實標註。未來若出現抹除義務，再做加密機制（file-AES vs SQLCipher）+ DEK 邊界（誰持有、Scrapy 明文窗）+ nonce-vs-checksum 的 spike。
 - **目標 OS**：R44 多項硬化（umask/RLIMIT_CORE/start_new_session/killpg）為 POSIX-only；MVP 主目標訂 **macOS/Linux**，Windows 對等（ACL/DPAPI/Job Object）列 post-MVP。
 
@@ -200,7 +200,7 @@ graph TB
 
 ### Phase 0 — De-risking spike
 
-- [ ] **Unit 1: 合規偵測 / grounding 準確度 spike**
+- [x] **Unit 1: 合規偵測 / grounding 準確度 spike** — harness 已建並可跑（`spikes/detection_accuracy/`：評測真實確定性偵測器、NLI seam 就緒、合成樣本驗證 mechanics）。**MVP 決策（2026-06-16，保守分支）：grounding = `substring-only` + fail-closed 送人審；`+NLI/MiniCheck` 延後（P1，待真實去識別化語料）**——此即本 unit Approach 規定的「準確度未知 → advisory + route-to-human」分支，且為目前已出貨程式碼的行為。**誠實標註：真實 precision/recall 數字仍待人工標註語料**（語料視同 PII、`spikes/**/golden_set/` 已 gitignore，不入版控）；決策記錄於 `spikes/detection_accuracy/README.md`。
 
 **Goal:** 量測誹謗/隱私偵測與 grounding 驗證在本地可達的誤判/漏判率，定 R4/R16/R23 偵測策略強度（純規則 vs +NLI/MiniCheck）+ golden set + 閾值。
 
@@ -227,7 +227,7 @@ graph TB
 
 ### Phase 1 — Foundation
 
-- [ ] **Unit 2: 專案骨架 + 三層分層 + config + OS 衛生基線**
+- [x] **Unit 2: 專案骨架 + 三層分層 + config + OS 衛生基線**
 
 **Goal:** 建立 三層（純核/adapters/UI 殼）骨架、pydantic 模型單一真相、config 與祕密載入、CLI 入口殼、OS 衛生基線。
 
@@ -259,7 +259,7 @@ graph TB
 
 **Verification:** core 無框架 import（grep/測試斷言）；umask/core-dump/遮罩生效；`.gitignore` 含 spikes/。
 
-- [ ] **Unit 3: Job store + 狀態機 + 0600 落盤/best-effort 刪除 + audit + PII 清單**
+- [x] **Unit 3: Job store + 狀態機 + 0600 落盤/best-effort 刪除 + audit + PII 清單**
 
 **Goal:** 持久層：SQLite 索引（PII-free）、folder-per-job **0600 明文 blob（落盤加密=post-MVP）**、原子提交 manifest、append-only audit（雜湊鏈，誠實 tamper-evident）、完整 transition table（含 SUPERSEDED/retry）、**PII 清單為 gating**。
 
@@ -300,7 +300,7 @@ graph TB
 
 ### Phase 2 — Stage 1 Crawl / Ingest
 
-- [ ] **Unit 4: Crawl（Scrapy subprocess）+ crawler 抽象契約 + 本地匯入 + 網路/路徑護欄**
+- [x] **Unit 4: Crawl（Scrapy subprocess）+ crawler 抽象契約 + 本地匯入 + 網路/路徑護欄**
 
 **Goal:** 三種輸入 → raw_job_bundle（0600）；allowlist、限速、robots、SSRF/path-traversal、per-asset 狀態、不繞反爬；**定義 crawler 抽象契約（Scrapy 為第一實作）**。
 
@@ -340,7 +340,7 @@ graph TB
 
 ### Phase 3 — Stage 2 Process / Normalize
 
-- [ ] **Unit 5: 素材驗證 + 媒體標準化（Pillow + ffprobe）**
+- [x] **Unit 5: 素材驗證 + 媒體標準化（Pillow + ffprobe）**
 
 **Goal:** 素材完整性（含模糊/黑屏/解壓炸彈護欄）、圖片 800px + 1300×640 封面、影片規格檢查。純判斷與 I/O 分離。
 
@@ -372,7 +372,7 @@ graph TB
 
 **Verification:** 尺寸/規格正確；不可信媒體有資源/逾時護欄；純判斷可純測。
 
-- [ ] **Unit 6: 風控 + 查重閘門**
+- [x] **Unit 6: 風控 + 查重閘門**
 
 **Goal:** hard-stop 風控（紅線 + 日常誹謗/隱私/著作權，fail-closed）+ advisory/fail-loud 查重；輸出帶 `review_reason`。純判斷與索引 I/O 分離。
 
@@ -407,7 +407,7 @@ graph TB
 
 **Verification:** 紅線必 hard-stop；fail-closed 生效；無索引時誠實降級且永不 auto-reject；reason 結構化進 audit。
 
-- [ ] **Unit 7a: 內容組裝（LLM 受限改寫）+ 注入防護 + 失敗路徑**
+- [x] **Unit 7a: 內容組裝（LLM 受限改寫）+ 注入防護 + 失敗路徑**
 
 **Goal:** 用公司 OpenAI-compatible LLM 做受限改寫（抽取式+逐字引用+模板，零能力），含輸入端淨化、finish_reason 閘門、失敗路徑、dry-run mock。
 
@@ -440,7 +440,7 @@ graph TB
 
 **Verification:** 受限改寫引用可溯；注入無法劫持；finish_reason 閘門生效；dry-run 不打 API。
 
-- [ ] **Unit 7b: draft linter + grounding 驗證 + 輸出端淨化**
+- [x] **Unit 7b: draft linter + grounding 驗證 + 輸出端淨化**
 
 **Goal:** 驗結構/標題/標籤/分類/照搬/注入特徵 + grounding（逐字子字串 + 可選 NLI）；**輸出端淨化**（攻擊者可塑造字串轉義、linter 禁解析 URL）。
 
@@ -475,7 +475,7 @@ graph TB
 
 ### Phase 4 — Stage 4 Review & Sign-off
 
-- [ ] **Unit 8: Review packet + 簽核 + 上架責任閉環 + queue/list**
+- [x] **Unit 8: Review packet + 簽核 + 上架責任閉環 + queue/list**
 
 **Goal:** 人面向審核包（**淨化後**）、approve/reject（reviewer attribution）、published_url 回填責任閉環、batch↔人工閘門銜接（待辦清單 + summary）。
 
@@ -511,7 +511,7 @@ graph TB
 
 ### Phase 5 — Interface
 
-- [ ] **Unit 9: 最小 GUI（pywebview serverless）+ 輸出轉義/CSP**
+- [x] **Unit 9: 最小 GUI（pywebview serverless）+ 輸出轉義/CSP**
 
 **Goal:** 不開埠的桌面視窗，完成建/跑/看/approve/reject/複查裁決/重跑/resume/回填，與 CLI 共用 core，顯示狀態計數/待辦；**所有渲染輸出端轉義 + CSP**。
 

@@ -1,0 +1,244 @@
+/* External file (not inline) to satisfy CSP style-src 'self'. No web fonts, no
+ * remote assets, no inline styles — colour is always applied via a class.
+ *
+ * Visual system (P1.3) + visual-elevation pass (2026-06-17, P0/P1/P2). Six
+ * state-colour families encode the compliance posture:
+ *   AMBER = "needs you / stopped for you" (NOT failure)  ·  RED = dead end only
+ *   INDIGO = frozen (immutable review packet)  ·  GREEN = safe-advance / done-good
+ *   BLUE = in-progress  ·  GREY = neutral  ·  SLATE = superseded (void)
+ * Colour is never the only signal — every badge carries a Chinese text label.
+ * The elevation pass adds ONLY containment, type hierarchy, depth and tactility
+ * (neutral canvas + paper cards + shadows + hover) — it invents no hue and
+ * remaps no state. See docs/plans/2026-06-17-gui-visual-elevation-plan.md.
+ */
+
+:root {
+  /* type scale (1.20, 16px base; CJK-safe) */
+  --fs-300: .78rem; --fs-400: .875rem; --fs-500: 1rem; --fs-600: 1.15rem; --fs-700: 1.4rem; --fs-900: 1.85rem;
+  --fw-medium: 500; --fw-bold: 700;
+  --lh-tight: 1.25; --lh-body: 1.55;
+  --font-ui: system-ui, -apple-system, "PingFang TC", "PingFang SC", "Microsoft JhengHei", "Hiragino Sans GB", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  /* spacing (4px) */
+  --sp-1: .25rem; --sp-2: .5rem; --sp-3: .75rem; --sp-4: 1rem; --sp-5: 1.5rem; --sp-6: 2rem; --sp-7: 3rem;
+  --radius-sm: 4px; --radius-md: 8px; --radius-pill: 999px;
+  /* neutral warm greys */
+  --ink-900: #1a1d21; --ink-700: #3c424a; --ink-500: #5e6671;
+  --paper: #fff; --paper-2: #f5f6f8; --line: #d4d8df;
+  /* state families: bg / border / text (text-on-bg >= 7:1) */
+  --c-neutral-bg: #eceef2; --c-neutral-bd: #b9bfc8; --c-neutral-tx: #3c424a;
+  --c-progress-bg: #e4eefb; --c-progress-bd: #4f86d6; --c-progress-tx: #143a73;
+  --c-attention-bg: #fdf3da; --c-attention-bd: #c8901b; --c-attention-tx: #6b4900;
+  --c-stop-bg: #fce6e4; --c-stop-bd: #c2342a; --c-stop-tx: #8a1209;
+  --c-go-bg: #e3f3e8; --c-go-bd: #2f8f4e; --c-go-tx: #145129;
+  --c-frozen-bg: #e9e7f7; --c-frozen-bd: #6a5acd; --c-frozen-tx: #342a78;
+  --c-void-bg: #e6e7ea; --c-void-bd: #8b909a; --c-void-tx: #4a4f59;
+  --focus-ring: #1f6fd6;
+  /* canvas + elevation (visual-elevation): a tinted desk + raised paper cards */
+  --canvas: #eef0f4;
+  --shadow-sm: 0 1px 2px rgba(26, 29, 33, .06);
+  --shadow-md: 0 1px 3px rgba(26, 29, 33, .07), 0 6px 16px rgba(26, 29, 33, .05);
+}
+
+* { box-sizing: border-box; }
+html { background: var(--canvas); }
+/* body is the centred column; the page outside it shows the canvas (same tint),
+ * so gutters are seamless. The white "paper" lives on <main> (P0-1). */
+body { font-family: var(--font-ui); font-size: var(--fs-500); line-height: var(--lh-body);
+  color: var(--ink-900); background: var(--canvas); margin: 0 auto; padding: 0 var(--sp-5) var(--sp-7); max-width: 62rem; }
+/* the document surface: raised white paper on the tinted desk; min-height turns
+ * the empty lower half into the card's own padding instead of raw void. */
+main { display: block; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-md);
+  padding: var(--sp-6); min-height: calc(100vh - 9rem); box-shadow: var(--shadow-md); }
+h2 { font-size: var(--fs-700); }
+h3 { font-size: var(--fs-500); }
+h1, h2, h3 { line-height: var(--lh-tight); }
+/* MUST win over later class display rules (.row/.band-body set display:flex at
+   equal specificity) so the `hidden` attribute always collapses an element. */
+[hidden] { display: none !important; }
+button { padding: var(--sp-1) var(--sp-3); cursor: pointer; border-radius: var(--radius-sm);
+  transition: background-color .12s, border-color .12s, box-shadow .12s; }
+button[disabled] { opacity: .45; cursor: not-allowed; }
+:where(input, select, button, a):focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
+
+/* persistent shell — canvas-tinted toolbar above the paper card */
+header { position: sticky; top: 0; background: var(--canvas); border-bottom: 1px solid var(--line);
+  padding: var(--sp-3) 0; margin-bottom: var(--sp-5); z-index: 1; }
+.topbar { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.topbar h1 { font-size: var(--fs-700); letter-spacing: -.01em; margin: 0; }
+.note { color: var(--ink-500); font-size: var(--fs-400); margin: var(--sp-1) 0 0; max-width: 52rem; }
+/* nav as a segmented control: neutral chrome, active tab = raised pill + bold (P1-4) */
+.nav { display: flex; gap: 0; background: var(--paper-2); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 2px; }
+.nav button { border: 1px solid transparent; background: none; border-radius: var(--radius-sm); padding: var(--sp-1) var(--sp-3); }
+.nav button:hover { background: var(--paper); }
+.nav button[aria-current="page"] { background: var(--paper); border-color: var(--line); box-shadow: var(--shadow-sm);
+  font-weight: var(--fw-bold); text-decoration: none; }
+.pill { margin-left: auto; font-size: var(--fs-300); padding: 2px var(--sp-2); border-radius: var(--radius-pill);
+  border: 1px solid currentColor; box-shadow: var(--shadow-sm); }
+.pill--ready { color: var(--c-go-tx); background: var(--c-go-bg); }
+.pill--block { color: var(--c-attention-tx); background: var(--c-attention-bg); }
+
+.view-head { display: flex; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-5); padding-bottom: var(--sp-3); border-bottom: 1px solid var(--line); }
+.back { background: none; border: none; color: var(--c-progress-tx); cursor: pointer; padding: var(--sp-1) 0; }
+
+/* forms */
+.row { display: flex; align-items: center; gap: var(--sp-2); margin: var(--sp-1) 0; flex-wrap: wrap; }
+.row label { min-width: 9rem; }
+input[type="text"], select { flex: 1; min-width: 11rem; padding: var(--sp-1); }
+.status, .status-area { color: var(--ink-700); min-height: 1.2em; margin: var(--sp-2) 0; }
+.field { margin: var(--sp-1) 0; }
+/* button system: primary leads, secondary/danger/link recede; states (P1-5) */
+.btn-primary { background: var(--c-go-bd); color: #fff; border: 1px solid var(--c-go-bd); box-shadow: 0 1px 2px rgba(20, 81, 41, .25); }
+.btn-primary:hover { background: var(--c-go-tx); border-color: var(--c-go-tx); }
+.btn-primary:active { box-shadow: none; }
+.btn-secondary { background: var(--paper-2); border: 1px solid var(--ink-700); }
+.btn-secondary:hover { background: var(--paper); border-color: var(--ink-500); }
+.btn-danger { background: var(--paper); color: var(--c-stop-tx); border: 1px solid var(--c-stop-bd); }
+.btn-danger:hover { background: var(--c-stop-bg); }
+.btn-danger.is-armed { background: var(--c-stop-bd); color: #fff; }
+.btn-danger.is-armed:hover { background: var(--c-stop-tx); }
+.hint { color: var(--ink-500); font-size: var(--fs-400); }
+.link-toggle { background: none; border: none; color: var(--c-progress-tx); cursor: pointer; padding: 0; font-size: var(--fs-400); }
+.link-toggle:hover { text-decoration: underline; }
+
+/* state badge — text label carries meaning; ::before glyph is decorative.
+   currentColor border is REQUIRED (WCAG 1.4.11): soft bg vs white is < 3:1. */
+.badge { display: inline-flex; align-items: center; gap: var(--sp-1); font-size: var(--fs-300); font-weight: var(--fw-medium);
+  line-height: var(--lh-tight); padding: 2px var(--sp-2); border-radius: var(--radius-pill); border: 1px solid currentColor; white-space: nowrap; }
+.badge--neutral, .badge--unknown { background: var(--c-neutral-bg); color: var(--c-neutral-tx); }
+.badge--busy { background: var(--c-progress-bg); color: var(--c-progress-tx); }
+.badge--caution, .badge--review, .badge--retry { background: var(--c-attention-bg); color: var(--c-attention-tx); }
+.badge--stop { background: var(--c-stop-bg); color: var(--c-stop-tx); }
+.badge--ready, .badge--go, .badge--done { background: var(--c-go-bg); color: var(--c-go-tx); }
+.badge--frozen { background: var(--c-frozen-bg); color: var(--c-frozen-tx); }
+.badge--void { background: var(--c-void-bg); color: var(--c-void-tx); text-decoration: line-through; }
+
+/* inbox bands become contained cards with a per-family left accent (P0-2).
+   The 4px accent reuses the existing family border tokens — no new hue. */
+.band { background: var(--paper); border: 1px solid var(--line); border-left: 4px solid var(--line);
+  border-radius: var(--radius-md); padding: var(--sp-4); margin-bottom: var(--sp-5); box-shadow: var(--shadow-sm); }
+.band--attention { border-left-color: var(--c-attention-bd); }
+.band--stopped { border-left-color: var(--c-stop-bd); }
+.band--inflight { border-left-color: var(--c-progress-bd); }
+.band--closed { border-left-color: var(--c-void-bd); }
+.band-head { display: flex; align-items: center; gap: var(--sp-2);
+  margin: calc(-1 * var(--sp-4)) calc(-1 * var(--sp-4)) var(--sp-3); padding: var(--sp-2) var(--sp-4);
+  background: var(--paper-2); border-bottom: 1px solid var(--line); border-radius: var(--radius-md) var(--radius-md) 0 0; }
+.band-head strong { font-size: var(--fs-600); font-weight: var(--fw-bold); }
+/* attention dominates, closed recedes — by colour/weight, labels kept (P2-3) */
+.band--attention .band-head strong { color: var(--c-attention-tx); }
+.band--closed .band-head strong { font-weight: var(--fw-medium); color: var(--ink-500); }
+.band-body { margin-top: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+/* rows: hoverable inset surfaces; lane colour threaded via --lane so hover is DRY (P1-2) */
+.job-row { --lane: var(--c-neutral-bd); display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap;
+  background: var(--paper); border: 1px solid transparent; border-radius: var(--radius-sm); padding: var(--sp-2) var(--sp-3);
+  margin: 0; cursor: pointer; transition: box-shadow .12s, border-color .12s; box-shadow: inset 4px 0 0 var(--lane); }
+.job-row:hover { border-color: var(--ink-500); box-shadow: inset 4px 0 0 var(--lane), var(--shadow-md); }
+.job-row:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
+.job-row.lane--stop { --lane: var(--c-stop-bd); }
+.job-row.lane--caution, .job-row.lane--review, .job-row.lane--retry { --lane: var(--c-attention-bd); }
+.job-row.lane--frozen { --lane: var(--c-frozen-bd); }
+.job-row.lane--busy { --lane: var(--c-progress-bd); }
+.job-row.lane--ready, .job-row.lane--go, .job-row.lane--done { --lane: var(--c-go-bd); }
+.job-row.lane--void { --lane: var(--c-void-bd); }
+/* the machine id recedes to metadata; the human reason is the primary scan target (P0-4) */
+.job-id { font-family: var(--font-mono); font-size: var(--fs-300); color: var(--ink-500); letter-spacing: .02em; }
+.job-why { color: var(--ink-900); font-weight: var(--fw-medium); }
+.job-when { color: var(--ink-500); font-size: var(--fs-300); margin-left: auto; }
+/* counts: a contained summary strip of per-state chips, not console output (P0-5/P1-1) */
+.counts { margin-top: var(--sp-6); padding: var(--sp-3) var(--sp-4); background: var(--paper-2);
+  border: 1px solid var(--line); border-radius: var(--radius-md); display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.count-chip { display: inline-flex; gap: var(--sp-1); align-items: baseline; padding: 1px var(--sp-2);
+  border: 1px solid var(--line); border-radius: var(--radius-pill); background: var(--paper);
+  color: var(--ink-700); font-size: var(--fs-300); white-space: nowrap; }
+.empty { color: var(--ink-500); font-style: normal; padding: var(--sp-3); text-align: center; }
+
+/* banners — left border = currentColor; tones reuse the families */
+.banner { border-left: 2px solid currentColor; padding: var(--sp-2) var(--sp-3); margin: var(--sp-2) 0; border-radius: var(--radius-sm); box-shadow: var(--shadow-sm); }
+.banner-head { margin-bottom: var(--sp-1); }
+.banner p { margin: var(--sp-1) 0; }
+.banner--state { background: var(--c-neutral-bg); color: var(--ink-700); }
+.banner--success { background: var(--c-go-bg); color: var(--c-go-tx); }
+.banner--error { background: var(--c-stop-bg); color: var(--c-stop-tx); }
+.banner--attention { background: var(--c-attention-bg); color: var(--c-attention-tx); }
+.banner--empty { background: var(--c-neutral-bg); color: var(--ink-500); }
+.tone--busy { background: var(--c-progress-bg); color: var(--c-progress-tx); }
+.tone--stop { background: var(--c-stop-bg); color: var(--c-stop-tx); }
+.tone--frozen { background: var(--c-frozen-bg); color: var(--c-frozen-tx); }
+.tone--caution, .tone--review, .tone--retry { background: var(--c-attention-bg); color: var(--c-attention-tx); }
+.tone--ready, .tone--go, .tone--done { background: var(--c-go-bg); color: var(--c-go-tx); }
+.tone--void { background: var(--c-void-bg); color: var(--c-void-tx); }
+.reason-note { margin-top: var(--sp-2); padding-top: var(--sp-2); border-top: 1px dashed currentColor; }
+
+/* action region + in-DOM confirm tray */
+.action-row { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; margin: var(--sp-2) 0; }
+.confirm-wrap { display: inline-block; }
+.confirm-tray { border: 2px solid var(--c-stop-bd); border-radius: var(--radius-md); padding: var(--sp-3); margin-top: var(--sp-2);
+  background: var(--paper-2); display: flex; flex-direction: column; gap: var(--sp-2); box-shadow: var(--shadow-md); animation: tray-in .14s ease; }
+.confirm-tray label { display: flex; gap: var(--sp-1); align-items: center; }
+.confirm-actions { display: flex; gap: var(--sp-2); }
+.hold-panel { border: 1px solid var(--c-attention-bd); border-radius: var(--radius-md); padding: var(--sp-3);
+  display: flex; flex-direction: column; gap: var(--sp-2); align-items: flex-start; box-shadow: var(--shadow-sm); animation: tray-in .14s ease; }
+.honesty-callout { color: var(--c-attention-tx); background: var(--c-attention-bg); border: 1px solid var(--c-attention-bd);
+  padding: var(--sp-1) var(--sp-2); border-radius: var(--radius-sm); }
+.disclaimer { color: var(--ink-500); font-size: var(--fs-300); white-space: pre-wrap; }
+.tech-detail code { font-family: var(--font-mono); font-size: var(--fs-300); color: var(--ink-500); word-break: break-all; }
+@keyframes tray-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+/* in-flight spinner (motion; functional fallback is the textContent glyph) */
+.inflight { background: var(--c-progress-bg); color: var(--c-progress-tx); border-left: 2px solid currentColor;
+  padding: var(--sp-2) var(--sp-3); border-radius: var(--radius-sm); margin: var(--sp-2) 0; box-shadow: var(--shadow-sm); }
+.inflight-head { display: flex; align-items: center; gap: var(--sp-2); }
+.elapsed { font-family: var(--font-mono); margin-left: auto; }
+.spin { width: 1em; height: 1em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%;
+  display: inline-block; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* review packet; frozen skin = immutable trust artifact (SC6) */
+.packet { border: 1px solid var(--line); border-radius: var(--radius-md); padding: var(--sp-3); margin-top: var(--sp-3); position: relative; box-shadow: var(--shadow-sm); }
+.packet .field { margin: var(--sp-1) 0; }
+.packet.is-frozen { border: 2px solid var(--c-frozen-bd); background: var(--c-frozen-bg); box-shadow: 0 2px 10px rgba(106, 90, 205, .18); }
+.frozen-ribbon { position: absolute; top: 0; right: 0; background: var(--c-frozen-bd); color: #fff;
+  font-size: var(--fs-300); font-weight: var(--fw-bold); padding: 2px var(--sp-2); border-bottom-left-radius: var(--radius-sm); box-shadow: var(--shadow-sm); }
+.hash-chip { display: inline-block; font-family: var(--font-mono); font-size: var(--fs-300); color: var(--c-frozen-tx);
+  background: var(--paper); border: 1px solid var(--c-frozen-bd); padding: 1px var(--sp-2); border-radius: var(--radius-sm); margin-top: var(--sp-2); }
+
+/* INERT source link — a deliberately non-clickable label + a select-all URL */
+.inert-link { margin: var(--sp-2) 0; }
+.inert-link__tag { color: var(--ink-500); font-size: var(--fs-300); user-select: none; margin-right: var(--sp-2); }
+.inert-link__url { font-family: var(--font-mono); border: 1px dashed var(--line); padding: 1px var(--sp-1);
+  cursor: text; user-select: all; word-break: break-all; }
+
+/* JOB workspace measure cap + carded actions (P2-4) */
+#view-job { max-width: 46rem; margin: 0 auto; }
+#job-actions:not(:empty) { border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--paper-2); padding: var(--sp-4); margin-top: var(--sp-4); }
+
+/* SETUP: form on its own capped card; readiness as a status panel (P1-3/P2-2) */
+#settings { max-width: 34rem; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--paper-2);
+  padding: var(--sp-5); margin-top: var(--sp-4); box-shadow: var(--shadow-sm); }
+#settings input[type="text"], #settings input[type="password"] { max-width: 22rem; }
+.ready-list { background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm); padding: var(--sp-2) var(--sp-4); margin: var(--sp-3) 0; }
+.ready-row { padding: var(--sp-3) 0; border-bottom: 1px solid var(--line); }
+.ready-row:last-child { border-bottom: none; }
+.handoff { border: 1px solid var(--line); border-radius: var(--radius-md); padding: var(--sp-3); margin-top: var(--sp-3); background: var(--paper-2); box-shadow: var(--shadow-sm); }
+.handoff pre { font-family: var(--font-mono); font-size: var(--fs-300); background: var(--paper); border: 1px solid var(--line);
+  padding: var(--sp-2); border-radius: var(--radius-sm); overflow-x: auto; user-select: all; }
+.handoff code { font-family: var(--font-mono); }
+
+/* narrow window: strip the desktop paper-card chrome, uncap inputs, stack rows (P0-8) */
+@media (max-width: 40rem) {
+  body { padding: 0 var(--sp-3) var(--sp-6); }
+  main { border: none; border-radius: 0; box-shadow: none; padding: var(--sp-4); min-height: 0; }
+  .job-row { flex-direction: column; align-items: flex-start; gap: var(--sp-1); }
+  .job-when { margin-left: 0; }
+  .topbar { gap: var(--sp-2); }
+  .pill { margin-left: 0; }
+  #settings input[type="text"], #settings input[type="password"] { max-width: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin { animation: none; }
+  .job-row, .btn-primary, .btn-secondary, button { transition: none; }
+  .confirm-tray, .hold-panel { animation: none; }
+}

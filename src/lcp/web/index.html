@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <!--
+    Strict CSP (R41): no inline anything, scripts/styles/images from 'self' only,
+    object-src 'none'. img-src 'self' lets cover.jpg load from the 127.0.0.1-only
+    built-in server while still blocking remote beacons. UNCHANGED across the
+    UI/UX rebuild — it is the last line behind the textContent discipline.
+  -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; img-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Local Content Processor</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <!-- Persistent shell: nav (3 views) + always-on honesty note + readiness pill -->
+  <header>
+    <div class="topbar">
+      <h1>Local Content Processor</h1>
+      <nav class="nav">
+        <button id="nav-inbox" type="button" aria-current="page">收件匣</button>
+        <button id="nav-new" type="button">+ 新工作</button>
+        <button id="nav-setup" type="button">设定 ⚙</button>
+      </nav>
+      <span id="ready-pill" class="pill"></span>
+    </div>
+    <p class="note">机器永不自动上架。签核＝署名，非身分验证。</p>
+  </header>
+
+  <main>
+    <!-- ===== INBOX (default landing): counts + worklist in 4 derived bands ===== -->
+    <section id="view-inbox" class="view">
+      <div class="view-head">
+        <h2>收件匣</h2>
+        <button id="refresh-inbox" type="button">重新整理</button>
+      </div>
+      <div id="inbox-bands"></div>
+      <p id="inbox-counts" class="counts"></p>
+    </section>
+
+    <!-- ===== JOB workspace: one selected job, only its legal actions ===== -->
+    <section id="view-job" class="view" hidden>
+      <button id="job-back" type="button" class="back">‹ 收件匣</button>
+      <h2 id="job-title">工作</h2>
+
+      <!-- create mode (shown for "+ 新工作" and for re-crawl of new/crawl_failed) -->
+      <div id="job-create" hidden>
+        <div class="row">
+          <label for="create-job-id">工作 id</label>
+          <input id="create-job-id" type="text" autocomplete="off">
+        </div>
+        <div class="row" role="radiogroup" aria-label="来源">
+          <label><input id="create-mode-url" type="radio" name="create-mode" checked> 爬一个网址</label>
+          <label><input id="create-mode-dir" type="radio" name="create-mode"> 匯入资料夹</label>
+        </div>
+        <div class="row" id="create-url-row">
+          <label for="create-url">网址</label>
+          <input id="create-url" type="text" autocomplete="off">
+        </div>
+        <div class="row" id="create-dir-row" hidden>
+          <label for="create-dir">资料夹路径</label>
+          <input id="create-dir" type="text" autocomplete="off">
+        </div>
+        <div class="row">
+          <label for="create-dry"><input id="create-dry" type="checkbox"> 安全预览（dry-run，不连模型）</label>
+          <button id="btn-create" type="button" class="btn-primary">建立并抓取</button>
+        </div>
+        <p id="create-status" class="status" aria-live="polite"></p>
+      </div>
+
+      <div id="job-banner"></div>
+      <div id="job-inflight" aria-live="polite"></div>
+      <div id="job-actions"></div>
+      <div id="job-packet"></div>
+      <div id="job-status" class="status-area" aria-live="polite"></div>
+    </section>
+
+    <!-- ===== SETUP: one-time technical setup (R33). Readiness checklist lands in P2.1. ===== -->
+    <section id="view-setup" class="view" hidden>
+      <button id="setup-back" type="button" class="back">‹ 收件匣</button>
+      <!-- LLM settings: base_url/model -> config.yaml; api_key -> OS keyring ONLY -->
+      <section id="settings">
+        <h2>设定（一次性技术设定 — 日常工作不需要这些）</h2>
+        <p class="note">api_key 存在 OS keyring — 永不写入档案、永不在此显示。</p>
+        <div class="row">
+          <label for="settings-base-url">Base URL（须以 /v1 结尾）</label>
+          <input id="settings-base-url" type="text" autocomplete="off" spellcheck="false">
+          <span id="base-url-advisory" class="hint"></span>
+        </div>
+        <div class="row">
+          <label for="settings-model">Model</label>
+          <input id="settings-model" type="text" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="row">
+          <label for="settings-api-key">API key</label>
+          <input id="settings-api-key" type="password" autocomplete="off">
+          <span id="settings-key-state" class="status"></span>
+        </div>
+        <button id="btn-save-settings" type="button" class="btn-primary">储存设定</button>
+        <p id="settings-status" class="status" aria-live="polite"></p>
+      </section>
+      <div id="setup-readiness"></div>
+    </section>
+  </main>
+
+  <script src="lex.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

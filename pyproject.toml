@@ -1,0 +1,80 @@
+[project]
+name = "local-content-processor"
+version = "0.1.0"
+description = "Local content pipeline: crawl -> process -> review packet (MVP)"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2,<3",
+    "pydantic-settings>=2,<3",
+    "click>=8,<9",
+    "keyring>=25",
+    "pyyaml>=6",
+]
+
+[project.optional-dependencies]
+crawl = ["scrapy>=2.16,<3"]
+media = ["pillow>=12.2,<13"]
+llm = ["openai>=2,<3"]
+dedup = ["datasketch>=1.6"]
+gui = ["pywebview>=6,<7"]
+dev = ["pytest>=8", "mypy>=1.18,<2", "types-PyYAML"]
+
+[project.scripts]
+lcp = "lcp.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+# --- Static type gate (two-tier) -------------------------------------------
+# Global baseline = NON-STRICT but ENFORCED: the whole package is checked and
+# must be error-free. The pure core, the orchestrator, and the I/O adapters
+# (lcp.core.* / lcp.pipeline / lcp.adapters.*) are held to a strict bundle.
+# Only the thin shells (cli.py / gui.py) stay at the non-strict baseline on
+# purpose (Click/webview glue). RAMP: to tighten a shell, add it to the strict
+# override module list below.
+[tool.mypy]
+python_version = "3.11"
+files = ["src/lcp"]
+# --strict's global-only flags live here (they cannot sit in a per-module
+# override); the per-module-settable rest of --strict is in the lcp.core.* block.
+warn_unused_configs = true
+warn_redundant_casts = true
+strict_bytes = true
+
+# Strict bundle — the per-module-settable subset of --strict (the global-only
+# flags above + this list = --strict's expansion). Enumerated rather than
+# `strict = true` because mypy applies a per-override `strict` GLOBALLY (it would
+# force strict onto the cli/gui shells too). Scoped to everything but the shells.
+[[tool.mypy.overrides]]
+module = ["lcp.core.*", "lcp.pipeline", "lcp.adapters.*"]
+disallow_any_generics = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_untyped_decorators = true
+check_untyped_defs = true
+warn_return_any = true
+warn_unused_ignores = true
+no_implicit_reexport = true
+strict_equality = true
+extra_checks = true
+
+[[tool.mypy.overrides]]
+module = ["datasketch.*"]
+ignore_missing_imports = true
+
+# pywebview (gui extra) is not installed in CI; gui.py imports it lazily. When
+# absent, treat it as untyped so the gate stays green. When present (local dev
+# with the gui extra), mypy still type-checks gui.py against the real stubs.
+[[tool.mypy.overrides]]
+module = ["webview", "webview.*"]
+ignore_missing_imports = true
