@@ -204,6 +204,7 @@ class Pipeline:
         watermark: bool | None = None,
         template: str | None = None,
         ai_copy: bool = False,
+        dewatermark: bool = False,
     ) -> ProcessResult:
         """Stage 2: risk gate -> media validation -> dedup gate -> assemble
         (dry_run aware) -> lint + grounding. Stops at the FIRST gate that parks
@@ -254,6 +255,7 @@ class Pipeline:
                 watermark=watermark,
                 template=template,
                 ai_copy=ai_copy,
+                dewatermark=dewatermark,
             )
         except ExternalServiceError:
             # An LLM/network failure mid-process must not leave the job at
@@ -290,6 +292,7 @@ class Pipeline:
         watermark: bool | None = None,
         template: str | None = None,
         ai_copy: bool = False,
+        dewatermark: bool = False,
     ) -> ProcessResult:
         """Stage-2 gate sequence (called inside the .processing marker scope).
 
@@ -324,6 +327,34 @@ class Pipeline:
         # before spending tokens). A media quality issue -> NEEDS_REVISION (never
         # BLOCKED). No media -> no-op. Deterministic local I/O, so it runs in
         # dry-run too.
+        # --- de-watermark gate (attested-only, BEFORE normalize; Batch 2) ---
+        # Default-locked: runs only when requested AND the job carries a valid
+        # Unit-7 attestation AND an engine is configured. Engine failure / low-
+        # confidence -> NEEDS_REVISION (no silent partial). A missing engine
+        # raises DependencyError (mirror missing-ffmpeg), surfaced as exit 3.
+        if dewatermark and self.config.inpaint.enabled:
+            from .adapters.processor.dewatermark_gate import run_dewatermark_gate
+            from .adapters.publisher.dewatermark import read_attestation
+
+            dw_out = run_dewatermark_gate(
+                job_id=job_id,
+                store=self.store,
+                audit=self.audit,
+                ts=ts,
+                attestation=read_attestation(self.store, job_id),
+                inpaint_config=self.config.inpaint,
+                dry_run=self.dry_run,
+            )
+            if dw_out.job_state is not None:
+                return ProcessResult(
+                    job_id=job_id,
+                    draft=None,
+                    final_state=dw_out.job_state,
+                    dry_run=self.dry_run,
+                    stopped_at="dewatermark",
+                    notes=notes,
+                )
+
         # Watermark is a process-time toggle: None -> use the config default;
         # True/False overrides config.watermark.enabled for THIS run.
         wm_config = self.config.watermark
