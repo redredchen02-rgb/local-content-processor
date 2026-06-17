@@ -165,18 +165,33 @@ def ingest(ctx, directory, job_id):
 @cli.command()
 @click.option("--job-id", "job_id", required=True)
 @click.option("--title", default="", help="Working title (lint/risk input)")
+@click.option(
+    "--watermark/--no-watermark", "watermark", default=None,
+    help="Apply (or skip) the official watermark; default follows config",
+)
+@click.option(
+    "--template", "template", default=None,
+    help="Per-栏目 prompt template to apply (category name)",
+)
+@click.option(
+    "--ai-copy", "ai_copy", is_flag=True, default=False,
+    help="Also generate AI captions/FAQ/subheads (all need human review)",
+)
 @click.pass_context
-def process(ctx, job_id, title):
+def process(ctx, job_id, title, watermark, template, ai_copy):
     """Stage 2: risk gate, media validation/normalization, dedup gate, assemble,
     lint + ground.
 
     Honours --dry-run: the LLM is NOT called and no external system is mutated
     (the draft is marked not-executed; deterministic local stages incl. media
     still run). Stops at the first gate that parks the job (BLOCKED / DUPLICATE /
-    NEEDS_*)."""
+    NEEDS_*). --watermark/--template/--ai-copy are process-time inputs."""
     c = Ctx(ctx.obj)
     p = pl.Pipeline(c.config, c.store, c.audit, dry_run=c.dry_run)
-    res = p.process(job_id, ts=_now(), title=title)
+    res = p.process(
+        job_id, ts=_now(), title=title,
+        watermark=watermark, template=template, ai_copy=ai_copy,
+    )
     c.emit(
         {
             "job_id": job_id,

@@ -183,15 +183,40 @@ class Api:
 
     # --- Stage 2: process ----------------------------------------------------
 
-    def process(self, job_id: str, title: str = "", dry_run: bool = False) -> dict:
+    def templates(self) -> dict:
+        """List the per-栏目 template categories the operator can apply (Unit 5).
+        Names only — the template bodies never cross the bridge."""
+        try:
+            from .adapters.llm import templates as tmpl
+
+            c = self._ctx()
+            return {"categories": [escape_html(x) for x in tmpl.list_template_categories(c.config)]}
+        except LcpError as e:
+            return _error_dict(e)
+
+    def process(
+        self,
+        job_id: str,
+        title: str = "",
+        dry_run: bool = False,
+        watermark: bool | None = None,
+        template: str | None = None,
+        ai_copy: bool = False,
+    ) -> dict:
         """Mirror `process`: risk + dedup gates -> assemble -> lint + ground.
 
         Honours dry_run (LLM not called). Stops at the first gate that parks the
-        job and reports the resting state."""
+        job and reports the resting state. watermark/template/ai_copy are
+        process-time inputs (1:1 with the CLI flags)."""
         try:
             c = self._ctx()
             p = pl.Pipeline(c.config, c.store, c.audit, dry_run=bool(dry_run))
-            res = p.process(job_id, ts=_now(), title=title)
+            res = p.process(
+                job_id, ts=_now(), title=title,
+                watermark=watermark,
+                template=template or None,
+                ai_copy=bool(ai_copy),
+            )
             return {
                 "job_id": escape_html(job_id),
                 "state": res.final_state.value,
@@ -233,9 +258,20 @@ class Api:
         """Background variant of create_and_crawl (long network task)."""
         return self._run_bg(job_id, lambda: self.create_and_crawl(job_id, url))
 
-    def process_async(self, job_id: str, title: str = "", dry_run: bool = False) -> dict:
+    def process_async(
+        self,
+        job_id: str,
+        title: str = "",
+        dry_run: bool = False,
+        watermark: bool | None = None,
+        template: str | None = None,
+        ai_copy: bool = False,
+    ) -> dict:
         """Background variant of process (long LLM task)."""
-        return self._run_bg(job_id, lambda: self.process(job_id, title, dry_run))
+        return self._run_bg(
+            job_id,
+            lambda: self.process(job_id, title, dry_run, watermark, template, ai_copy),
+        )
 
     def job_status(self, job_id: str) -> dict:
         """Read a background task's status: running | done | error | unknown.
@@ -306,6 +342,35 @@ class Api:
             return sanitized
         except LcpError as e:
             return _error_dict(e)
+
+    def cover_report(self, job_id: str) -> dict:
+        """Cover safe-area advisories + preview/cover paths from the media gate's
+        validation report (Unit 5). Advisory text only — never a hard gate. All
+        strings are escaped; paths are inert text (the GUI shows them, the
+        loopback server does not serve job dirs, so no <img> is embedded)."""
+        try:
+            import json
+
+            c = self._ctx()
+            report_path = c.store.job_dir(job_id) / "processed" / "validation_report.json"
+            if not report_path.exists():
+                return {"job_id": escape_html(job_id), "has_report": False}
+            data = json.loads(report_path.read_text(encoding="utf-8"))
+            adv = data.get("cover_advisories") or {}
+            return {
+                "job_id": escape_html(job_id),
+                "has_report": True,
+                "cover": escape_html(data["cover"]) if data.get("cover") else None,
+                "cover_preview": (
+                    escape_html(data["cover_preview"]) if data.get("cover_preview") else None
+                ),
+                "geometry": [escape_html(g) for g in adv.get("geometry", [])],
+                "aesthetic": [escape_html(a) for a in adv.get("aesthetic", [])],
+            }
+        except (LcpError, OSError, ValueError) as e:
+            if isinstance(e, LcpError):
+                return _error_dict(e)
+            return {"job_id": escape_html(job_id), "has_report": False}
 
     def approve(self, job_id: str, reviewer: str) -> dict:
         """Mirror `approve`: REVIEW_PENDING -> APPROVED. Reviewer MUST be in the

@@ -201,6 +201,9 @@ class Pipeline:
         risk_input: RiskInput | None = None,
         site_index_path: str | Path | None = None,
         has_videos: bool = False,
+        watermark: bool | None = None,
+        template: str | None = None,
+        ai_copy: bool = False,
     ) -> ProcessResult:
         """Stage 2: risk gate -> media validation -> dedup gate -> assemble
         (dry_run aware) -> lint + grounding. Stops at the FIRST gate that parks
@@ -248,6 +251,9 @@ class Pipeline:
                 risk_input=risk_input,
                 site_index_path=site_index_path,
                 has_videos=has_videos,
+                watermark=watermark,
+                template=template,
+                ai_copy=ai_copy,
             )
         except ExternalServiceError:
             # An LLM/network failure mid-process must not leave the job at
@@ -281,6 +287,9 @@ class Pipeline:
         risk_input: RiskInput | None,
         site_index_path: str | Path | None,
         has_videos: bool,
+        watermark: bool | None = None,
+        template: str | None = None,
+        ai_copy: bool = False,
     ) -> ProcessResult:
         """Stage-2 gate sequence (called inside the .processing marker scope).
 
@@ -315,12 +324,18 @@ class Pipeline:
         # before spending tokens). A media quality issue -> NEEDS_REVISION (never
         # BLOCKED). No media -> no-op. Deterministic local I/O, so it runs in
         # dry-run too.
+        # Watermark is a process-time toggle: None -> use the config default;
+        # True/False overrides config.watermark.enabled for THIS run.
+        wm_config = self.config.watermark
+        if watermark is not None:
+            wm_config = wm_config.model_copy(update={"enabled": watermark})
         media_out = media_checker.run_media_gate(
             job_id=job_id,
             store=self.store,
             audit=self.audit,
             ts=ts,
             media_config=self.config.media,
+            watermark=wm_config,
         )
         if media_out.job_state is not None:
             return ProcessResult(
@@ -354,11 +369,40 @@ class Pipeline:
 
         # --- constrained rewrite (dry_run aware: NO API call in dry-run) ---
         # An ExternalServiceError here propagates to `process` -> PROCESS_FAILED.
+        # A 栏目 template (process-time input) is resolved + linted here and
+        # rendered into the DEVELOPER slot (never SYSTEM); unknown category -> no
+        # template (assemble runs as before).
+        from .adapters.llm import templates as tmpl
+
+        resolved_template = tmpl.get_template(self.config, template)
+        template_values = (
+            {"category": template or "", "title": title or ""}
+            if resolved_template
+            else None
+        )
         draft = assemble(
             source_text,
             self.llm_client,
             title=title or None,
+            category=template,
+            template=resolved_template,
+            template_values=template_values,
         )
+
+        # Optional AI structural copy (captions/FAQ/subheads), process-time opt-in.
+        # Dry-run / truncated -> skipped (no silent partial); the pieces are
+        # grounded + freeze-bound downstream like the body.
+        if ai_copy and draft.status is DraftStatus.DRAFTED:
+            from .adapters.llm.copywriter import (
+                apply_copy_to_draft,
+                generate_structural_copy,
+            )
+
+            copy = generate_structural_copy(source_text, self.llm_client)
+            if copy.executed and not copy.needs_revision:
+                draft = apply_copy_to_draft(draft, copy)
+                notes.append("ai-copy: structural pieces generated (needs review)")
+
         # Persist the assembled draft so review-packet freezes THIS exact draft
         # (no re-assembly). In dry-run the draft is a NOT_EXECUTED stub.
         save_draft(self.store, job_id, draft)

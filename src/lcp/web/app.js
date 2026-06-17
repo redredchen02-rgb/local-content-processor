@@ -650,6 +650,28 @@ function reviewerSelect(reviewers) {
   });
   return sel;
 }
+function templateSelect() {
+  // A <select> of 栏目 templates. Default empty option = no template (the
+  // assemble path runs exactly as before). Populated async from a.templates();
+  // names arrive pre-escaped from the bridge and are assigned via textContent.
+  const sel = el("select");
+  sel.className = "template-pick";
+  const none = el("option", "（不套用模板）");
+  none.value = "";
+  sel.appendChild(none);
+  const a = api();
+  if (a && a.templates) {
+    Promise.resolve(a.templates()).then(function (res) {
+      if (!res || isError(res) || !res.categories) return;
+      res.categories.forEach(function (name) {
+        const opt = el("option", name);
+        opt.value = name;
+        sel.appendChild(opt);
+      });
+    });
+  }
+  return sel;
+}
 function reviewersEmpty(reviewers) {
   return !reviewers || isError(reviewers) || !(reviewers.reviewers && reviewers.reviewers.length);
 }
@@ -736,16 +758,30 @@ function buildActionRow(act, reviewers, reason) {
     const title = textInput("标题（可留空）");
     const dry = checkbox();
     const dryL = el("label"); dryL.appendChild(dry); dryL.appendChild(el("span", " 安全预览"));
+    // process-time inputs (Unit 5): watermark toggle, 栏目 template, AI 文案
+    const wm = checkbox();
+    const wmL = el("label"); wmL.appendChild(wm); wmL.appendChild(el("span", " 打官方水印"));
+    const tmpl = templateSelect();
+    const ai = checkbox();
+    const aiL = el("label"); aiL.appendChild(ai); aiL.appendChild(el("span", " AI 图说/FAQ/小标题（待审）"));
     const btn = button(act.label, "btn-primary");
     btn.addEventListener("click", async function () {
       if (!a || pollers[currentJobId]) return;
       setBusy(btn, true);
-      const kick = await a.process_async(currentJobId, title.value, dry.checked);
+      // watermark: null = follow config; checkbox makes it an explicit true/false
+      const kick = await a.process_async(
+        currentJobId, title.value, dry.checked, wm.checked, tmpl.value || null, ai.checked
+      );
       setBusy(btn, false);
       if (isError(kick)) { renderError($("job-status"), kick); return; }
       enterProgress(currentJobId, dry.checked ? "process_dry" : "process");
     });
-    row.appendChild(title); row.appendChild(dryL); row.appendChild(btn);
+    row.appendChild(title);
+    row.appendChild(labeled("栏目模板：", tmpl));
+    row.appendChild(wmL);
+    row.appendChild(aiL);
+    row.appendChild(dryL);
+    row.appendChild(btn);
     return row;
   }
 
@@ -918,6 +954,26 @@ async function renderPacket(jobId) {
     const chip = el("span", "frozen hash " + res.body_sha256); chip.className = "hash-chip"; card.appendChild(chip);
   }
   view.appendChild(card);
+  await renderCoverReport(jobId, view);
+}
+
+async function renderCoverReport(jobId, view) {
+  const a = api();
+  if (!a || !a.cover_report) return;
+  const res = await a.cover_report(jobId);
+  if (isError(res) || !res || !res.has_report || !res.cover) return;
+  const box = el("div"); box.className = "cover-report";
+  box.appendChild(el("h3", "封面检查（建议性 · 不拦截）"));
+  packetField(box, "封面", res.cover);
+  if (res.cover_preview) packetField(box, "安全区预览图", res.cover_preview);
+  const geo = res.geometry || [], aes = res.aesthetic || [];
+  if (!geo.length && !aes.length) {
+    box.appendChild(el("p", "没有封面警告。"));
+  } else {
+    if (geo.length) { box.appendChild(el("strong", "几何警告：")); geo.forEach(function (g) { box.appendChild(el("div", "• " + g)); }); }
+    if (aes.length) { box.appendChild(el("strong", "美学建议：")); aes.forEach(function (s) { box.appendChild(el("div", "• " + s)); }); }
+  }
+  view.appendChild(box);
 }
 
 function packetField(container, label, value) {
