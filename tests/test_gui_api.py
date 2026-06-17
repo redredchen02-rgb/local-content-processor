@@ -497,6 +497,92 @@ def test_index_html_has_strict_csp():
     assert "onerror" not in html.replace("onerror=&quot;", "")  # only literal text ok
 
 
+# --- Unit 3: dashboard_stats + saved_sources bridge methods -----------------
+
+
+def _emit_gate(base, *, seq, gate, job_id, status, stage, review_reason=None,
+               ts="2026-06-17T00:00:00Z"):
+    from lcp.adapters.storage.audit_log import AuditLog
+
+    extra = {"status": status}
+    if review_reason is not None:
+        extra["review_reason"] = review_reason
+    AuditLog(Path(base) / "audit.jsonl").append(
+        ts=ts, stage=stage, event=gate, job_id=job_id, actor="machine", extra=extra
+    )
+
+
+def test_dashboard_stats_empty_state(tmp_path):
+    api = _api(tmp_path, str(tmp_path))
+    res = api.dashboard_stats()
+    assert "error" not in res
+    assert res["has_jobs"] is False
+    assert res["gates"] == []
+    assert res["review_reasons"] == {}
+    assert res["gate_intervals"] == []
+    assert res["daily_jobs"] == {}
+
+
+def test_dashboard_stats_with_jobs_and_audit(tmp_path):
+    base = str(tmp_path)
+    _processed_job_with_draft(base, "j1")  # creates a persisted job + gate events
+    # add explicit interceptions so rates are non-trivial
+    _emit_gate(base, seq=0, gate="RISK_GATE", job_id="j2", status="blocked",
+               stage="risk", review_reason="risk")
+    api = _api(tmp_path, base)
+    res = api.dashboard_stats()
+    assert "error" not in res
+    assert res["has_jobs"] is True
+    assert res["summary"]["total"] >= 1
+    gates = {g["gate"]: g for g in res["gates"]}
+    assert "RISK_GATE" in gates
+    # j2 was intercepted at risk
+    assert gates["RISK_GATE"]["intercepted"] >= 1
+    assert gates["RISK_GATE"]["rate"] is not None
+    assert res["review_reasons"].get("risk", 0) >= 1
+
+
+def test_saved_sources_crud_and_escaping(tmp_path):
+    api = _api(tmp_path, str(tmp_path))
+    # empty first
+    assert api.saved_sources() == {"sources": [], "count": 0}
+    # add with an XSS-shaped label and URL
+    added = api.add_saved_source('<script>alert(1)</script>', "https://e.com/<b>")
+    assert added["saved"] is True
+    assert "<script>" not in added["label"]  # escaped
+    assert "&lt;script&gt;" in added["label"]
+    assert "<b>" not in added["source_ref"]  # inert (escaped)
+
+    listed = api.saved_sources()
+    assert listed["count"] == 1
+    row = listed["sources"][0]
+    assert "&lt;script&gt;" in row["label"]
+    assert row["source_ref"].startswith("https://e.com/")
+    assert "<b>" not in row["source_ref"]
+
+    # delete
+    res = api.delete_saved_source(row["id"])
+    assert res["removed"] is True
+    assert api.saved_sources()["count"] == 0
+
+
+def test_add_saved_source_rejects_empty(tmp_path):
+    api = _api(tmp_path, str(tmp_path))
+    res = api.add_saved_source("label", "   ")
+    assert "error" in res
+
+
+def test_saved_source_plaintext_never_in_audit(tmp_path):
+    base = str(tmp_path)
+    api = _api(tmp_path, base)
+    api.add_saved_source("note", "https://leak.example/secret")
+    api.delete_saved_source("nope")
+    audit = Path(base) / "audit.jsonl"
+    if audit.exists():
+        text = audit.read_text(encoding="utf-8")
+        assert "leak.example" not in text
+
+
 def test_module_imports_without_pywebview_window():
     """Importing gui + constructing Api must work with no window/server."""
     import lcp.gui as gui

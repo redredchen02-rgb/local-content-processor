@@ -174,3 +174,26 @@ def aggregate_audit(events: list[dict[str, object]]) -> AuditSummary:
         gate_gaps=gaps,
         daily_jobs={d: len(j) for d, j in sorted(daily.items())},
     )
+
+
+def summarize_gaps(gaps: list[GateGap]) -> list[dict[str, object]]:
+    """Roll up per-job gate gaps into per-transition stats, dropping job_id.
+
+    Returns one row per ``from_stage->to_stage`` transition with count, average
+    and max seconds. Seconds INCLUDE operator wait time — the caller must label
+    them as such and must NOT present this as compute cost. Sorted by avg desc
+    so the slowest transition reads first (display only; NOT an optimization
+    hint, per plan)."""
+    buckets: dict[tuple[str, str], list[float]] = {}
+    for g in gaps:
+        buckets.setdefault((g.from_stage, g.to_stage), []).append(g.seconds)
+    # Compute typed rows first (avg as float), sort by avg desc, then project.
+    computed = [
+        (f"{frm}->{to}", len(secs), sum(secs) / len(secs), max(secs))
+        for (frm, to), secs in buckets.items()
+    ]
+    computed.sort(key=lambda t: t[2], reverse=True)
+    return [
+        {"transition": tr, "count": n, "avg_seconds": avg, "max_seconds": mx}
+        for tr, n, avg, mx in computed
+    ]

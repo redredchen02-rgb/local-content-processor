@@ -135,6 +135,25 @@ def test_unknown_event_and_missing_fields_are_skipped():
     assert by_gate[EVENT_RISK_GATE].reached == 1
 
 
+def test_summarize_gaps_rolls_up_per_transition_dropping_job_id():
+    from lcp.adapters.storage.audit_aggregate import GateGap, summarize_gaps
+
+    gaps = [
+        GateGap("j1", "risk", "lint", 10.0),
+        GateGap("j2", "risk", "lint", 30.0),
+        GateGap("j3", "crawl", "risk", 100.0),
+    ]
+    rows = summarize_gaps(gaps)
+    # sorted by avg desc: crawl->risk (100) before risk->lint (20)
+    assert rows[0]["transition"] == "crawl->risk"
+    assert rows[1]["transition"] == "risk->lint"
+    assert rows[1]["count"] == 2
+    assert rows[1]["avg_seconds"] == 20.0
+    assert rows[1]["max_seconds"] == 30.0
+    # job_id must not leak into the rolled-up rows
+    assert all("job_id" not in r for r in rows)
+
+
 def test_iter_events_skips_torn_trailing_line(tmp_path):
     log = AuditLog(tmp_path / "audit.jsonl")
     log.append(ts="2026-06-16T00:00:00Z", stage="risk", event=EVENT_RISK_GATE,
