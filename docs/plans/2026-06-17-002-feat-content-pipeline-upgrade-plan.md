@@ -1,7 +1,7 @@
 ---
 title: "feat: Content Pipeline Upgrade — watermark / cover / AI copy templates / ingest"
 type: feat
-status: batch-1-complete
+status: all-units-implemented
 date: 2026-06-17
 origin: docs/brainstorms/2026-06-17-content-pipeline-upgrade-requirements.md
 ---
@@ -373,7 +373,7 @@ graph TB
 
 **Verification:** A decision table (engine, per-bucket publishable-rate, residual, latency) exists; the team can say BUILD (which engine) or CUT with evidence.
 
-- [ ] **Unit 7: Segregation-of-duties attestation plumbing**
+- [x] **Unit 7: Segregation-of-duties attestation plumbing**
 
 **Goal:** Net-new submitter identity + independent-reviewer de-watermark attestation + verifiable evidence + audit + honest disclosure.
 
@@ -402,7 +402,7 @@ graph TB
 
 **Verification:** De-watermark cannot run without an independent, evidenced, audited attestation; disclosure text is verbatim and honest.
 
-- [ ] **Unit 8: De-watermark engine integration (isolated)**
+- [x] **Unit 8: De-watermark engine integration (isolated)**
 
 **Goal:** Run the spike-chosen engine in an isolated subprocess, gated by attestation, with provenance, EXIF strip, idempotency, dry-run, and fail-closed behavior.
 
@@ -431,7 +431,7 @@ graph TB
 
 **Verification:** Only attested assets are de-watermarked, in isolation, with provenance + EXIF-stripped output; failures fail closed; dry-run inert.
 
-- [ ] **Unit 9: De-watermark GUI (attestation flow + inpaint interaction states)**
+- [x] **Unit 9: De-watermark GUI (attestation flow + inpaint interaction states)**
 
 **Goal:** Operator surface for the attestation flow and the slow inpaint op, with correct interaction states and a raised poll cap.
 
