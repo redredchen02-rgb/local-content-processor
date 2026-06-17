@@ -345,6 +345,14 @@ function jobRow(job) {
   const lx = lexState(job.state);
   const row = el("div");
   row.className = "job-row lane--" + (lx.tone || "neutral");
+  // whole row is the affordance (P0-7): clickable + keyboard-focusable. The
+  // visible "打开 ›" cue stays, so colour/elevation is never the only signal.
+  row.setAttribute("role", "button");
+  row.setAttribute("tabindex", "0");
+  row.addEventListener("click", function () { openJob(job.job_id); });
+  row.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openJob(job.job_id); }
+  });
   const id = el("span", job.job_id); id.className = "job-id";
   row.appendChild(id);
   row.appendChild(badgeFor(job.state));
@@ -357,7 +365,7 @@ function jobRow(job) {
   row.appendChild(why);
   if (job.updated_at) { const w = el("span", job.updated_at); w.className = "job-when"; row.appendChild(w); }
   const open = button("打开 ›", "btn-secondary");
-  open.addEventListener("click", function () { openJob(job.job_id); });
+  open.addEventListener("click", function (e) { e.stopPropagation(); openJob(job.job_id); });
   row.appendChild(open);
   return row;
 }
@@ -418,13 +426,15 @@ async function refreshInbox() {
   }
 
   const sumRes = await a.summary();
+  const countsEl = $("inbox-counts");
+  clear(countsEl);
   if (!isError(sumRes)) {
     const counts = sumRes.summary || {};
-    const parts = Object.keys(counts).filter(function (k) { return k !== "total"; }).sort()
-      .map(function (k) { return lexState(k).title + " " + counts[k]; });
-    setText($("inbox-counts"), parts.join(" · "));
-  } else {
-    setText($("inbox-counts"), "");
+    Object.keys(counts).filter(function (k) { return k !== "total"; }).sort().forEach(function (k) {
+      const chip = el("span", lexState(k).title + " " + counts[k]);
+      chip.className = "count-chip";
+      countsEl.appendChild(chip);
+    });
   }
 }
 
