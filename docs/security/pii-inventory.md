@@ -28,7 +28,8 @@ attacker-shapeable text) can come to rest, and how each is governed in the MVP.
 | Raw bundle | `data/jobs/<id>/raw/` | **Yes** (scraped html/text/media, may embed names, phones, URLs) | Plaintext 0600; best-effort deletion |
 | Processed bundle | `data/jobs/<id>/processed/` | **Yes** (LLM draft + reports) | Plaintext 0600; best-effort deletion |
 | Review packet | `data/jobs/<id>/review/` | **Yes** (sanitized draft, cover, title, lazy source link text) | Plaintext 0600; best-effort deletion; output sanitized (R41) |
-| SQLite index | `data/lcp.db` | **No** (PII-free by construction) | Only allowed columns persisted (below) |
+| SQLite `jobs` index | `data/lcp.db` (`jobs` table) | **No** (PII-free by construction) | Only allowed columns persisted (below) |
+| SQLite `saved_sources` | `data/lcp.db` (`saved_sources` table) | **Yes** — DELIBERATE EXCEPTION (plaintext `source_ref` URL/path + free-text `label`) | Plaintext by design so a source can be re-submitted (a hash can't be re-crawled); physically separate table/module (`source_store.py`); best-effort deletion; erasure path below; CRUD never writes plaintext to audit |
 | Manifest | `data/jobs/<id>/manifest.json` | **No** (kept PII-free; per-asset status + hashes only) | Atomic commit; no scraped title/body/PII-bearing URL |
 | Audit log | `data/jobs/<id>/audit.jsonl` | **No** (PII-free; hashes + codes only) | Append-only + hash chain; `append()` rejects PII keys; deleted with job dir |
 | Logs | stdout / log handlers | **No** (secrets masked) | `SecretRedactingFilter` (Unit 2); no raw payload logged |
@@ -47,6 +48,13 @@ code, not a human sentence).
 
 The same prohibition applies to `manifest.json` and `audit.jsonl`.
 
+**Exception — `saved_sources` table.** This prohibition governs the `jobs`
+table. The separate `saved_sources` table (input-reuse feature) deliberately
+stores plaintext `source_ref` and free-text `label` (see the PII sinks row).
+It is the only plaintext-identifier store in `lcp.db`; it is isolated in its own
+module (`source_store.py`) and its own erasure path so the `jobs` PII-free
+invariant is unaffected.
+
 ## Audit log hashing rule
 
 - Hash chain: `line_hash = sha256(prev_hash + canonical(line))`. **Tamper-
@@ -61,6 +69,19 @@ The same prohibition applies to `manifest.json` and `audit.jsonl`.
 Delete job → `rmtree(data/jobs/<id>/)` (best-effort) → delete SQLite row →
 append `ERASURE` audit event (`method=best_effort_unlink`,
 `cryptographic_erasure=false`). The audit chain after deletion still verifies.
+
+**`saved_sources` erasure (plaintext PII-exception table).** `saved_sources`
+rows are NOT job-linked, so job deletion does not reach them; they have their
+own entry points in `source_store.py`:
+- **Per-URL / per-subject:** `SourceStore.delete_by_source_ref(source_ref)`
+  removes every saved row carrying that plaintext source.
+- **Single entry:** `SourceStore.delete_source(id)` (the GUI's
+  `delete_saved_source` action).
+- **Full wipe / reset:** `SourceStore.delete_all()`.
+All are **best-effort** (SQLite `DELETE` does not zero freed WAL/freelist
+pages — same honesty boundary as job blobs; protection relies on OS full-disk
+encryption + 0600). Erasure auditing here records the opaque id only, never the
+plaintext `source_ref`/`label`.
 
 ## SSRF residual risk (honest gap, R40)
 
