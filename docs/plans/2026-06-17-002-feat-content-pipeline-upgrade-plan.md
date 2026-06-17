@@ -26,7 +26,7 @@ A non-technical operator runs a 吃瓜/爆料 content site. `lcp` already runs `
 - **UR5** Keep R16 constrained-rewrite; narrative bound to source; machine output `needs_human_review`.
 - **UR6/UR8** Per-栏目 prompt-template management (config-overrides-first); templates are a **checked object** — injection/jailbreak lint, cannot rewrite system constraints.
 - **UR7** AI generates low-risk structural pieces (captions/FAQ/subheads/title candidates) — **net-new generation** requiring a grounding contract + freeze-binding extension.
-- **UR9/UR10** Cover safe-area advisory check + official watermark; reject text / 3rd-party watermark / links / black-white borders (geometry auto; aesthetic soft; OCR-class checks advisory only).
+- **UR9/UR10** Cover safe-area advisory check + official watermark. **Amendment:** UR10's hard-gate (`needs_revision`) on cover text / 3rd-party watermark / links is DEMOTED to advisory + human preview (not feasibly automatable on Pillow-only); geometry + black-white-border stay auto-warn; aesthetic soft.
 - **UR11/UR12** Keep Scrapy public-source + local ingest only (no JS/login-wall, no anti-bot bypass); improve mixed-folder material-pack ingest + completeness check.
 - **UR13–UR16** All new actions audited (PII-free); idempotent + dry-run-safe; **no auto-publish**; GUI/CLI 1:1 with the operator surface.
 
@@ -134,12 +134,13 @@ graph TB
 
 ```mermaid
 graph TB
+  U0[U0 measurement baseline + bars] --> U4
   U1[U1 watermark-ADD primitive] --> U2[U2 cover watermark + safe-area]
-  U1 --> U5[U5 batch-1 GUI/CLI]
+  U1 --> U5b[U5b cover GUI]
+  U2 --> U5b
   U3[U3 template mgmt + linter] --> U4[U4 AI captions + grounding + freeze]
-  U2 --> U5
-  U3 --> U5
-  U4 --> U5
+  U3 --> U5a[U5a copy GUI]
+  U4 --> U5a
   U6[U6 de-watermark SPIKE go/no-go] --> U7[U7 SoD attestation plumbing]
   U6 --> U8[U8 de-watermark integration]
   U7 --> U8
@@ -148,6 +149,26 @@ graph TB
 ```
 
 ### Phase / Batch 1 — Copy + Cover (low-risk, highest daily value)
+
+- [ ] **Unit 0: Measurement baseline + acceptance bars** *(carries the origin's measurable success criteria into testable gates)*
+
+**Goal:** Make the success criteria measurable BEFORE shipping AI copy: extract a per-article review-touch / wall-clock baseline from `lcp.db`, and define the R4/R5 defamation 漏检率 labeled-sample bar.
+
+**Requirements:** Success criteria (review-touch DROP; R4/R5 漏检率 bar)
+
+**Dependencies:** None (run first in Batch 1)
+
+**Files:**
+- Create: `spikes/review_burden/baseline.py` (extract per-stage timing/touch counts from `lcp.db`), `spikes/defamation_eval/run_eval.py` (labeled-sample R4/R5 miss-rate harness, mirrors `spikes/detection_accuracy/`)
+- Test: `tests/spikes/test_baseline_harness.py`
+
+**Approach:**
+- Pull the pre-upgrade per-article review-touch / time baseline from `lcp.db`. **Caveat (product-lens):** if `lcp.db` lacks the needed granularity, this unit FIRST scopes the minimal timing/touch instrumentation (a small schema/logging add) — flag that as the real first task, not an assumption. Define the acceptance bar: post-upgrade net review-touch must NOT rise and should drop on the copy path; gate Batch-1 sign-off on it. Separately build the R4/R5 漏检率 labeled set + miss-rate harness — the defamation acceptance bar the origin requires before scaling copy throughput.
+
+**Test scenarios:**
+- `Test expectation: harness-only` — assert the baseline extractor reads `lcp.db` and emits per-stage numbers; assert the defamation harness scores a labeled set and emits a miss-rate. No production behavior.
+
+**Verification:** A measurable review-touch baseline + target exist and gate Batch-1 sign-off; the R4/R5 miss-rate bar exists before AI-copy throughput ships.
 
 - [ ] **Unit 1: Watermark-ADD Pillow primitive**
 
@@ -164,7 +185,8 @@ graph TB
 
 **Approach:**
 - RGBA `alpha_composite` for logo; `ImageDraw.text(anchor=…)` + truetype for text; **`convert("RGB")` before JPEG save**; run after `exif_transpose`. Two asset sizes (body 800px / cover 1300×640). Honor existing decompression-bomb guard; never reintroduce `MAX_IMAGE_PIXELS=None`.
-- Brand-mark only — does not alter source provenance fields; dry-run does not write watermarked output.
+- **EXIF/GPS strip is a standing invariant** on every output body image + cover (don't pass `exif=` on save; verify no GPS IFD) — guaranteed in Batch 1, independent of the cuttable de-watermark path.
+- Brand-mark only — does not alter source provenance fields; idempotent; dry-run writes no watermarked output.
 
 **Patterns to follow:** `normalizer.normalize_image` pure-ish transform + IO separation; `MediaConfig` Pydantic shape.
 
@@ -175,6 +197,7 @@ graph TB
 - Edge case: EXIF-rotated source → watermark lands correctly after `exif_transpose`.
 - Edge case: watermark larger than image / zero margin → clamped, no crash.
 - Error path: missing/corrupt watermark asset → typed error, gate marks asset, no silent skip.
+- Edge case (PII): output body image + cover have no GPS/EXIF IFD (assert stripped).
 - Integration: dry-run → no watermarked file written.
 
 **Verification:** Body + cover outputs carry the official mark at configured position; JPEGs are valid RGB; dry-run produces none.
@@ -193,8 +216,9 @@ graph TB
 - Test: `tests/media/test_cover_checks.py`, `tests/core/test_asset_rules_safearea.py`
 
 **Approach:**
-- Safe box `(130,64,1170,576)`; subject-rect-vs-safe-box is arithmetic from compose placement → **auto-warn**. Border/letterbox via 8px strip `ImageStat` (mean≤24/std≤8) → **auto-warn**. Top-heavy (`FIND_EDGES` ratio>1.6) + busyness (entropy/edge-density) → **soft suggestion, never block**. Text/3rd-party-watermark/links in cover → **advisory only** (not feasibly automatable on Pillow-only) + human preview. Draw the safe-area box on the preview image.
-- Thresholds are config-overridable starting points (calibrate later).
+- **Severity is explicit (reconciles UR9/UR10):** safe-area geometry + black/white-border → **auto-warn**; top-heavy/busyness → **soft suggestion, never block**; cover text / 3rd-party-watermark / links → **advisory only** (UR10 hard-gate demoted — not feasibly automatable on Pillow-only) + human preview. None force `needs_revision` by default; the operator decides from the preview.
+- Safe box `(130,64,1170,576)`. **Caveat (make_cover geometry):** `make_cover` is fed normalized 800px file PATHS and `ImageOps.fit`-center-crops each (`centering=(0.5,0.5)`), **discarding the crop offset** — so subject-position-after-crop is NOT recoverable as pure arithmetic. The safe-area check is therefore **tile-rect-level** (where each tile sits on the canvas), not subject-level, unless `make_cover` is extended to retain the fit transform. Border via 8px strip `ImageStat` (mean≤24/std≤8, stddev not extrema). Draw the safe-area box on a **transient preview overlay — never written to `cover.jpg`** (would collide with the frozen `cover_sha256`).
+- Thresholds are config-overridable starting points (calibrate later). Idempotent + dry-run-safe (advisory measurement writes no media).
 
 **Patterns to follow:** pure decisions in `core/rules/asset_rules.py`, measurements in adapter; advisory outcomes flow like existing media-gate notes.
 
@@ -218,11 +242,11 @@ graph TB
 
 **Files:**
 - Create: `src/lcp/adapters/llm/templates.py` (load per-栏目 templates from config, `str.format_map` allowlist render), `src/lcp/core/rules/template_lint.py` (pure linter)
-- Modify: `src/lcp/adapters/llm/assembler.py` (layered SYSTEM/DEVELOPER/USER; render template into DEVELOPER task slot, never SYSTEM), `src/lcp/core/config.py` (`templates:` block per category)
-- Test: `tests/llm/test_templates.py`, `tests/core/test_template_lint.py`
+- Modify: `src/lcp/adapters/llm/assembler.py` (render template OUTSIDE the SYSTEM constant — into a delimited USER sub-block by default; datamark slot VALUES), `src/lcp/adapters/llm/client.py` (ONLY if a second developer/system-tier message is chosen over the USER-sub-block — `chat` is system+user today), `src/lcp/core/config.py` (`templates:` block per category)
+- Test: `tests/llm/test_templates.py`, `tests/rules/test_template_lint.py`
 
 **Approach:**
-- Allowlisted named slots only (`{title}`, `{summary}`, …); reject unknown placeholders / field names containing `.`/`[`/`!` at save. **No Jinja2.** Hardcoded SYSTEM keeps zero-capability + grounding + anti-injection; template cannot reach it.
+- Allowlisted named slots only (`{title}`, `{summary}`, …); reject unknown placeholders / field names containing `.`/`[`/`!` at save. **No Jinja2.** Hardcoded SYSTEM keeps zero-capability + grounding + anti-injection; template cannot reach it. **The allowlist bounds slot KEYS, not VALUES** — values come from scraped source, so a value like `ignore previous instructions` in `{title}` must be datamarked/escaped like USER source; lint guards the template at save/import, datamarking guards runtime values.
 - Linter (reuse `lint_rules.py` injection features): hard-reject unknown placeholders, datamark tokens, role markers, code fences, zero-width/bidi/homoglyph (NFKC), length>~4KB; warn on injection phrases; **run on save and on import** of shared templates.
 
 **Execution note:** Add a failing linter test for a malicious template (e.g., one embedding a datamark token / "ignore previous") before wiring render.
@@ -236,8 +260,9 @@ graph TB
 - Error path: zero-width / bidi / homoglyph after NFKC → reject; >4KB → reject.
 - Error path: template containing "ignore previous instructions" → warn (saveable, flagged).
 - Integration: rendered prompt never places template text in the SYSTEM message (assert message roles).
+- Error path (slot-value injection): a source field containing `ignore previous instructions` rendered into `{title}` does not alter model behavior (value datamarked).
 
-**Verification:** Operators select/edit per-栏目 templates; malicious templates can't reach SYSTEM or rewrite constraints; lint runs on save + import.
+**Verification:** Operators select/edit per-栏目 templates; malicious templates can't reach SYSTEM or rewrite constraints; malicious slot VALUES are datamarked; lint runs on save + import.
 
 - [ ] **Unit 4: AI captions / FAQ / subheads + grounding contract + freeze-binding extension**
 
@@ -248,14 +273,14 @@ graph TB
 **Dependencies:** Unit 3
 
 **Files:**
-- Create: `src/lcp/adapters/llm/copywriter.py` (generate captions/FAQ/subheads/title candidates; `needs_human_review=True`; dry-run safe)
-- Modify: `src/lcp/core/rules/grounding.py` (`_split_claims` extend to caption/subhead claims, or add a dedicated caption-grounding check), `src/lcp/adapters/publisher/signoff.py` (extend frozen `body_sha256` to cover captions/image-sections), `src/lcp/core/draft.py` (populate `MediaSection.caption`), `src/lcp/adapters/llm/assembler.py` (invoke after assemble, before lint)
-- Test: `tests/llm/test_copywriter.py`, `tests/core/test_grounding_captions.py`, `tests/test_freeze_binding.py`
+- Create: `src/lcp/adapters/llm/copywriter.py` (generate captions/subheads/title candidates + FAQ; `needs_human_review=True`; dry-run safe)
+- Modify: `src/lcp/core/rules/grounding.py` (`_split_claims` extend to caption/subhead claims; fix `is_grounded("")`=True so empty captions don't auto-pass), `src/lcp/adapters/publisher/review_packet.py` (extend `_draft_body_text()` to include captions/image_sections — the REAL freeze source, not just signoff.py), `src/lcp/core/draft.py` (populate `MediaSection.caption`), `src/lcp/adapters/llm/assembler.py` (invoke after assemble, before lint)
+- Test: `tests/llm/test_copywriter.py`, `tests/rules/test_grounding_captions.py`, `tests/publisher/test_freeze_binding.py` (+ update existing golden-hash assertions in test_signoff/test_review_packet/test_pipeline_batch/test_cli_skeleton/test_gui_api that shift when captions fold into the hash)
 
 **Approach:**
-- Captions/subheads are **new content** (not generated today) → either bind to source sentences (grounding) or mark clearly as non-grounded operator-editable hints requiring human confirmation; default = grounded + `needs_human_review`. Honor SOP 第七章 de-dup (no mechanical reuse of subheads/FAQ).
-- **Freeze binding:** include captions/image-section text in `body_sha256` so `approve()` refuses a post-freeze caption edit. This closes a silent integrity hole.
-- Net effect must be a per-article review-touch DROP (origin success criterion) — keep generation scope tight; if review load rises, narrow it.
+- FAQ generation **reuses the existing grounded path** (`_split_claims` already covers `faq[*].answer`, though the assembler emits `faq=[]` today); the net-new grounding/freeze work is for **captions/subheads/image_sections**. Captions binding to a source sentence are grounded; image-summary captions with no source span are operator-hints requiring human confirmation — not auto-pass (fix `is_grounded("")`=True), not hard-block. Honor SOP 第七章 de-dup.
+- **Freeze binding:** extend `review_packet.py` `_draft_body_text()` so captions/image_sections feed `body_sha256` and `approve()` refuses a post-freeze caption edit; update the golden-hash assertions in the 5 freeze-touching test files (low risk: no production data yet).
+- Net effect must be a per-article review-touch DROP (origin success criterion) — if always-flagged captions raise review load, narrow generation scope. Idempotent + dry-run-safe (dry-run calls no LLM).
 
 **Execution note:** Start with a failing test asserting a post-freeze caption edit is rejected by `approve()`.
 
@@ -268,34 +293,61 @@ graph TB
 - Integration (grounding): a caption not supported by source claims → routed to human review, not silently passed.
 - Integration (freeze): edit a caption after `review-packet` freeze → `approve()` body-hash mismatch refusal.
 - Integration (de-dup): two articles' subheads/FAQ are not mechanically identical.
+- Edge case (empty caption): an empty/whitespace generated caption is flagged for human review, not auto-grounded (fix `is_grounded("")`=True).
 
 **Verification:** Captions/FAQ/subheads exist + marked for review + grounded/flagged; post-freeze edits caught; dry-run inert.
 
-- [ ] **Unit 5: Batch-1 GUI/CLI surface**
+- [ ] **Unit 5a: Copy/template GUI+CLI surface** *(splits old Unit 5 — copy ships independent of cover, per origin "copy saves the most time")*
 
-**Goal:** Expose watermark toggle, 栏目 template picker, and cover preview + safe-area warnings via the existing operator surface, 1:1 CLI/GUI.
+**Goal:** Expose the 栏目 template picker + AI-copy controls via the operator surface, 1:1 CLI/GUI.
 
 **Requirements:** UR16
 
-**Dependencies:** Units 1–4
+**Dependencies:** Units 3, 4 (NOT the cover track)
 
 **Files:**
-- Modify: `src/lcp/cli.py` (flags: `--watermark/--no-watermark`, `--template <栏目>`), `src/lcp/gui.py` (`Api.templates()`, watermark/template params on process), `src/lcp/web/app.js` (`buildActionRow` branches, template `<select>` via `reviewerSelect` pattern, cover preview + safe-area note render), `src/lcp/web/lex.js` (`STATE_ACTIONS` entries + labels), `src/lcp/web/app.css`, `src/lcp/web/index.html` (cover-preview slot in `view-job`)
-- Test: `tests/test_cli_watermark_template.py`, `tests/test_gui_batch1.py`
+- Modify: `src/lcp/cli.py` (`--template <栏目>` as a Click `@click.option` on process, mirroring `--attest/--no-attest` — NOT raw argparse), `src/lcp/gui.py` (`Api.templates()` → `{templates:[...]}`; `template` param on process), `src/lcp/pipeline.py` + `src/lcp/adapters/llm/assembler.py` (thread `template` through `Api.process → Pipeline.stage2 → assemble` — a multi-layer signature change), `src/lcp/web/app.js` (template `<select>` via `reviewerSelect`), `src/lcp/web/lex.js`, `src/lcp/web/index.html`, `src/lcp/web/app.css`
+- Test: `tests/test_cli_template.py`, `tests/test_gui_template.py`
 
 **Approach:**
-- Watermark on/off + template pick are **process-time inputs** (chosen before the LLM/media run) with optional Setup defaults; surfaced in the create/process panel. Cover preview + safe-area advisory render on the job packet card. Checkbox→bool and dropdown←list mirror the existing `--attest`/`reviewerSelect` wiring. Strict CSP; all text via `textContent`.
+- Template pick is a **process-time input** with optional Setup default (visible inherited-vs-overridden); dropdown←list mirrors `reviewerSelect`. CLI flag via Click `@click.option`; tests call the `main(argv)` shim. Strict CSP; text via `textContent`.
 
-**Patterns to follow:** `app.js` `renderActions`/`buildActionRow`/`reviewerSelect`; `gui.py` `Api` method shape; CLI `main(argv)` test style.
+**Patterns to follow:** `app.js` `reviewerSelect`; `cli.py` `--attest` option; `gui.py` `Api` shape.
 
 **Test scenarios:**
-- Happy path (CLI): `process --template 网红黑料 --watermark` applies template + watermark; `--no-watermark` skips.
+- Happy path (CLI): `process --template 网红黑料` applies the template; no flag → default/none.
 - Happy path (GUI): `Api.templates()` populates the dropdown; selecting one drives generation.
 - Edge case: no templates configured → dropdown empty-state, not a dead end.
-- Integration (parity): GUI process with watermark+template reaches the same PROCESSED state as the CLI (reuse `_processed_job_with_draft`).
-- Integration: cover preview renders with safe-area box + advisory text via `textContent`.
+- Integration (parity): GUI process with a template reaches the same PROCESSED state as CLI (reuse `_processed_job_with_draft`).
 
-**Verification:** Operator can pick template + toggle watermark + see cover preview/warnings in GUI and CLI identically.
+**Verification:** Operator picks a 栏目 template in GUI and CLI identically; the AI-copy path ships without waiting on cover.
+
+- [ ] **Unit 5b: Cover/watermark GUI+CLI surface**
+
+**Goal:** Expose the watermark toggle + cover preview + safe-area advisories via the operator surface.
+
+**Requirements:** UR16
+
+**Dependencies:** Units 1, 2
+
+**Files:**
+- Modify: `src/lcp/cli.py` (`--watermark/--no-watermark` Click option, mirroring `--attest`), `src/lcp/gui.py` (watermark param on process), `src/lcp/pipeline.py` + `src/lcp/adapters/processor/media_checker.py` (thread `watermark` through `Api.process → Pipeline.stage2 → run_media_gate`), `src/lcp/web/app.js` (cover-preview slot + safe-area note via `textContent`), `src/lcp/web/index.html` (cover-preview slot in `view-job`), `src/lcp/web/app.css`
+- Test: `tests/test_cli_watermark.py`, `tests/test_gui_cover.py`
+
+**Approach:**
+- Watermark toggle is a **process-time input**, **default-on** (so the brand mark is not silently dropped), with optional Setup default shown inherited-vs-overridden; same precedence in CLI for exact parity. Cover preview renders on the packet card with a **transient** safe-area overlay (never written to `cover.jpg`).
+- **Cover-preview states:** no-cover-possible (too few images) → explanatory note; compose/watermark error → error copy in the job-status aria-live region (not a broken `<img>`); all-checks-pass → an explicit "no warnings" affirmative, not a blank area.
+
+**Patterns to follow:** `app.js` `renderActions`/`buildActionRow`; inbox empty-state convention; `cli.py` `--attest`.
+
+**Test scenarios:**
+- Happy path (CLI): `process --watermark` applies; `--no-watermark` skips.
+- Happy path (GUI): cover preview renders with safe-area box + advisory text via `textContent`.
+- Edge case: 0 usable body images → no-cover note (not a broken image).
+- Error path: watermark-asset error → error copy in the aria-live region.
+- Integration (parity): GUI watermark toggle reaches the same PROCESSED state as CLI.
+
+**Verification:** Operator toggles watermark + sees cover preview/warnings in GUI and CLI identically.
 
 ### Phase / Batch 2 — De-watermark (spike-gated; may be cut)
 
@@ -313,7 +365,7 @@ graph TB
 
 **Approach:**
 - 30–50 owned/licensed samples stratified into 5 buckets: (a) thin logo on smooth bg, (b) thin logo on texture, (c) semi-transparent overlay, (d) large/tiled/floating, (e) over face/subject. Metrics: SSIM/PSNR vs hand-cleaned + **human publishable-rate per bucket** (the real gate) + **wall-clock per image on the target laptop** (latency is the single biggest unknown). Compare engines: **MI-GAN-ONNX (no torch, ~29.5 MB, bundleable)** vs **static-ghost (torch, exists, video-capable)**; cv2.inpaint as a cheap baseline. Confirm static-ghost licensing/maintenance if chosen.
-- Output a go/no-go: per-bucket acceptance bars (e.g. (a)(c) ≥90%, (b)(e) ≥70%, (d) out-of-scope), chosen engine, and latency verdict (if only LaMa passes quality but is too slow → degrade UX to batch/background).
+- **Explicit decision rule (so the spike gates cleanly, not a judgment call handed back to the sponsor):** GO only if a SINGLE engine clears the per-bucket bars ((a)(c) ≥90%, (b)(e) ≥70%, (d) out-of-scope) AND its p95 latency × typical-pack-size fits a wall-clock budget set BEFORE the spike. Quality passes but latency fails → **conditional GO as batch/background-only** (changes the Unit-9 UX contract, not a silent pass). No engine clears the bars, or results split across engines → **CUT**. Small-n caveat: ~6–10 samples/bucket make a 90% bar fragile (one image flips it) — treat borderline buckets as fail. Record the chosen engine (or CUT) with evidence.
 
 **Execution note:** This is a measurement spike, not a feature — no production wiring; it informs the Unit 7/8 go/no-go.
 
@@ -334,7 +386,8 @@ graph TB
 - Test: `tests/test_dewatermark_attestation.py`
 
 **Approach:**
-- Record submitting actor at process/create time (no such identity today). Unlock requires: verifiable license-evidence field (contract id / URL / ownership proof) + approval by a whitelisted reviewer **≠ submitter** + audit event. `DEWATERMARK_DISCLAIMER` states "attestation not authentication; records responsibility, does not prevent infringement" (mirror `signoff.DISCLAIMER`). Default-locked; missing any → no de-watermark.
+- **Resolve the identity namespace first:** record the submitter at process/create time as `observed_os_user()` (the same source `approve()` uses), NOT the free-form packet `actor` string — otherwise the `≠` check compares different namespaces. Approval requires `observed_os_user()` at approve-time **≠ the recorded submitter os_user** AND a whitelisted `reviewer_stated` ≠ submitter. On a true single-OS-account laptop this **blocks de-watermark until a real second person/account approves** — which is the honest SoD outcome, not a bug.
+- Unlock also requires a **license-evidence reference (operator-asserted, NOT machine-verified)** — contract id / URL / ownership proof — stored as a **sha256/opaque ref** in the PII-free audit (never the raw URL/id). `DEWATERMARK_DISCLAIMER` states verbatim: attestation not authentication; evidence is recorded for responsibility, not validated; the control **records-but-does-not-prevent** self-approval if accounts are shared; genuine independence needs an out-of-band human process the tool cannot enforce (mirror `signoff.DISCLAIMER` honesty). Default-locked; missing any → no de-watermark.
 
 **Execution note:** Test-first on the segregation rule (approver == submitter must be rejected).
 
@@ -363,7 +416,7 @@ graph TB
 - Test: `tests/media/test_dewatermark_integration.py`
 
 **Approach:**
-- Isolated subprocess (scrubbed env, assets never leave machine) like `crawl_runner`; main `[media]` extra stays torch/opencv-free. Mask from config-box/operator-box (no auto-detect v1). Strip EXIF on output (don't pass `exif=`; `convert("RGB")`). Mark `watermark_removed=true` + evidence ref in manifest. Failure / low-confidence / large-tiled (out-of-scope) → `needs_revision`, **never silent partial**. Missing engine → `DependencyError` (mirror missing-ffmpeg). Idempotent + dry-run (dry-run writes no cleaned output). Fits inside PROCESSING→PROCESSED (no new JobState).
+- Isolated subprocess (scrubbed env, assets never leave machine) like `crawl_runner`; main `[media]` extra stays torch/opencv-free. **Weight-offline by contract:** set `HF_HUB_OFFLINE=1`/`TRANSFORMERS_OFFLINE=1` in the subprocess env, load weights from a fixed local path with a pinned sha256, any attempted network fetch → hard `DependencyError` (never silent download). Mask from config-box/operator-box (no auto-detect v1). Strip EXIF on output (don't pass `exif=`; `convert("RGB")`). Mark `watermark_removed=true` + evidence ref in manifest. Failure / low-confidence / large-tiled (out-of-scope) → `needs_revision`, **never silent partial**. Missing engine OR missing weights → `DependencyError` (mirror missing-ffmpeg). Idempotent + dry-run (dry-run writes no cleaned output). The attestation gate is a **pre-process action on a CRAWLED job (before the media gate)** — NOT a PROCESSING action (PROCESSING is transient with no action surface) — so the de-watermark step runs inside PROCESSING→PROCESSED with **no new JobState**, and the `STATE_ACTIONS` attest entry attaches to `CRAWLED`.
 
 **Patterns to follow:** `crawl_runner` subprocess + `minimal_env`; `media_checker` `DependencyError`; `manifest` PII-free.
 
@@ -391,7 +444,10 @@ graph TB
 - Test: `tests/test_gui_dewatermark.py`
 
 **Approach:**
-- States: locked default (action absent/disabled + reason copy), attestation form (evidence input + independent reviewer select + honesty callout), unlocked, already-attested on re-entry. Slow-op: loading copy reusing the poller but with a **raised/removed `POLL_CAP`** so multi-image inpaint doesn't show a false ~90s timeout; partial-success / low-confidence-vs-failure surfaced. Strict CSP, `textContent`, honesty text from `LEX.honesty`.
+- **Attestation states:** locked default (action absent/disabled + reason copy); attestation form (evidence + independent-reviewer select + honesty callout); rejected-evidence / reviewer==submitter → inline reason via aria-live; **reviewer-whitelist-empty (no one ≠ submitter)** → explicit locked copy ("configure an independent reviewer"), not a dead-end empty dropdown; unlocked; already-attested on re-entry.
+- **Slow-op poll model (NOT just "remove POLL_CAP"):** for inpaint jobs replace the fixed `POLL_CAP=120` with an **elapsed-time ceiling = Unit-6 p95 latency × asset count × safety factor** (never unbounded); define at-cap copy ("still processing N images — can take a few minutes") so a healthy long job isn't read as hung; announce via the `job-inflight` aria-live region.
+- **Per-asset states:** per-asset list in `view-job` — pending / processing / cleaned-ok / low-confidence / failed / out-of-scope(skipped) / no-watermark-noop; rollup = any low-confidence/failed → job `needs_revision` with failing assets named; degrade to a deterministic indeterminate state if the engine emits no per-asset progress.
+- Strict CSP, `textContent`, honesty text from `LEX.honesty`.
 
 **Patterns to follow:** `backfill`/`--attest` checkbox + `reviewerSelect` + `disclaimer()`; `STATE_ACTIONS` fail-closed gating; existing poller.
 
@@ -408,18 +464,18 @@ graph TB
 
 - [ ] **Unit 10: Mixed-folder material-pack ingest + completeness check**
 
-**Goal:** Improve local material-pack import (mixed image/video/text in one folder) with a completeness check; reaffirm crawl scope honesty + the SSRF residual.
+**Goal:** Add ONLY the missing delta to local ingest: a completeness/openability check + the missing test. `LocalIngestCrawler.crawl()` ALREADY does mixed-folder import (classifies images/videos by extension, copies with 0600, path-traversal guard via `safe_join`) — do NOT re-implement folder iteration/classification/copy.
 
 **Requirements:** UR11, UR12
 
 **Dependencies:** None
 
 **Files:**
-- Modify: `src/lcp/adapters/crawler/ingest.py` (mixed-folder import + archive), `src/lcp/adapters/processor/media_checker.py` (completeness check reuse), `docs/security/pii-inventory.md` (re-state SSRF residual if allowlist widens)
+- Modify: `src/lcp/adapters/crawler/ingest.py` (add completeness check only — reuse existing `_VIDEO_EXT`/`_TEXT_NAMES`/`iterdir` handling), `src/lcp/adapters/processor/media_checker.py` (completeness check reuse), `docs/security/pii-inventory.md` (re-state SSRF residual if allowlist widens)
 - Test: `tests/test_ingest_mixed_folder.py`
 
 **Approach:**
-- Reuse `ingest.py` + `media_checker`; flag missing/unopenable items; keep Scrapy public-source + local import as the only channels (no JS/login-wall, no anti-bot bypass). Note `pii-inventory.md` SSRF residual remains if `allow_domains` grows.
+- Reuse the existing `LocalIngestCrawler` import path. ADD only: (a) a completeness/openability check (flag unopenable images via `Image.open`, unplayable videos via ffprobe) in a report, and (b) the test. Keep Scrapy public-source + local import as the only channels (no JS/login-wall, no anti-bot bypass). Re-state the `pii-inventory.md` SSRF/DNS-rebinding residual if `allow_domains` grows. Idempotent + dry-run-safe.
 
 **Test scenarios:**
 - Happy path: folder with images+video+notes → all imported, classified, manifest built.
@@ -433,10 +489,11 @@ graph TB
 
 - **Interaction graph:** new steps live inside Stage-2 `run_media_gate` (watermark add/remove, cover checks) and the assemble step (templates, captions); no new JobState — de-watermark + attestation fit inside PROCESSING→PROCESSED.
 - **Error propagation:** de-watermark/inpaint failures, low-confidence, out-of-scope, and missing-engine all converge to `needs_revision` / `DependencyError` (fail-closed); no silent partial media.
-- **State lifecycle risks:** **freeze hash binding extended** to captions/image-sections (Unit 4) — without it, post-freeze AI-content edits go undetected. Submitter identity must be recorded at process/create time for SoD (Unit 7).
-- **API surface parity:** every new operator action is CLI + GUI 1:1 (Units 5, 9); GUI `POLL_CAP` raised for inpaint jobs.
+- **State lifecycle risks:** the cover is ALREADY frozen (`cover_sha256`); watermark must run pre-freeze (Unit 1/2 do — never re-watermark after freeze). **Freeze hash binding extended** to captions/image_sections (Unit 4) via `review_packet._draft_body_text()` — without it, post-freeze AI-content edits go undetected; this shifts existing golden hashes (update 5 test files). Submitter identity recorded as `observed_os_user()` at process/create for SoD (Unit 7).
+- **API surface parity:** every new operator action is CLI + GUI 1:1 (Units 5a/5b, 9); GUI poll model uses an elapsed-time ceiling (not the fixed `POLL_CAP`) for inpaint jobs.
 - **Integration coverage:** CLI/GUI parity via shared `_processed_job_with_draft`; freeze-binding + grounding are integration-tested, not just unit-mocked.
-- **Unchanged invariants:** no auto-publish (R26/UR15); append-only PII-free audit (R38/R39); zero-capability LLM + datamarking (R16/R35) — templates render outside SYSTEM; SSRF posture and its documented residual unchanged.
+- **Unchanged invariants:** no auto-publish (R26/UR15); append-only PII-free audit (R38/R39) — new attestation fields stored as opaque/sha256 refs; zero-capability LLM + datamarking (R16/R35) — templates render outside SYSTEM, slot VALUES datamarked; SSRF posture and its documented residual unchanged.
+- **Standing PII invariant (independent of Batch 2):** EXIF/GPS stripped on ALL output body images + cover in Batch 1 (Unit 1), not only on the cuttable de-watermark path — a guarantee, not a side effect of `convert("RGB")`.
 
 ## Risks & Dependencies
 
@@ -444,7 +501,7 @@ graph TB
 |------|-----------|--------|------------|
 | De-watermark CPU latency on operator laptop unviable (no public data) | Med | High | Unit-6 spike measures wall-clock on the target laptop; if too slow, degrade to batch/background or cut Batch 2 |
 | Inpainting deps conflict with Pillow 12 (`pillow<10` pins) | High (known) | High | Isolate engine in a subprocess/separate env or external static-ghost; main `[media]` extra stays torch/opencv-free; ONNX preferred |
-| Self-attestation is "paper cover" for stripping third-party marks | Med | High | Net-new SoD (reviewer≠submitter) + verifiable evidence + honest disclosure (Unit 7); default-locked; R2 honestly framed as an amendment |
+| Self-attestation is "paper cover" on a single-operator machine | Med | High | SoD binds to `observed_os_user()` (≠ submitter at approve-time) — blocks de-watermark until a real 2nd account/person approves; evidence is operator-asserted (not machine-verified) + honest disclaimer; default-locked; R2 framed as an amendment |
 | Republication-of-source defamation (risk is in sourcing, not rewriting) | Med | High | Keep R16; add R4/R5 measurable 漏检率 acceptance bar (origin success criterion); AI limited to structural pieces |
 | AI captions raise per-article review burden (goal regression) | Med | Med | Success criterion = net review-touch DROP; tighten generation scope if it rises; grounding + freeze-binding so review is trustworthy |
 | User-editable templates as a new injection surface | Med | Med | Templates never reach SYSTEM; `str.format_map` allowlist (no Jinja2); linter on save+import; deterministic canary/schema |
@@ -467,9 +524,9 @@ graph TB
 
 ## Phased Delivery
 
-- **Batch 1 (Units 1–5):** watermark-add + cover checks + templates + AI captions (with grounding/freeze) + GUI. Lands the daily-value, low-risk wins.
-- **Batch 2 (Units 6–9):** **Unit 6 spike first** → go/no-go; only on GO build attestation (7) + integration (8) + GUI (9). Cuttable without affecting Batch 1.
-- **Batch 3 (Unit 10):** ingest improvement, by-need.
+- **Batch 1 (Units 0–5b):** **Unit 0 (measurement) first** → baseline + acceptance bars; then watermark-add + cover checks + templates + AI captions (grounding/freeze) + GUI. **U5a (copy GUI) ships before U5b (cover GUI)** so the highest-value copy path reaches the operator first (origin: copy saves the most time).
+- **Batch 2 (Units 6–9):** **Unit 6 spike first** → go/no-go; only on GO build attestation (7) + integration (8) + GUI (9). **U7–U9 must NOT start before U6=GO** — on CUT, no submitter-identity/attestation code lands (de-watermark is its only consumer), so nothing is orphaned. Cuttable without affecting Batch 1.
+- **Batch 3 (Unit 10):** ingest completeness check, by-need.
 
 ## Sources & References
 
