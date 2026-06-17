@@ -242,3 +242,23 @@ input[type="text"], select { flex: 1; min-width: 11rem; padding: var(--sp-1); }
   .job-row, .btn-primary, .btn-secondary, button { transition: none; }
   .confirm-tray, .hold-panel { animation: none; }
 }
+
+/* ===== DASHBOARD (4th view): accumulated metrics ===== */
+.dash-subtitle { color: var(--ink-500); font-size: var(--fs-400); margin: 0 0 var(--sp-5); }
+.dash-empty { background: var(--paper-2); border: 1px dashed var(--line); border-radius: var(--radius-md);
+  padding: var(--sp-6); text-align: center; }
+.dash-empty strong { display: block; font-size: var(--fs-600); margin-bottom: var(--sp-2); }
+.dash-empty p { color: var(--ink-500); margin: 0; }
+.dash-section { background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-md);
+  padding: var(--sp-4) var(--sp-5); margin-bottom: var(--sp-4); box-shadow: var(--shadow-sm); }
+.dash-section h3 { font-size: var(--fs-600); font-weight: var(--fw-bold); margin: 0 0 var(--sp-3); }
+.dash-caveat { color: var(--c-attention-tx); background: var(--c-attention-bg); border: 1px solid var(--c-attention-bd);
+  border-radius: var(--radius-sm); padding: var(--sp-2) var(--sp-3); font-size: var(--fs-300); margin: 0 0 var(--sp-3); }
+.dash-table { width: 100%; border-collapse: collapse; font-size: var(--fs-400); }
+.dash-table th { text-align: right; font-weight: var(--fw-medium); color: var(--ink-500);
+  padding: var(--sp-1) var(--sp-3); border-bottom: 1px solid var(--line); }
+.dash-table th:first-child { text-align: left; }
+.dash-table td { text-align: right; padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--paper-2);
+  font-variant-numeric: tabular-nums; }
+.dash-table td:first-child { text-align: left; color: var(--ink-900); }
+.dash-table tr:last-child td { border-bottom: none; }

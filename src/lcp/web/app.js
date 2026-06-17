@@ -90,8 +90,8 @@ const HOLD_STATES = ["blocked", "duplicate", "needs_human_review", "needs_revisi
 
 let currentView = "inbox";
 let currentJobId = null;
-const VIEWS = ["inbox", "job", "setup"];
-const NAV = { inbox: "nav-inbox", setup: "nav-setup" };
+const VIEWS = ["inbox", "dashboard", "job", "setup"];
+const NAV = { inbox: "nav-inbox", dashboard: "nav-dashboard", setup: "nav-setup" };
 
 function showView(name) {
   currentView = name;
@@ -442,6 +442,141 @@ function loadingRow() {
   const p = el("p", "载入中…");
   p.className = "empty loading";
   return p;
+}
+
+// --- DASHBOARD: accumulated metrics (read-only) -----------------------------
+
+function lexDash() {
+  return LEX.dashboard || {};
+}
+function gateLabel(gate) {
+  const d = lexDash();
+  return (d.gate && d.gate[gate]) || gate;
+}
+function pct(rate) {
+  return rate == null ? "—" : Math.round(rate * 100) + "%";
+}
+
+function dashSection(title) {
+  const sec = el("section");
+  sec.className = "dash-section";
+  sec.appendChild(el("h3", title));
+  return sec;
+}
+
+function statTable(headers, rows) {
+  const table = el("table");
+  table.className = "dash-table";
+  const thead = el("tr");
+  headers.forEach(function (h) { thead.appendChild(el("th", h)); });
+  table.appendChild(thead);
+  rows.forEach(function (cells) {
+    const tr = el("tr");
+    cells.forEach(function (c) { tr.appendChild(el("td", c)); });
+    table.appendChild(tr);
+  });
+  return table;
+}
+
+function renderDashboardEmpty(container) {
+  const d = lexDash();
+  const box = el("div");
+  box.className = "dash-empty";
+  box.appendChild(el("strong", d.empty_title || "还没有累积"));
+  box.appendChild(el("p", d.empty_body || ""));
+  container.appendChild(box);
+}
+
+function renderDashboard(container, res) {
+  const d = lexDash();
+  clear(container);
+  const lead = el("p", d.subtitle || "");
+  lead.className = "dash-subtitle";
+  container.appendChild(lead);
+
+  // empty state: never a wall of zeros on first run (the whole point of the
+  // feature is to feel accumulated, not blank).
+  if (!res.has_jobs) { renderDashboardEmpty(container); return; }
+
+  // states
+  const counts = res.summary || {};
+  const stateRows = Object.keys(counts).filter(function (k) { return k !== "total"; }).sort()
+    .map(function (k) { return [lexState(k).title, String(counts[k])]; });
+  if (stateRows.length) {
+    const sec = dashSection(d.section_states || "目前各状态");
+    sec.appendChild(statTable(["", ""], stateRows));
+    container.appendChild(sec);
+  }
+
+  // gate intercept rates
+  const gates = res.gates || [];
+  if (gates.length) {
+    const sec = dashSection(d.section_gates || "各关卡拦截率");
+    const rows = gates.map(function (g) {
+      return [gateLabel(g.gate), String(g.reached), String(g.intercepted), pct(g.rate)];
+    });
+    sec.appendChild(statTable(
+      ["", d.col_reached || "到达", d.col_intercepted || "拦下", d.col_rate || "拦截率"], rows
+    ));
+    container.appendChild(sec);
+  } else {
+    const sec = dashSection(d.section_gates || "各关卡拦截率");
+    const p = el("p", d.no_intercepts || ""); p.className = "empty";
+    sec.appendChild(p);
+    container.appendChild(sec);
+  }
+
+  // review reasons
+  const reasons = res.review_reasons || {};
+  const reasonKeys = Object.keys(reasons);
+  if (reasonKeys.length) {
+    const sec = dashSection(d.section_reasons || "人工处理原因");
+    const rows = reasonKeys.sort().map(function (k) {
+      const r = lexReason(k);
+      return [r ? r.label : k, String(reasons[k])];
+    });
+    sec.appendChild(statTable(["", d.col_count || "次数"], rows));
+    container.appendChild(sec);
+  }
+
+  // gate intervals (labelled: includes operator wait; NOT compute time)
+  const intervals = res.gate_intervals || [];
+  if (intervals.length) {
+    const sec = dashSection(d.section_intervals || "关卡间隔（含等待）");
+    const caveat = el("p", d.intervals_caveat || ""); caveat.className = "dash-caveat";
+    sec.appendChild(caveat);
+    const rows = intervals.map(function (it) {
+      return [it.transition, String(it.count), String(Math.round(it.avg_seconds)), String(Math.round(it.max_seconds))];
+    });
+    sec.appendChild(statTable(
+      ["", d.col_count || "次数", d.col_avg || "平均(秒)", d.col_max || "最长(秒)"], rows
+    ));
+    container.appendChild(sec);
+  }
+
+  // daily throughput
+  const daily = res.daily_jobs || {};
+  const days = Object.keys(daily);
+  if (days.length) {
+    const sec = dashSection(d.section_daily || "每日产量");
+    const rows = days.sort().map(function (day) { return [day, String(daily[day])]; });
+    sec.appendChild(statTable(["", d.col_count || "次数"], rows));
+    container.appendChild(sec);
+  }
+}
+
+async function openDashboard() {
+  showView("dashboard");
+  setText($("dashboard-title"), lexDash().title || "总览");
+  const body = $("dashboard-body");
+  clear(body);
+  body.appendChild(loadingRow());
+  const a = api();
+  if (!a) return;
+  const res = await a.dashboard_stats();
+  clear(body);
+  if (isError(res)) { renderError(body, res); return; }
+  renderDashboard(body, res);
 }
 
 // --- JOB workspace ----------------------------------------------------------
@@ -813,6 +948,53 @@ function inertLinks(container, items) {
 
 // --- create mode ------------------------------------------------------------
 
+// raw (unescaped) source_ref keyed by saved-source id — ONLY ever assigned to
+// an input .value (never a markup sink), so the original URL/path is re-submitted
+// through the normal, re-validated create path.
+const savedSourceRaw = {};
+
+function createModeUrl() {
+  return $("create-mode-url").checked;
+}
+function setCreateMode(isUrl) {
+  $("create-mode-url").checked = isUrl;
+  $("create-mode-dir").checked = !isUrl;
+  $("create-url-row").hidden = !isUrl;
+  $("create-dir-row").hidden = isUrl;
+}
+
+function applySavedSource(id) {
+  const raw = savedSourceRaw[id];
+  if (raw == null) return;
+  // URL-ish -> url mode + url field; otherwise a local dir path.
+  const isUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw);
+  setCreateMode(isUrl);
+  if (isUrl) $("create-url").value = raw;
+  else $("create-dir").value = raw;
+}
+
+async function loadSavedSources() {
+  const a = api();
+  const row = $("create-reuse-row");
+  const pick = $("create-source-pick");
+  if (!a) { row.hidden = true; return; }
+  const res = await a.saved_sources();
+  Object.keys(savedSourceRaw).forEach(function (k) { delete savedSourceRaw[k]; });
+  clear(pick);
+  const sources = (res && res.sources) || [];
+  if (isError(res) || sources.length === 0) { row.hidden = true; return; }
+  const placeholder = el("option", "— 选一个已存来源 —");
+  placeholder.value = "";
+  pick.appendChild(placeholder);
+  sources.forEach(function (s) {
+    savedSourceRaw[s.id] = s.source_ref_raw;
+    const opt = el("option", s.label + "（" + s.source_ref + "）");
+    opt.value = s.id;
+    pick.appendChild(opt);
+  });
+  row.hidden = false;
+}
+
 function openCreate(jobId) {
   showView("job");
   disarmConfirm();
@@ -820,18 +1002,43 @@ function openCreate(jobId) {
   clear($("job-banner")); clear($("job-actions")); clear($("job-packet")); clear($("job-status")); clear($("job-inflight"));
   setText($("job-title"), jobId ? "重新抓取 " + jobId : "新工作");
   if (jobId) $("create-job-id").value = jobId;
+  $("create-save-source").checked = false;
+  $("create-save-label").value = "";
   setText($("create-status"), "");
+  loadSavedSources();
+}
+
+async function maybeSaveSource(ref) {
+  if (!$("create-save-source").checked) return;
+  const a = api();
+  if (!a || !ref) return;
+  const label = $("create-save-label").value.trim() || ref;
+  await a.add_saved_source(label, ref); // best-effort; failure must not block the job
 }
 
 function bindCreate() {
   $("create-mode-url").addEventListener("change", function () { $("create-url-row").hidden = false; $("create-dir-row").hidden = true; });
   $("create-mode-dir").addEventListener("change", function () { $("create-url-row").hidden = true; $("create-dir-row").hidden = false; });
+  $("create-source-pick").addEventListener("change", function () { applySavedSource(this.value); });
+  $("create-source-del").addEventListener("click", async function () {
+    const a = api(); if (!a) return;
+    const id = $("create-source-pick").value;
+    if (!id) return;
+    await a.delete_saved_source(id);
+    await loadSavedSources();
+  });
   $("btn-create").addEventListener("click", async function () {
     const a = api(); if (!a) return;
     const jobId = $("create-job-id").value.trim();
     if (!jobId) { setText($("create-status"), "请先填工作 id。"); return; }
     const btn = $("btn-create");
-    if (!READY.pipelineReady) { setText($("create-status"), "还没设定好模型 endpoint／金鑰——请先到「设定」。"); return; }
+    // Re-check readiness LIVE against the backend, not the module flag: that flag
+    // is only refreshed on init/save/open-setup, so a bridge-not-ready-at-init
+    // race can leave it stale-false even after settings are correctly saved.
+    setText($("create-status"), "检查设定…");
+    const ready = await computeReadiness();
+    if (!ready || ready.error || !ready.pipelineReady) { setText($("create-status"), "还没设定好模型 endpoint／金鑰——请先到「设定」。"); return; }
+    setText($("create-status"), "");
     if ($("create-mode-url").checked) {
       const url = $("create-url").value.trim();
       if (!url) { setText($("create-status"), "请填网址。"); return; }
@@ -839,6 +1046,7 @@ function bindCreate() {
       const kick = await a.create_and_crawl_async(jobId, url); // async -> no freeze
       setBusy(btn, false);
       if (isError(kick)) { setText($("create-status"), inlineError(kick)); return; }
+      await maybeSaveSource(url);
       enterProgress(jobId, "crawl");
       refreshInbox();
     } else {
@@ -850,6 +1058,7 @@ function bindCreate() {
       const res = await a.ingest_dir(jobId, dir);
       setBusy(btn, false);
       if (isError(res)) { setText($("create-status"), inlineError(res)); return; }
+      await maybeSaveSource(dir);
       openJob(jobId);
       refreshInbox();
     }
@@ -986,6 +1195,8 @@ async function openSetup() {
 
 function bind() {
   $("nav-inbox").addEventListener("click", function () { showView("inbox"); refreshInbox(); });
+  $("nav-dashboard").addEventListener("click", openDashboard);
+  $("refresh-dashboard").addEventListener("click", openDashboard);
   $("nav-new").addEventListener("click", function () { $("create-job-id").value = ""; openCreate(null); });
   $("nav-setup").addEventListener("click", openSetup);
   $("job-back").addEventListener("click", function () { showView("inbox"); refreshInbox(); });

@@ -73,6 +73,31 @@ class AuditLog:
                 out.append(json.loads(raw))
         return out
 
+    def iter_events(self) -> list[dict[str, Any]]:
+        """Public, read-only view of the events for aggregation/reporting.
+
+        Unlike ``_read_lines`` (used by ``verify_chain`` where a bad line MUST
+        fail the chain), this is resilient to a torn TRAILING line: a reader
+        can observe a partial record written by a concurrent ``append`` before
+        its fsync. We therefore skip any line that fails to decode rather than
+        raising — a dashboard opened while a background job is mid-append must
+        still render, not crash (plan CONCURRENCY). Returns events in file
+        order."""
+        if not self.path.exists():
+            return []
+        out: list[dict[str, Any]] = []
+        for raw in self.path.read_text(encoding="utf-8").splitlines():
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                out.append(json.loads(raw))
+            except json.JSONDecodeError:
+                # A partial/torn line (e.g. a concurrent pre-fsync write). Skip
+                # it; valid records are unaffected.
+                continue
+        return out
+
     def _last_line(self) -> str | None:
         """The last non-empty line of audit.jsonl via a bounded BACKWARD read.
 

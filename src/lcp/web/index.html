@@ -21,6 +21,7 @@
       <h1>Local Content Processor</h1>
       <nav class="nav">
         <button id="nav-inbox" type="button" aria-current="page">收件匣</button>
+        <button id="nav-dashboard" type="button">总览 📊</button>
         <button id="nav-new" type="button">+ 新工作</button>
         <button id="nav-setup" type="button">设定 ⚙</button>
       </nav>
@@ -40,6 +41,15 @@
       <p id="inbox-counts" class="counts"></p>
     </section>
 
+    <!-- ===== DASHBOARD: accumulated metrics (4th view, not the landing page) ===== -->
+    <section id="view-dashboard" class="view" hidden>
+      <div class="view-head">
+        <h2 id="dashboard-title">总览</h2>
+        <button id="refresh-dashboard" type="button">重新整理</button>
+      </div>
+      <div id="dashboard-body"></div>
+    </section>
+
     <!-- ===== JOB workspace: one selected job, only its legal actions ===== -->
     <section id="view-job" class="view" hidden>
       <button id="job-back" type="button" class="back">‹ 收件匣</button>
@@ -55,6 +65,13 @@
           <label><input id="create-mode-url" type="radio" name="create-mode" checked> 爬一个网址</label>
           <label><input id="create-mode-dir" type="radio" name="create-mode"> 匯入资料夹</label>
         </div>
+        <!-- input reuse: pick a previously saved source to pre-fill (re-validated
+             on submit via the normal path; never bypasses allow_domains/robots) -->
+        <div class="row" id="create-reuse-row" hidden>
+          <label for="create-source-pick">复用已存来源</label>
+          <select id="create-source-pick"></select>
+          <button id="create-source-del" type="button" class="btn-secondary">删除此来源</button>
+        </div>
         <div class="row" id="create-url-row">
           <label for="create-url">网址</label>
           <input id="create-url" type="text" autocomplete="off">
@@ -66,6 +83,10 @@
         <div class="row">
           <label for="create-dry"><input id="create-dry" type="checkbox"> 安全预览（dry-run，不连模型）</label>
           <button id="btn-create" type="button" class="btn-primary">建立并抓取</button>
+        </div>
+        <div class="row" id="create-save-row">
+          <label for="create-save-source"><input id="create-save-source" type="checkbox"> 把这个来源存起来下次复用</label>
+          <input id="create-save-label" type="text" autocomplete="off" placeholder="给这个来源起个名字（可留空）">
         </div>
         <p id="create-status" class="status" aria-live="polite"></p>
       </div>
