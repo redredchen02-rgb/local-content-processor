@@ -60,8 +60,8 @@ from .adapters.publisher.review_packet import build_review_packet
 from .adapters.storage.audit_aggregate import aggregate_audit, summarize_gaps
 from .adapters.storage.audit_log import AuditLog
 from .adapters.storage.job_store import JobStore
+from .adapters.storage import config_io as _config_io
 from .adapters.storage.source_store import SourceStore
-from .core.config import load_config
 from .core.errors import EXIT_INTERNAL, LcpError
 from .core.models import SourceType
 
@@ -102,7 +102,7 @@ class _Ctx:
         # — but a present-but-invalid file still surfaces its error. An explicit
         # path is never silently ignored once the file exists.
         load_path = config_path if (config_path and Path(config_path).exists()) else None
-        self.config = load_config(load_path)
+        self.config = _config_io.load_config(load_path)
         resolved = base_dir or self.config.storage.base_dir
         self.store = JobStore(base_dir=resolved)
         self.audit = AuditLog(Path(resolved) / "audit.jsonl")
@@ -645,7 +645,7 @@ class Api:
                 "model": escape_html(llm.model),
                 "allowed_hosts": [escape_html(h) for h in llm.allowed_hosts],
                 "allow_domains": [escape_html(d) for d in c.config.crawler.allow_domains],
-                "api_key_set": c.config.has_api_key(),
+                "api_key_set": _config_io.has_api_key(c.config),
                 "config_path": escape_html(str(self._settings_path())),
             }
         except LcpError as e:
@@ -674,13 +674,13 @@ class Api:
             key_saved = False
             if api_key and api_key.strip():
                 username = self._ctx().config.llm.keyring_username
-                _config.set_llm_api_key(api_key, username=username)
+                _config_io.set_llm_api_key(api_key, username=username)
                 key_saved = True
 
             # 2. Then the file. A loopback http endpoint also needs its host in
             # allow_http_hosts to be usable at call time (client R40 gate).
             is_http = urlsplit(base_url).scheme.lower() == "http"
-            _config.update_llm_config_file(
+            _config_io.update_llm_config_file(
                 self._settings_path(),
                 base_url=base_url,
                 model=model,

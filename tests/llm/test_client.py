@@ -88,7 +88,7 @@ def _config(**llm_overrides) -> Config:
 def with_key(monkeypatch):
     monkeypatch.setenv("LCP_LLM_API_KEY", SECRET)
     # Make sure keyring lookups don't interfere / hang.
-    import lcp.core.config as cfg
+    import lcp.adapters.storage.config_io as cfg
 
     monkeypatch.setattr(cfg, "KEYRING_SERVICE", "lcp-test-service")
     return SECRET
@@ -178,7 +178,7 @@ def test_missing_base_url_dependency_error(with_key):
 
 def test_missing_api_key_dependency_error(monkeypatch):
     monkeypatch.delenv("LCP_LLM_API_KEY", raising=False)
-    import lcp.core.config as cfg
+    import lcp.adapters.storage.config_io as cfg
 
     monkeypatch.setattr(cfg, "KEYRING_SERVICE", "lcp-test-no-key")
     # Ensure keyring returns nothing.
@@ -429,7 +429,7 @@ def test_dry_run_does_not_call_api(with_key):
 
 def test_dry_run_needs_no_api_key(monkeypatch):
     monkeypatch.delenv("LCP_LLM_API_KEY", raising=False)
-    import lcp.core.config as cfg
+    import lcp.adapters.storage.config_io as cfg
 
     monkeypatch.setattr(cfg, "KEYRING_SERVICE", "lcp-test-dryrun")
     try:

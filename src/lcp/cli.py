@@ -29,8 +29,8 @@ from .adapters.crawler.source_registry import SourceRegistry
 from .adapters.publisher import signoff
 from .adapters.publisher.review_packet import build_review_packet
 from .adapters.storage.audit_log import AuditLog
+from .adapters.storage.config_io import load_config
 from .adapters.storage.job_store import JobStore
-from .core.config import load_config
 from .core.errors import DependencyError, EXIT_INTERNAL, EXIT_OK, LcpError, UsageError
 from .core.models import SourceType
 from .runtime_hardening import apply_hardening

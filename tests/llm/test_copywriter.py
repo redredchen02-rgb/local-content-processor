@@ -41,7 +41,7 @@ def _config():
 @pytest.fixture
 def with_key(monkeypatch):
     monkeypatch.setenv("LCP_LLM_API_KEY", SECRET)
-    import lcp.core.config as cfg
+    import lcp.adapters.storage.config_io as cfg
     monkeypatch.setattr(cfg, "KEYRING_SERVICE", "lcp-test-copywriter")
     return SECRET
 

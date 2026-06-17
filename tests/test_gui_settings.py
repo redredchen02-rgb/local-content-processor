@@ -11,6 +11,7 @@ import keyring
 import pytest
 import yaml
 
+import lcp.adapters.storage.config_io as config_io
 import lcp.core.config as config
 from lcp.core.errors import InputValidationError
 from lcp.gui import Api
@@ -31,7 +32,7 @@ def _api(tmp_path):
 def test_save_settings_writes_base_url_model_host_never_key(tmp_path, monkeypatch):
     stored = {}
     monkeypatch.setattr(
-        config, "set_llm_api_key",
+        config_io, "set_llm_api_key",
         lambda secret, **kw: stored.update(secret=secret, kw=kw),
     )
     api = _api(tmp_path)
@@ -56,7 +57,7 @@ def test_save_settings_writes_base_url_model_host_never_key(tmp_path, monkeypatc
 
 def test_save_settings_empty_key_does_not_call_keyring(tmp_path, monkeypatch):
     called = []
-    monkeypatch.setattr(config, "set_llm_api_key", lambda *a, **k: called.append(1))
+    monkeypatch.setattr(config_io, "set_llm_api_key", lambda *a, **k: called.append(1))
     api = _api(tmp_path)
     res = api.save_settings(BASE, MODEL, "")
     assert "error" not in res
@@ -65,7 +66,7 @@ def test_save_settings_empty_key_does_not_call_keyring(tmp_path, monkeypatch):
 
 
 def test_save_settings_merges_and_preserves_other_sections(tmp_path, monkeypatch):
-    monkeypatch.setattr(config, "set_llm_api_key", lambda *a, **k: None)
+    monkeypatch.setattr(config_io, "set_llm_api_key", lambda *a, **k: None)
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
         yaml.safe_dump(
@@ -106,7 +107,7 @@ def test_save_settings_keyring_failure_persists_nothing(tmp_path, monkeypatch):
     def _boom(*a, **k):
         raise DependencyError("no keyring backend")
 
-    monkeypatch.setattr(config, "set_llm_api_key", _boom)
+    monkeypatch.setattr(config_io, "set_llm_api_key", _boom)
     api = _api(tmp_path)
     res = api.save_settings(BASE, MODEL, SECRET)
     assert "error" in res and res["exit_code"] == 3
@@ -117,7 +118,7 @@ def test_save_settings_keyring_failure_persists_nothing(tmp_path, monkeypatch):
 def test_save_settings_http_loopback_round_trips_to_client(tmp_path, monkeypatch):
     """P2 regression: a loopback http endpoint saved via the GUI must be ACCEPTED
     by the client transport gate — so the host is added to allow_http_hosts too."""
-    monkeypatch.setattr(config, "set_llm_api_key", lambda *a, **k: None)
+    monkeypatch.setattr(config_io, "set_llm_api_key", lambda *a, **k: None)
     api = _api(tmp_path)
     res = api.save_settings("http://127.0.0.1:11434/v1", "local-model", "")
     assert "error" not in res, res
@@ -141,7 +142,7 @@ def test_save_settings_http_loopback_round_trips_to_client(tmp_path, monkeypatch
 
 
 def test_get_settings_key_set_via_env_without_revealing(tmp_path, monkeypatch):
-    monkeypatch.setattr(config, "set_llm_api_key", lambda *a, **k: None)
+    monkeypatch.setattr(config_io, "set_llm_api_key", lambda *a, **k: None)
     monkeypatch.setattr(keyring, "get_password", lambda *a, **k: None)
     api = _api(tmp_path)
     api.save_settings(BASE, MODEL, "")
@@ -218,7 +219,7 @@ def test_get_settings_returns_a_known_fixed_key_set(tmp_path, monkeypatch):
 
 def test_update_llm_config_file_is_0600_and_keyless(tmp_path):
     p = tmp_path / "config.yaml"
-    config.update_llm_config_file(p, base_url=BASE, model=MODEL, allowed_hosts_add=HOST)
+    config_io.update_llm_config_file(p, base_url=BASE, model=MODEL, allowed_hosts_add=HOST)
     assert os.stat(p).st_mode & 0o077 == 0  # owner-only (0600)
     data = yaml.safe_load(p.read_text(encoding="utf-8"))
     assert "api_key" not in data.get("llm", {})
@@ -230,7 +231,7 @@ def test_update_llm_config_file_strips_stray_api_key(tmp_path):
         yaml.safe_dump({"llm": {"api_key": "sk-leak", "model": "old"}}),
         encoding="utf-8",
     )
-    config.update_llm_config_file(p, base_url=BASE)
+    config_io.update_llm_config_file(p, base_url=BASE)
     text = p.read_text(encoding="utf-8")
     assert "sk-leak" not in text
     data = yaml.safe_load(text)
@@ -265,18 +266,18 @@ def test_validate_llm_base_url_refuses_http_to_metadata_and_private():
 
 def test_set_llm_api_key_empty_raises():
     with pytest.raises(InputValidationError):
-        config.set_llm_api_key("")
+        config_io.set_llm_api_key("")
     with pytest.raises(InputValidationError):
-        config.set_llm_api_key("   ")
+        config_io.set_llm_api_key("   ")
 
 
 def test_has_api_key_reflects_env(monkeypatch):
     monkeypatch.setattr(keyring, "get_password", lambda *a, **k: None)
     cfg = config.Config()
     monkeypatch.delenv("LCP_LLM_API_KEY", raising=False)
-    assert cfg.has_api_key() is False
+    assert config_io.has_api_key(cfg) is False
     monkeypatch.setenv("LCP_LLM_API_KEY", SECRET)
-    assert cfg.has_api_key() is True
+    assert config_io.has_api_key(cfg) is True
 
 
 # --- static UI guard: the new settings panel stays XSS-safe ------------------
