@@ -22,7 +22,6 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from ...core.rules import dedup_rules
 from ...core.rules.dedup_rules import (
@@ -49,6 +48,20 @@ class DedupGateOutcome:
     result: DedupResult
     job_state: JobState | None  # None when status==unique (caller continues)
     review_reason: ReviewReason | None = None
+
+
+@dataclass(frozen=True)
+class DedupScoreParams:
+    """Thresholds forwarded to the pure dedup cascade (calibration deferred).
+
+    An explicit, typed replacement for the prior ``**score_params: Any`` seam at
+    this strict-adapter boundary; defaults mirror dedup_rules.assess_dedup."""
+
+    duplicate_jaccard: float = dedup_rules.DEFAULT_DUPLICATE_JACCARD
+    uncertain_jaccard: float = dedup_rules.DEFAULT_UNCERTAIN_JACCARD
+    lsh_threshold: float = dedup_rules.DEFAULT_LSH_THRESHOLD
+    num_perm: int = dedup_rules.DEFAULT_NUM_PERM
+    k: int = dedup_rules.DEFAULT_SHINGLE_K
 
 
 def load_site_index(path: str | Path) -> DedupIndex:
@@ -96,24 +109,29 @@ def run_dedup_gate(
     site_index_path: str | Path | None = None,
     queries: list[DedupQuery] | None = None,
     actor: str = "system",
-    **score_params: Any,
+    score_params: DedupScoreParams | None = None,
 ) -> DedupGateOutcome:
     """Run the dedup gate: load the index, score, map, audit, persist.
 
     `site_index_path` points at the published/site index JSONL. If None or
     missing, the gate runs fail-loud (LOW reliability, never confident unique,
-    never auto-reject). `**score_params` are forwarded to the pure cascade
-    (thresholds — calibration deferred)."""
+    never auto-reject). `score_params` carries the pure-cascade thresholds
+    (calibration deferred); None uses the defaults."""
     if site_index_path is None:
         site_index_path = store.base_dir / SITE_INDEX_FILENAME
     index = load_site_index(site_index_path)
 
+    sp = score_params or DedupScoreParams()
     result = dedup_rules.assess_dedup(
         title=title,
         body=body,
         index=index,
         queries=queries or [],
-        **score_params,
+        duplicate_jaccard=sp.duplicate_jaccard,
+        uncertain_jaccard=sp.uncertain_jaccard,
+        lsh_threshold=sp.lsh_threshold,
+        num_perm=sp.num_perm,
+        k=sp.k,
     )
     job_state, review_reason = _map_to_state(result)
 
