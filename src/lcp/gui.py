@@ -202,13 +202,12 @@ class Api:
         watermark: bool | None = None,
         template: str | None = None,
         ai_copy: bool = False,
-        dewatermark: bool = False,
     ) -> dict:
         """Mirror `process`: risk + dedup gates -> assemble -> lint + ground.
 
         Honours dry_run (LLM not called). Stops at the first gate that parks the
-        job and reports the resting state. watermark/template/ai_copy/dewatermark
-        are process-time inputs (1:1 with the CLI flags)."""
+        job and reports the resting state. watermark/template/ai_copy are
+        process-time inputs (1:1 with the CLI flags)."""
         try:
             c = self._ctx()
             p = pl.Pipeline(c.config, c.store, c.audit, dry_run=bool(dry_run))
@@ -217,7 +216,6 @@ class Api:
                 watermark=watermark,
                 template=template or None,
                 ai_copy=bool(ai_copy),
-                dewatermark=bool(dewatermark),
             )
             return {
                 "job_id": escape_html(job_id),
@@ -268,13 +266,12 @@ class Api:
         watermark: bool | None = None,
         template: str | None = None,
         ai_copy: bool = False,
-        dewatermark: bool = False,
     ) -> dict:
         """Background variant of process (long LLM task)."""
         return self._run_bg(
             job_id,
             lambda: self.process(
-                job_id, title, dry_run, watermark, template, ai_copy, dewatermark
+                job_id, title, dry_run, watermark, template, ai_copy
             ),
         )
 
@@ -376,68 +373,6 @@ class Api:
             if isinstance(e, LcpError):
                 return _error_dict(e)
             return {"job_id": escape_html(job_id), "has_report": False}
-
-    # --- de-watermark attestation (Batch 2, default-locked) ------------------
-
-    def dewatermark_disclaimer(self) -> dict:
-        """The verbatim DEWATERMARK_DISCLAIMER (attestation != authentication)."""
-        from .adapters.publisher.dewatermark import DEWATERMARK_DISCLAIMER
-
-        return {"disclaimer": escape_html(DEWATERMARK_DISCLAIMER)}
-
-    def dewatermark_status(self, job_id: str) -> dict:
-        """Locked/unlocked state for the GUI: is a submitter recorded, is the job
-        attested, and is an engine actually installed (else removal can't run)."""
-        try:
-            from .adapters.publisher.dewatermark import read_attestation, read_submitter
-
-            c = self._ctx()
-            att = read_attestation(c.store, job_id)
-            sub = read_submitter(c.store, job_id)
-            return {
-                "job_id": escape_html(job_id),
-                "submitter": escape_html(sub) if sub else None,
-                "attested": att is not None,
-                "reviewer": escape_html(att.reviewer) if att else None,
-                "engine_ready": bool(c.config.inpaint.enabled and c.config.inpaint.engine_cmd),
-            }
-        except LcpError as e:
-            return _error_dict(e)
-
-    def request_dewatermark(self, job_id: str, submitter: str) -> dict:
-        """Record the submitter (party 1) of a de-watermark request."""
-        try:
-            from .adapters.publisher.dewatermark import request_dewatermark
-
-            c = self._ctx()
-            sub = request_dewatermark(job_id, submitter, store=c.store, audit=c.audit, ts=_now())
-            return {"job_id": escape_html(job_id), "submitter": escape_html(sub)}
-        except LcpError as e:
-            return _error_dict(e)
-
-    def attest_dewatermark(self, job_id: str, reviewer: str, evidence_ref: str) -> dict:
-        """Approve a de-watermark (party 2): whitelisted reviewer != submitter +
-        license evidence. Fail-closed; raw evidence never crosses the bridge."""
-        try:
-            from .adapters.publisher.dewatermark import (
-                DEWATERMARK_DISCLAIMER,
-                attest_dewatermark,
-            )
-
-            c = self._ctx()
-            att = attest_dewatermark(
-                job_id, reviewer, evidence_ref,
-                config=c.config, store=c.store, audit=c.audit, ts=_now(),
-            )
-            return {
-                "job_id": escape_html(job_id),
-                "attested": True,
-                "reviewer": escape_html(att.reviewer),
-                "submitter": escape_html(att.submitter),
-                "disclaimer": escape_html(DEWATERMARK_DISCLAIMER),
-            }
-        except LcpError as e:
-            return _error_dict(e)
 
     def approve(self, job_id: str, reviewer: str) -> dict:
         """Mirror `approve`: REVIEW_PENDING -> APPROVED. Reviewer MUST be in the

@@ -3,6 +3,8 @@ date: 2026-06-17
 topic: content-pipeline-upgrade
 ---
 
+> **【CUT — 2026-06-17】去水印线（UR2–UR4）及其对 R2 的「有界例外」修订已 CUT**（见 `docs/plans/2026-06-17-003-refactor-cut-dewatermark-pipeline-plan.md`）。本文以下关于去水印的需求与该 R2 修订均为**历史记录，不再是生效的批准**；R2 恢复其基线绝对形态（不以任何方式掩盖权利人来源）。其余三项（封面 / AI 文案 / 导入）不受影响。
+
 # 内容流水线升级 — 需求文件（爬取 / 封面 / 水印 / AI 文案模板）
 
 > 一句话定位：这是对现有 `lcp`（Local Content Processor）的**合规框内加厚**，不是转型。

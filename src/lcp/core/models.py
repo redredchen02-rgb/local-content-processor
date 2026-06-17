@@ -36,11 +36,6 @@ class AssetRef(BaseModel):
     sha256: str | None = None
     state: AssetState = AssetState.OK
     note: str | None = None
-    # De-watermark provenance (plan Unit 8). PII-free: a bool + the SHA-256 of the
-    # license-evidence reference (never the raw evidence). Set only on assets an
-    # attested de-watermark actually cleaned.
-    watermark_removed: bool = False
-    watermark_evidence_sha256: str | None = None
 
 
 class Hashes(BaseModel):

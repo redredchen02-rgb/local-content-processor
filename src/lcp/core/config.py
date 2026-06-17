@@ -59,24 +59,6 @@ class WatermarkConfig(BaseModel):
     color: tuple[int, int, int] = (255, 255, 255)
 
 
-class InpaintConfig(BaseModel):
-    """Isolated de-watermark engine settings (plan Unit 8, Batch 2).
-
-    DEFAULT-DISABLED and engine-ABSENT: with no ``engine_cmd`` the runner raises
-    DependencyError (mirror missing-ffmpeg), so nothing de-watermarks until an
-    operator deliberately installs an isolated engine. The engine runs as a
-    subprocess with a scrubbed env (never the main venv's torch/opencv). Masks
-    come from a config fixed-box or an operator-drawn box — no auto-detect v1."""
-
-    enabled: bool = False
-    # The engine invocation, e.g. ["/path/to/inpaint-venv/bin/python", "-m", "engine"].
-    # Empty -> DependencyError at call time (default-locked).
-    engine_cmd: list[str] = Field(default_factory=list)
-    timeout_seconds: int = 120
-    # Default fixed-box masks (x0,y0,x1,y1) applied when no operator box is given.
-    default_boxes: list[tuple[int, int, int, int]] = Field(default_factory=list)
-
-
 class ContentConfig(BaseModel):
     title_min_chars: int = 25
     title_max_chars: int = 35
@@ -116,7 +98,6 @@ class Config(BaseModel):
     crawler: CrawlerConfig = Field(default_factory=CrawlerConfig)
     media: MediaConfig = Field(default_factory=MediaConfig)
     watermark: WatermarkConfig = Field(default_factory=WatermarkConfig)
-    inpaint: InpaintConfig = Field(default_factory=InpaintConfig)
     content: ContentConfig = Field(default_factory=ContentConfig)
     llm: LlmConfig = Field(default_factory=LlmConfig)
     publisher: PublisherConfig = Field(default_factory=PublisherConfig)

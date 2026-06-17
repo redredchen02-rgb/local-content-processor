@@ -177,12 +177,8 @@ def ingest(ctx, directory, job_id):
     "--ai-copy", "ai_copy", is_flag=True, default=False,
     help="Also generate AI captions/FAQ/subheads (all need human review)",
 )
-@click.option(
-    "--dewatermark", "dewatermark", is_flag=True, default=False,
-    help="Run the de-watermark gate (attested-only; default-locked, owned/licensed)",
-)
 @click.pass_context
-def process(ctx, job_id, title, watermark, template, ai_copy, dewatermark):
+def process(ctx, job_id, title, watermark, template, ai_copy):
     """Stage 2: risk gate, media validation/normalization, dedup gate, assemble,
     lint + ground.
 
@@ -195,7 +191,6 @@ def process(ctx, job_id, title, watermark, template, ai_copy, dewatermark):
     res = p.process(
         job_id, ts=_now(), title=title,
         watermark=watermark, template=template, ai_copy=ai_copy,
-        dewatermark=dewatermark,
     )
     c.emit(
         {
@@ -210,44 +205,6 @@ def process(ctx, job_id, title, watermark, template, ai_copy, dewatermark):
             + (f" (stopped at {res.stopped_at})" if res.stopped_at else "")
             + (" [dry-run]" if res.dry_run else "")
         ),
-    )
-
-
-# --- De-watermark attestation (Batch 2, default-locked) ----------------------
-
-
-@cli.command(name="dewatermark-request")
-@click.option("--job-id", "job_id", required=True)
-@click.option("--submitter", required=True, help="Person submitting the request (party 1)")
-@click.pass_context
-def dewatermark_request(ctx, job_id, submitter):
-    """Record the SUBMITTER of a de-watermark request (must differ from the
-    independent reviewer who later attests)."""
-    from .adapters.publisher.dewatermark import request_dewatermark
-
-    c = Ctx(ctx.obj)
-    sub = request_dewatermark(job_id, submitter, store=c.store, audit=c.audit, ts=_now())
-    c.emit({"job_id": job_id, "submitter": sub}, human=f"de-watermark submitter recorded: {sub}")
-
-
-@cli.command(name="dewatermark-attest")
-@click.option("--job-id", "job_id", required=True)
-@click.option("--reviewer", required=True, help="Whitelisted reviewer != submitter (party 2)")
-@click.option("--evidence", "evidence", required=True,
-              help="Verifiable license-evidence ref (contract id / URL / proof)")
-@click.pass_context
-def dewatermark_attest(ctx, job_id, reviewer, evidence):
-    """Independent reviewer attests an owned/licensed de-watermark (party 2).
-    Fail-closed: reviewer must be whitelisted AND differ from the submitter."""
-    from .adapters.publisher.dewatermark import attest_dewatermark
-
-    c = Ctx(ctx.obj)
-    att = attest_dewatermark(
-        job_id, reviewer, evidence, config=c.config, store=c.store, audit=c.audit, ts=_now()
-    )
-    c.emit(
-        {"job_id": job_id, "attested": True, "reviewer": att.reviewer, "submitter": att.submitter},
-        human=f"de-watermark attested by {att.reviewer} (submitter {att.submitter})",
     )
 
 
