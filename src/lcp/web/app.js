@@ -831,7 +831,13 @@ function bindCreate() {
     const jobId = $("create-job-id").value.trim();
     if (!jobId) { setText($("create-status"), "请先填工作 id。"); return; }
     const btn = $("btn-create");
-    if (!READY.pipelineReady) { setText($("create-status"), "还没设定好模型 endpoint／金鑰——请先到「设定」。"); return; }
+    // Re-check readiness LIVE against the backend, not the module flag: that flag
+    // is only refreshed on init/save/open-setup, so a bridge-not-ready-at-init
+    // race can leave it stale-false even after settings are correctly saved.
+    setText($("create-status"), "检查设定…");
+    const ready = await computeReadiness();
+    if (!ready || ready.error || !ready.pipelineReady) { setText($("create-status"), "还没设定好模型 endpoint／金鑰——请先到「设定」。"); return; }
+    setText($("create-status"), "");
     if ($("create-mode-url").checked) {
       const url = $("create-url").value.trim();
       if (!url) { setText($("create-status"), "请填网址。"); return; }
