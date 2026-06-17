@@ -333,7 +333,7 @@ graph TB
 
 ### Phase P1 — 异步/进度 + 交互态 + 视觉系统（关闭 G1/G4/G5）
 
-- [ ] **Unit P1.1: 异步管道 + `job_status` 轮询 + 进度 spinner（G1）**
+- [x] **Unit P1.1: 异步管道 + `job_status` 轮询 + 进度 spinner（G1）**
 
 **Goal:** 长爬取/LLM 调用不再冻结窗口；6-shape `job_status` 安全解包，spinner 永不无限转。
 
@@ -368,7 +368,7 @@ graph TB
 
 ---
 
-- [ ] **Unit P1.2: 交互态（empty/loading/success）+ in-DOM 确认条（G4）**
+- [x] **Unit P1.2: 交互态（empty/loading/success）+ in-DOM 确认条（G4）**
 
 **Goal:** 补齐空/载入/成功态；终态/不可逆动作（reject/supersede/backfill-attest）用 in-DOM 确认条，禁对话框。
 
@@ -400,7 +400,7 @@ graph TB
 
 ---
 
-- [ ] **Unit P1.3: 视觉系统 —— `app.css` 重写（G5）**
+- [x] **Unit P1.3: 视觉系统 —— `app.css` 重写（G5）**
 
 > **本单元拆两层（B，product-lens vs scope-guardian 折中）：6a 信任关键子集（SC4/SC6 必需，随 P0/早-P1 落地）+ 6b 纯打磨（可后置到首轮真用之后）。** 下方 Approach 标注每条归 6a/6b。
 
@@ -438,7 +438,7 @@ graph TB
 
 ### Phase P2 — onboarding + 打磨（关闭 G6 全量、完成 G7）
 
-- [ ] **Unit P2.1: SETUP 视图 + 就绪清单 + 软门控（G6）**
+- [x] **Unit P2.1: SETUP 视图 + 就绪清单 + 软门控（G6）**
 
 **Goal:** 把裸 settings 换成「Setup & readiness」：4 行前置就绪清单 + 4 变体 gate banner + config.yaml 交接卡 + advisory 校验；缺前置时软门控相关按钮 + 一行提示，而非深处撞 exit 3。
 

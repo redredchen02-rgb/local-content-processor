@@ -297,7 +297,10 @@ function capReached(jobId) {
 
 async function settle(jobId, outcome) {
   clearPoller(jobId);
-  if (jobId !== currentJobId) { refreshInbox(); return; } // settled while elsewhere
+  // Only re-render the workspace if the operator is actually viewing this job.
+  // If they navigated to the inbox (or another job) while it ran, don't yank
+  // them back — just refresh the inbox so the new state shows there.
+  if (!(currentView === "job" && jobId === currentJobId)) { refreshInbox(); return; }
   clear($("job-inflight"));
   if (outcome.t === "FAILED") { renderError($("job-status"), { error: outcome.error, exit_code: outcome.exit_code }); refreshInbox(); return; }
   if (outcome.t === "LOST") { renderError($("job-status"), { error: "此工作已不在磁碟上：" + jobId, exit_code: 2 }); refreshInbox(); return; }
