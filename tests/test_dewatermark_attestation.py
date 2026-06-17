@@ -48,6 +48,15 @@ def test_reviewer_equals_submitter_rejected(tmp_path):
     assert dw.read_attestation(store, "j1") is None  # stays locked
 
 
+def test_reviewer_case_variant_of_submitter_rejected(tmp_path):
+    # SoD must not be defeatable by a case/normalization-variant of the same human.
+    store, audit, config = _ctx(tmp_path, reviewers=("alice", "Alice"))
+    dw.request_dewatermark("j1", "alice", store=store, audit=audit, ts=TS)
+    with pytest.raises(InputValidationError, match="segregation of duties"):
+        dw.attest_dewatermark("j1", "Alice", "contract-42", config=config, store=store, audit=audit, ts=TS)
+    assert dw.read_attestation(store, "j1") is None
+
+
 def test_missing_evidence_rejected(tmp_path):
     store, audit, config = _ctx(tmp_path)
     dw.request_dewatermark("j1", "bob", store=store, audit=audit, ts=TS)

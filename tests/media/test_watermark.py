@@ -149,6 +149,40 @@ def test_disabled_watermark_is_noop(tmp_path):
     assert Image.open(res.out_path).mode == "RGB"
 
 
+def test_media_gate_produces_watermarked_cover(tmp_path):
+    # Regression: the REAL pipeline path (run_media_gate) must pass the watermark
+    # to make_cover — a prior bug shipped a clean cover while the unit test
+    # (which called make_cover directly) masked it.
+    from lcp.adapters.processor.media_checker import run_media_gate
+    from lcp.adapters.storage.audit_log import AuditLog
+    from lcp.adapters.storage.job_store import JobStore
+    from lcp.adapters.storage.manifest import write_manifest
+    from lcp.core.config import MediaConfig
+    from lcp.core.models import AssetKind, AssetRef, AssetState, Manifest, SourceType
+
+    store = JobStore(base_dir=str(tmp_path))
+    store.create_job("jw", created_at="2026-06-17T00:00:00Z")
+    job_dir = store.job_dir("jw")
+    img_dir = job_dir / "raw" / "images"
+    img_dir.mkdir(parents=True, exist_ok=True)
+    _sharp_jpeg(img_dir / "a.jpg", size=(1000, 700))
+    write_manifest(job_dir, Manifest(
+        job_id="jw", source_type=SourceType.LOCAL_DIR,
+        assets=[AssetRef(kind=AssetKind.IMAGE, path="raw/images/a.jpg", state=AssetState.OK)],
+    ), create_only=False)
+    audit = AuditLog(tmp_path / "audit.jsonl")
+    wm = WatermarkConfig(enabled=True, mode="logo",
+                         logo_body_path=_logo(tmp_path / "logob.png", color=(0, 255, 0, 255)),
+                         logo_cover_path=_logo(tmp_path / "logoc.png", color=(255, 0, 0, 255)),
+                         position="bottom-right", opacity=1.0, margin=10)
+    out = run_media_gate(
+        job_id="jw", store=store, audit=audit, ts="2026-06-17T00:00:00Z",
+        media_config=MediaConfig(), watermark=wm,
+    )
+    cover = Image.open(job_dir / out.report["cover"])
+    assert cover.getpixel((cover.width - 6, cover.height - 6))[0] > 120  # mark present
+
+
 def test_cover_watermarked_once_after_compose(tmp_path):
     a = _sharp_jpeg(tmp_path / "a.jpg")
     b = _sharp_jpeg(tmp_path / "b.jpg")

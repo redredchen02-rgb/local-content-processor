@@ -97,3 +97,13 @@ def test_apply_copy_to_draft_enriches_without_mutation():
     assert out.needs_human_review is True
     # input not mutated
     assert draft.image_sections == []
+
+
+def test_apply_copy_never_drops_captions_when_fewer_refs():
+    draft = Draft(title="t", intro="i", event_body="b")
+    res = copywriter.CopyResult(captions=["c1", "c2", "c3"])
+    out = copywriter.apply_copy_to_draft(draft, res, asset_refs=["images/a.jpg"])
+    # all three captions survive (the silent-drop bug); only the first gets a ref
+    assert [s.caption for s in out.image_sections] == ["c1", "c2", "c3"]
+    assert out.image_sections[0].asset_ref == "images/a.jpg"
+    assert out.image_sections[1].asset_ref is None

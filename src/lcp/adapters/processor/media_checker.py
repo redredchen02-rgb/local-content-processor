@@ -225,12 +225,17 @@ def run_media_gate(
     cover_advisories: dict[str, list[str]] = {"geometry": [], "aesthetic": []}
     if ok_outputs:
         cover_tiles = ok_outputs[:4]
+        # The cover is composed from the still-CLEAN normalized tiles and
+        # watermarked ONCE here (watermark=...). The body-image watermark pass
+        # runs AFTER this, so tiles are clean at compose time and the cover never
+        # inherits per-tile marks. (Passing a None/disabled config is a no-op.)
         cover_path = normalizer.make_cover(
             cover_tiles,
             job_dir / "processed" / "cover" / "cover.jpg",
             cover_width=media_config.cover_width,
             cover_height=media_config.cover_height,
             quality=media_config.image_quality,
+            watermark=watermark,
         )
         try:
             os.chmod(cover_path, 0o600)

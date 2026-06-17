@@ -156,10 +156,13 @@ def apply_copy_to_draft(
     Captions are attached to image sections positionally (one per asset ref, when
     given); FAQ/subheads/title candidates are appended. The draft stays
     needs_human_review. Does not mutate the input."""
-    refs = asset_refs or [None] * len(copy.captions)  # type: ignore[list-item]
+    # Drive off captions so EVERY caption survives — a caption is grounded +
+    # freeze-bound downstream, so silently dropping one (when fewer asset_refs
+    # are given) would be worse than an ungrounded one. Extra captions get no ref.
+    refs = asset_refs or []
     image_sections = [
-        MediaSection(asset_ref=ref, caption=cap)
-        for ref, cap in zip(refs, copy.captions)
+        MediaSection(asset_ref=(refs[i] if i < len(refs) else None), caption=cap)
+        for i, cap in enumerate(copy.captions)
     ]
     return draft.model_copy(
         update={

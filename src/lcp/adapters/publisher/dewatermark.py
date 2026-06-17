@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -61,6 +62,14 @@ class DewatermarkAttestation:
     evidence_sha256: str
     attested: bool = True
     disclaimer: str = DEWATERMARK_DISCLAIMER
+
+
+def _norm_actor(name: str) -> str:
+    """Normalize a person identifier for the two-party comparison: NFKC + strip +
+    casefold, so 'alice'/'Alice'/full-width variants of the same human can't be
+    used to self-approve (submitter vs reviewer must be DIFFERENT people, not just
+    different spellings)."""
+    return unicodedata.normalize("NFKC", name or "").strip().casefold()
 
 
 def _review_dir(store: JobStore, job_id: str) -> Path:
@@ -165,23 +174,20 @@ def attest_dewatermark(
             "URL / ownership proof); it is operator-asserted, never auto-verified"
         )
     _require_whitelisted(config, rev)
-    if rev == submitter:
+    if _norm_actor(rev) == _norm_actor(submitter):
         raise InputValidationError(
             f"segregation of duties: the de-watermark reviewer ({rev!r}) must be "
             f"INDEPENDENT of the submitter ({submitter!r})"
         )
 
     evidence_sha = hashlib.sha256(evidence.encode("utf-8")).hexdigest()
-    # Raw evidence -> 0600 operator file (not the PII-free index/audit).
-    with (_review_dir(store, job_id) / "dewatermark_evidence.txt").open(
-        "w", encoding="utf-8"
-    ) as f:
-        f.write(evidence + "\n")
+    # Raw evidence -> 0600 operator file (not the PII-free index/audit). Created
+    # with mode 0600 ATOMICALLY (os.open O_CREAT) so there is no permissive
+    # window even under a lax process umask.
     evid_path = _review_dir(store, job_id) / "dewatermark_evidence.txt"
-    try:
-        os.chmod(evid_path, 0o600)
-    except OSError:
-        pass
+    fd = os.open(str(evid_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(evidence + "\n")
 
     _write_0600_json(
         _review_dir(store, job_id) / _ATTEST_NAME,

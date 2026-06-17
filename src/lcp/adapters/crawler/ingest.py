@@ -126,7 +126,6 @@ class LocalIngestCrawler(Crawler):
                 if member.name not in _TEXT_NAMES and member.name not in _TITLE_NAMES:
                     skipped.append({"name": member.name, "reason": "unsupported file type"})
                 continue
-            count += 1
             try:
                 data = member.read_bytes()
             except OSError as e:
@@ -136,7 +135,8 @@ class LocalIngestCrawler(Crawler):
                 continue
             if not data:
                 # Empty media is unopenable/unplayable — flag, never write a 0-byte
-                # asset the media gate would then have to fail.
+                # asset the media gate would then have to fail. Does NOT consume a
+                # max_assets slot (it produced no usable asset).
                 assets.append(
                     AssetRef(
                         kind=kind, path=member.name, state=AssetState.FAILED,
@@ -144,6 +144,7 @@ class LocalIngestCrawler(Crawler):
                     )
                 )
                 continue
+            count += 1
             dest_dir = images_dir if kind is AssetKind.IMAGE else videos_dir
             dest = dest_dir / member.name
             _write_0600(dest, data)
