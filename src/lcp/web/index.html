@@ -9,7 +9,11 @@
     UI/UX rebuild — it is the last line behind the textContent discipline.
   -->
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none'; script-src 'self'; img-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'">
+        content="default-src 'none'; script-src 'self'; img-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'">
+  <!-- Per-launch CSRF token: the localhost webui server replaces this placeholder
+       with the live token at serve time; app.js reads it (CSP-safe DOM read) and
+       sends it as Authorization: Bearer on every /api/* fetch. Never a URL/log. -->
+  <meta name="lcp-csrf" content="__LCP_CSRF_TOKEN__">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Local Content Processor</title>
   <link rel="stylesheet" href="app.css">

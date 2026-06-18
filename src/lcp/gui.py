@@ -299,8 +299,18 @@ class Api:
 
     def _run_bg(self, job_id: str, fn) -> dict:
         """Run a long task (crawl/process) in a background thread; the GUI polls
-        :meth:`job_status` for completion. Returns immediately with 'running'."""
+        :meth:`job_status` for completion. Returns immediately with 'running'.
+
+        DUPLICATE-WORKER GUARD: a browser-served webui (unlike the old single
+        pywebview window) can fire two ``*_async`` POSTs for the same job at once.
+        If one is already ``running``, return its in-flight status instead of
+        spawning a second daemon worker — two workers would race the caller-owned
+        ``.processing`` marker / ``.interrupt_count``. Checked under the same
+        ``_status_lock`` that guards every other ``_status`` access."""
         with self._status_lock:
+            existing = self._status.get(job_id)
+            if existing is not None and existing.get("status") == "running":
+                return existing
             self._status[job_id] = {"job_id": escape_html(job_id), "status": "running"}
 
         def _worker():
