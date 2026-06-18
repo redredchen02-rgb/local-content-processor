@@ -45,7 +45,12 @@ from ..storage.audit_log import (
     AuditLog,
 )
 from ..storage.job_store import JobStore
-from .review_packet import compute_body_sha256, read_review_manifest
+from .review_packet import (
+    compute_body_sha256,
+    compute_review_cover_sha256,
+    compute_title_sha256,
+    read_review_manifest,
+)
 
 EVENT_SIGNOFF_APPROVE = "SIGNOFF_APPROVE"
 EVENT_SIGNOFF_REJECT = "SIGNOFF_REJECT"
@@ -191,13 +196,34 @@ def approve(
 
         draft = load_draft(store, job_id)
 
-    # Hash binding: the body MUST match the frozen hash. Editing the body after
-    # the packet was built is detectable here and blocks approval.
+    # Hash binding: the body AND title MUST match the frozen hashes. Editing
+    # either after the packet was built is detectable here and blocks approval —
+    # the freeze covers body + title (+ cover below), so the sign-off provably
+    # binds the artifact the reviewer actually saw. (U3: previously only the body
+    # was re-verified; a title-only edit slipped through while the audit still
+    # attested the original title.)
     if draft is not None:
         current_body = compute_body_sha256(draft)
         if current_body != body_sha:
             raise InputValidationError(
                 f"draft body hash mismatch for {job_id}: the body changed after "
+                "the review packet was frozen; supersede and re-review instead"
+            )
+        current_title = compute_title_sha256(draft)
+        if current_title != title_sha:
+            raise InputValidationError(
+                f"draft title hash mismatch for {job_id}: the title changed after "
+                "the review packet was frozen; supersede and re-review instead"
+            )
+
+    # Cover binding (file-based, independent of `draft`): if the freeze bound a
+    # cover, re-hash the review-dir cover.jpg it was copied from and refuse on a
+    # mismatch (a post-freeze cover swap).
+    if isinstance(cover_sha, str):
+        current_cover = compute_review_cover_sha256(store, job_id)
+        if current_cover != cover_sha:
+            raise InputValidationError(
+                f"cover hash mismatch for {job_id}: the review cover changed after "
                 "the review packet was frozen; supersede and re-review instead"
             )
 

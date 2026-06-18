@@ -213,6 +213,53 @@ def test_unchanged_body_passes_hash_binding(config, store, audit):
     assert rec.new_state is JobState.APPROVED
 
 
+# --- U3: editing the TITLE or COVER after freeze is detectable ----------------
+
+
+def test_title_edit_after_freeze_blocks_approval(config, store, audit):
+    """U3: editing ONLY the title after freeze (body unchanged) must be detected.
+    Previously only the body hash was re-verified, so a title swap slipped through
+    and the audit falsely attested the original (reviewer-approved) title."""
+    original = _draft()
+    _review_pending_job(store, audit, "jt", draft=original)
+    # Same body, DIFFERENT title -> passes the body check, must fail the title check.
+    tampered = _draft(title="完全不同的標題，已被竄改")
+    with pytest.raises(InputValidationError):
+        signoff.approve(
+            "jt", REVIEWER, config=config, store=store, audit=audit, ts=TS,
+            draft=tampered,
+        )
+    assert store.get_job("jt").state is JobState.REVIEW_PENDING
+
+
+def test_cover_edit_after_freeze_blocks_approval(config, store, audit):
+    """U3: swapping the frozen review-dir cover after freeze must be detected."""
+    job_id = "jc"
+    cover_src = store.job_dir(job_id) / "processed" / "cover" / "cover.jpg"
+    cover_src.parent.mkdir(parents=True, exist_ok=True)
+    cover_src.write_bytes(b"original-cover-bytes")
+    _review_pending_job(store, audit, job_id)  # freezes the cover sha
+    # Swap the review-dir cover the freeze bound to.
+    review_cover = store.job_dir(job_id) / "review" / "cover.jpg"
+    review_cover.write_bytes(b"tampered-cover-bytes-which-differ")
+    with pytest.raises(InputValidationError):
+        signoff.approve(job_id, REVIEWER, config=config, store=store, audit=audit, ts=TS)
+    assert store.get_job(job_id).state is JobState.REVIEW_PENDING
+
+
+def test_unchanged_cover_passes(config, store, audit):
+    """A job with an untouched frozen cover still approves cleanly."""
+    job_id = "jcc"
+    cover_src = store.job_dir(job_id) / "processed" / "cover" / "cover.jpg"
+    cover_src.parent.mkdir(parents=True, exist_ok=True)
+    cover_src.write_bytes(b"stable-cover-bytes")
+    _review_pending_job(store, audit, job_id)
+    rec = signoff.approve(
+        job_id, REVIEWER, config=config, store=store, audit=audit, ts=TS,
+    )
+    assert rec.new_state is JobState.APPROVED
+
+
 # --- State machine: no path to APPROVED from blocked/duplicate/needs-review ---
 
 

@@ -321,3 +321,19 @@ def read_review_manifest(store: JobStore, job_id: str) -> dict[str, Any] | None:
 def compute_body_sha256(draft: Draft) -> str:
     """Public helper: the body hash sign-off binds to (for re-verification)."""
     return _sha256_text(_draft_body_text(draft))
+
+
+def compute_title_sha256(draft: Draft) -> str:
+    """Public helper: the title hash sign-off binds to (for re-verification).
+
+    Mirrors the freeze derivation EXACTLY — including the ``or ""`` — so a None
+    title hashes to the same value it was frozen as (and not to a false mismatch)."""
+    return _sha256_text(draft.title or "")
+
+
+def compute_review_cover_sha256(store: JobStore, job_id: str) -> str | None:
+    """Public helper: hash of the FROZEN review-dir cover (the copy made at packet
+    build), or None if there is no cover. ``approve`` re-hashes this against the
+    frozen ``cover_sha256`` so a post-freeze cover swap is detectable."""
+    cover = store.job_dir(job_id) / "review" / COVER_NAME
+    return _sha256_file(cover) if cover.exists() else None
