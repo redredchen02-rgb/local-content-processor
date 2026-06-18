@@ -237,3 +237,31 @@ def test_uncertainty_tone_does_not_double_tag():
     assert out == "網傳某事"
     out2 = risk_rules.apply_uncertainty_tone("疑似某事", verified=False)
     assert out2 == "疑似某事"
+
+
+# --- CORE-3: campus_keywords field wired to _mentions_disabled_category ------
+
+
+def test_custom_campus_keywords_used_by_assess_risk():
+    """CORE-3: KeywordRiskDetector.campus_keywords must be used by assess_risk
+    for the campus check, not the module-level _CAMPUS_KEYWORDS constant.
+    If assess_risk ignores the field, a detector with custom keywords would
+    silently use the wrong word list."""
+    # Use a custom keyword that contains NONE of the default campus keywords
+    # (國中/高中/大學/校園/學生/campus/high school/university student) as substrings.
+    custom_word = "偶像劇橋段xyztest99"
+    detector = risk_rules.KeywordRiskDetector(campus_keywords=(custom_word,))
+    content = risk_rules.RiskInput(
+        title=f"測試標題-{custom_word}",
+        body="普通內文沒有任何風險關鍵字。",
+        has_source=True,
+        contains_serious_claim=False,
+    )
+    # Module-level _CAMPUS_KEYWORDS cannot match custom_word. So without the fix
+    # (assess_risk using detector.campus_keywords), it returns PASS.
+    # With the fix, it returns NEEDS_HUMAN_REVIEW.
+    result = risk_rules.assess_risk(content, detector=detector)
+    assert result.status is risk_rules.RiskStatus.NEEDS_HUMAN_REVIEW, (
+        f"expected NEEDS_HUMAN_REVIEW (campus keyword hit via detector field), "
+        f"got {result.status}; campus_keywords field is not being used"
+    )

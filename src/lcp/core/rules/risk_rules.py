@@ -368,10 +368,12 @@ def assess_risk(
             recommended_action="block:redline",
         )
 
-    # Restricted-category gate (學生校園 disabled by default). We scan the text
-    # with the baseline campus keywords regardless of detector, because this is
-    # a policy switch, not a risk signal.
-    campus_seen = _mentions_disabled_category(content)
+    # Restricted-category gate (學生校園 disabled by default). Use the detector's
+    # campus_keywords if available (KeywordRiskDetector exposes this field), so
+    # a caller can pass a custom detector with overridden keywords and have them
+    # honoured here rather than silently ignored.
+    campus_kws = getattr(det, "campus_keywords", _CAMPUS_KEYWORDS)
+    campus_seen = _mentions_disabled_category(content, campus_kws)
     if campus_seen and not is_category_enabled(
         RiskCategory.CAMPUS_STUDENT, enabled_categories=enabled_categories
     ):
@@ -394,11 +396,14 @@ def assess_risk(
     return RiskResult(status=RiskStatus.PASS, flags=list(flags), recommended_action="pass")
 
 
-def _mentions_disabled_category(content: RiskInput) -> bool:
+def _mentions_disabled_category(
+    content: RiskInput,
+    keywords: tuple[str, ...] = _CAMPUS_KEYWORDS,
+) -> bool:
     """Cheap baseline scan for 學生校園 markers. Adapter/U1 may override by
     passing a category-tagged input later; for the baseline we keyword-scan."""
     haystack = f"{content.title}\n{content.body}".lower()
-    return any(w.lower() in haystack for w in _CAMPUS_KEYWORDS)
+    return any(w.lower() in haystack for w in keywords)
 
 
 # --- R5: uncertainty-tone helper (judge-then-apply) --------------------------
