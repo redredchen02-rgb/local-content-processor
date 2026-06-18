@@ -572,6 +572,29 @@ def test_supersede_nhr_is_allowed(config, store, audit):
     assert store.get_job("jsup").state is JobState.SUPERSEDED
 
 
+def test_supersede_nhr_does_not_invalidate_signoff(config, store, audit):
+    # bug_008: NEEDS_HUMAN_REVIEW is reached BEFORE the freeze/review-packet step,
+    # so it never carried a sign-off. Superseding it must NOT emit a (false)
+    # SIGNOFF_INVALIDATED — matches the supersede docstring's "only REVIEW_PENDING /
+    # APPROVED carry a real prior sign-off" contract.
+    _nhr_job(store, "jnhr", ReviewReason.DEDUP)
+    signoff.supersede("jnhr", store=store, audit=audit, ts=TS, new_job_id="jnhr2")
+    events = [l["event"] for l in audit._read_lines()]
+    assert EVENT_SUPERSEDED in events
+    assert EVENT_SIGNOFF_INVALIDATED not in events
+
+
+def test_supersede_needs_revision_does_not_invalidate_signoff(config, store, audit):
+    # bug_008: NEEDS_REVISION likewise never carried a sign-off (Stage-2 hold, pre-freeze).
+    store.create_job("jnr", created_at=TS)
+    store.set_state("jnr", JobState.CRAWLED, updated_at=TS)
+    persist_gate_state(store, "jnr", JobState.NEEDS_REVISION, updated_at=TS)
+    signoff.supersede("jnr", store=store, audit=audit, ts=TS, new_job_id="jnr2")
+    events = [l["event"] for l in audit._read_lines()]
+    assert EVENT_SUPERSEDED in events
+    assert EVENT_SIGNOFF_INVALIDATED not in events
+
+
 # --- Audit integrity throughout ---------------------------------------------
 
 

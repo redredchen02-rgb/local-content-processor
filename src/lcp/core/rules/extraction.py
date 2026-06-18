@@ -45,12 +45,16 @@ def extract_content(
     response: Any, *, is_media_url_safe: Callable[[str], bool]
 ) -> dict[str, Any]:
     """Pure extraction from a crawl Response. Returns title, body text,
-    image_urls, video_urls, rejected_media_urls, source_html, and metadata.
+    image_urls, video_urls, rejected_media_urls, malformed_media_urls,
+    source_html, and metadata.
 
     De-dupes media URLs AND runs every scraped media URL through the injected
     ``is_media_url_safe`` (the adapter's second-order SSRF guard): a URL pointing
     at an internal/metadata IP is NOT added to the download lists; it is recorded
-    in ``rejected_media_urls`` so write_bundle records it as a FAILED asset."""
+    in ``rejected_media_urls`` so write_bundle records it as a FAILED asset. A URL
+    that does not even parse (malformed host) is recorded separately in
+    ``malformed_media_urls`` — it never reached the SSRF preflight, so labelling it
+    an SSRF rejection in the manifest would be untrue (bug_005)."""
     title = (response.css("title::text").get() or "").strip()
     if not title:
         title = (response.css("h1::text").get() or "").strip()
@@ -63,7 +67,8 @@ def extract_content(
 
     image_urls: list[str] = []
     video_urls: list[str] = []
-    rejected_media_urls: list[str] = []
+    rejected_media_urls: list[str] = []  # dropped by the second-order SSRF guard
+    malformed_media_urls: list[str] = []  # dropped because the URL would not parse
 
     def _accept(full: str, kind: AssetKind) -> None:
         target = image_urls if kind is AssetKind.IMAGE else video_urls
@@ -74,17 +79,23 @@ def extract_content(
             return
         target.append(full)
 
+    def _malformed(src: str) -> None:
+        # A parse failure is NOT an SSRF rejection (it never reached the preflight),
+        # so record it separately — the adapter stamps a truthful per-reason note.
+        if src not in malformed_media_urls:
+            malformed_media_urls.append(src)
+
     for src in response.css("img::attr(src)").getall():
         full = _safe_urljoin(response, src)
         if full is None:
-            rejected_media_urls.append(src)  # malformed URL -> drop, record, never fatal
+            _malformed(src)  # malformed URL -> drop, record, never fatal
             continue
         _accept(full, AssetKind.IMAGE)
 
     for src in response.css("video::attr(src), video source::attr(src)").getall():
         full = _safe_urljoin(response, src)
         if full is None:
-            rejected_media_urls.append(src)
+            _malformed(src)
             continue
         _accept(full, AssetKind.VIDEO)
 
@@ -104,6 +115,7 @@ def extract_content(
         "image_urls": image_urls,
         "video_urls": video_urls,
         "rejected_media_urls": rejected_media_urls,
+        "malformed_media_urls": malformed_media_urls,
         "source_html": response.text,
         "metadata": {
             "url": response.url,

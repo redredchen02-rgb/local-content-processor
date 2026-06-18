@@ -129,8 +129,11 @@ def test_malformed_img_url_does_not_abort_extraction():
     assert out["body"] == "real body"
     assert "https://ex.com/ok.jpg" in out["image_urls"]
     assert all("bad" not in u for u in out["image_urls"])
-    # The malformed src is recorded as a rejected (failed) media URL.
-    assert any("[::bad::]" in u for u in out["rejected_media_urls"])
+    # bug_005: a parse failure is recorded SEPARATELY from SSRF rejections, so the
+    # adapter can stamp a truthful per-reason note. The malformed src lands in
+    # malformed_media_urls, never in the SSRF-only rejected_media_urls.
+    assert any("[::bad::]" in u for u in out["malformed_media_urls"])
+    assert out["rejected_media_urls"] == []
 
 
 def test_malformed_video_url_does_not_abort_extraction():
@@ -147,6 +150,9 @@ def test_malformed_video_url_does_not_abort_extraction():
     out = extract_content(resp, is_media_url_safe=_always_safe)
     assert out["video_urls"] == ["https://ex.com/ok.mp4"]
     assert out["body"] == "b"
+    # bug_005: malformed -> malformed_media_urls (parse failure), not the SSRF list.
+    assert any("[1:2:3]" in u for u in out["malformed_media_urls"])
+    assert out["rejected_media_urls"] == []
 
 
 def test_malformed_link_href_is_skipped_not_fatal():

@@ -524,7 +524,7 @@ class Api:
         c = self._ctx()
         interrupted = {
             i.job_id: i
-            for i in pl.Pipeline(c.config, c.store, c.audit).reconcile(ts=_now())
+            for i in pl.Pipeline(c.config, c.store, c.audit).reconcile()
         }
         records = pl.list_jobs(c.store, state)
         rows = [

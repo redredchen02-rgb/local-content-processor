@@ -231,10 +231,18 @@ def write_bundle_from_extraction(
         max_assets=spec.max_assets,
     )
 
-    # Record media URLs dropped by the SSRF guard as FAILED assets (never
-    # downloaded). They count as partial-asset failures -> CRAWLED_WARN upstream.
+    # Record dropped media URLs as FAILED assets (never downloaded). They count as
+    # partial-asset failures -> CRAWLED_WARN upstream. Two distinct drop reasons get
+    # distinct, TRUTHFUL notes: SSRF-preflight rejections vs URLs that would not
+    # parse (the latter never reached the preflight, so an "SSRF" note would lie —
+    # bug_005).
     rejected = extracted.get("rejected_media_urls", [])
-    for url in rejected:
+    malformed = extracted.get("malformed_media_urls", [])
+    for url, note in [
+        (u, "rejected by SSRF guard (internal/metadata target)") for u in rejected
+    ] + [
+        (u, "dropped: malformed media URL (unparseable host)") for u in malformed
+    ]:
         if len(assets) >= spec.max_assets:
             break
         kind = classify_media_url(url) or AssetKind.IMAGE
@@ -244,7 +252,7 @@ def write_bundle_from_extraction(
                 path="",
                 source_url=url,
                 state=AssetState.FAILED,
-                note="rejected by SSRF guard (internal/metadata target)",
+                note=note,
             )
         )
 
@@ -256,6 +264,7 @@ def write_bundle_from_extraction(
         len(extracted.get("image_urls", []))
         + len(extracted.get("video_urls", []))
         + len(rejected)
+        + len(malformed)
     )
     truncated = declared_assets > spec.max_assets
     _write_0600(

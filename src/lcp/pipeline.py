@@ -26,6 +26,7 @@ but the process result is flagged ``dry_run=True`` so the shell can label it."""
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -76,6 +77,25 @@ _MARKER_ONLY_CLEAR_STATES: frozenset[JobState] = TERMINAL_STATES | frozenset(
 # Crash-attempt cap before a deterministically-crashing job is flagged exhausted
 # (surfaced to a human) instead of being treated as routinely re-processable.
 DEFAULT_MAX_INTERRUPT_ATTEMPTS = 3
+
+
+def _pid_alive(pid: int) -> bool:
+    """True if a process with `pid` currently exists (POSIX target).
+
+    reconcile() uses this to tell a LIVE .processing owner (a running process is
+    mid-Stage-2 on the job) from a DEAD one (a hard crash left the marker behind).
+    Signal 0 performs the existence/permission check without delivering a signal."""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False  # no such process -> dead
+    except PermissionError:
+        return True  # exists but owned by another user
+    except OSError:
+        return False
+    return True
 
 # Map a crawl status string onto the persisted JobState after Stage 1.
 _CRAWL_STATUS_TO_STATE: dict[str, JobState] = {
@@ -212,27 +232,34 @@ class Pipeline:
         ``crawl_status`` is returned alongside the record so a shell can report it
         without re-deriving the mapping.
 
-        Re-crawl semantics: a fresh crawl is only legal for a brand-new job (no
-        record yet) or one created-but-not-yet-crawled (state NEW). Re-crawling an
-        ALREADY-crawled job has no legal state-machine edge (NEW is the only
-        predecessor of the crawl outcomes; the table has no re-crawl edge and the
-        operator has not asked for one), so we refuse EARLY with an actionable
-        error — before spawning the crawler / writing any bytes — rather than
-        crawling and then having persist_crawl_result reject the transition."""
+        Re-crawl semantics: a fresh crawl is legal for a brand-new job (no record
+        yet), one created-but-not-yet-crawled (state NEW), or a CRAWL_FAILED job
+        (bug_007). A CRAWL_FAILED crawl wrote NO bundle, so re-crawling clobbers
+        nothing, and the state machine's CRAWL_FAILED -> NEW retry edge + the GUI
+        重新抓取 affordance both expect an in-place retry: we reset it to NEW so
+        persist_crawl_result's NEW -> outcome edge is legal. Re-crawling an
+        ALREADY-crawled job (CRAWLED / CRAWLED_WARN / a processed state) WOULD
+        clobber a real bundle and has no retry edge, so we refuse EARLY with an
+        actionable error — before spawning the crawler / writing any bytes."""
         if self.crawler is None:
             raise InputValidationError("no crawler injected for Stage 1")
         existing = self.store.get_job(spec.job_id)
         if existing is None:
             self.store.create_job(spec.job_id, created_at=ts)
+        elif existing.state is JobState.CRAWL_FAILED:
+            # A failed crawl left no bundle to clobber; retry in place by resetting
+            # to NEW (CRAWL_FAILED -> NEW is the state machine's retry edge). Without
+            # this, the documented GUI 重新抓取 path dead-ended — supersede refuses
+            # CRAWL_FAILED too, so the only recovery was delete + a fresh id.
+            self.store.set_state(spec.job_id, JobState.NEW, updated_at=ts)
         elif existing.state is not JobState.NEW:
             # An existing already-crawled job: refuse before any crawl/mutation.
             # Mirrors ingest.py's create_only clobber guard (same intent — never
-            # overwrite an existing bundle in place). The recovery is to delete or
-            # supersede the job first, then crawl into a fresh id.
+            # overwrite an existing bundle in place). The recovery is to delete the
+            # job first, then crawl into a fresh id.
             raise InputValidationError(
                 f"job {spec.job_id} already exists at {existing.state.value}; "
-                "re-crawl is not supported (delete or supersede it first, or use "
-                "a new --job-id)"
+                "re-crawl is not supported (delete it first, or use a new --job-id)"
             )
         bundle: RawJobBundle = self.crawler.crawl(spec)
         target = _CRAWL_STATUS_TO_STATE.get(bundle.job_status, JobState.CRAWL_FAILED)
@@ -300,6 +327,25 @@ class Pipeline:
                 f"NEEDS_REVISION; {job_id} is {record.state.value}"
             )
 
+        # A .processing marker ALREADY present at entry means a PRIOR process() for
+        # this job died hard before its `finally` could clear it (a Python-level
+        # error still runs finally; only a true crash skips it). Re-processing now is
+        # therefore a crash RETRY: bump the loop-guard counter and record ONE
+        # INTERRUPTED_DETECTED audit event HERE, on the actual retry — never on a
+        # passive worklist view (reconcile() is a pure read; see bug_001). A
+        # deterministically-crashing job thus surfaces to a human after N real
+        # retries, not after N glances at the worklist.
+        if self.store.is_processing(job_id):
+            attempts = self.store.bump_interrupt_count(job_id)
+            self.audit.append(
+                ts=ts,
+                stage="process",
+                event=EVENT_INTERRUPTED_DETECTED,
+                job_id=job_id,
+                actor="system",
+                extra={"attempts": attempts, "state": record.state.value},
+            )
+
         # Mark the job mid-Stage-2 (transient PROCESSING) so a crash is
         # detectable and an LLM 5xx can be mapped to a retriable PROCESS_FAILED.
         # The marker is cleared in `finally`; the gates' persist_gate_state also
@@ -338,7 +384,11 @@ class Pipeline:
                 notes=["LLM/external service error; PROCESS_FAILED (retriable)"],
             )
         finally:
+            # Any Python-level completion (return OR raise) means this run did NOT
+            # die hard, so the crash loop-guard resets — only a true process death
+            # leaves both marker and counter for reconcile() to surface as a crash.
             self.store.clear_processing(job_id)
+            self.store.clear_interrupt_count(job_id)
 
     def _process_inner(
         self,
@@ -648,7 +698,7 @@ class Pipeline:
     # --- crash reconciliation: the .processing marker's consumer (U7) --------
 
     def reconcile(
-        self, *, ts: str, max_attempts: int = DEFAULT_MAX_INTERRUPT_ATTEMPTS
+        self, *, max_attempts: int = DEFAULT_MAX_INTERRUPT_ATTEMPTS
     ) -> list[InterruptedJob]:
         """Find jobs a crash left mid-Stage-2 and surface them for the operator.
 
@@ -658,14 +708,24 @@ class Pipeline:
         stale ``.processing`` marker becomes visible the moment the operator looks
         at the worklist.
 
-        We **flag, never auto-transition**: a hard crash (the only thing that leaves
-        a stale marker — ``process()`` clears it in ``finally``) is NOT a transient
+        **This is a PURE READ** (bug_001): it never bumps a counter and never writes
+        an audit event. A worklist view is read-only — the crash loop-guard counter
+        is bumped by ``process()`` on the actual retry, and reconcile only *reads*
+        it. (Previously it bumped on every view, so four glances at the worklist
+        flagged a job ``exhausted`` and spammed the hash-chained audit log.)
+
+        It also distinguishes a LIVE marker from a stale one by the PID stamped into
+        the marker: a marker owned by THIS process or any still-running process is
+        in-flight work (e.g. a GUI background-thread crawl mid-Stage-2 has its job
+        resting at CRAWLED with a live marker) and is skipped — NOT mis-flagged as a
+        crash. Only a marker whose owner PID is dead (or unreadable/legacy) is a real
+        hard-crash leftover.
+
+        We **flag, never auto-transition**: a hard crash is NOT a transient
         ``ExternalServiceError``, so silently re-driving it risks a deterministic
         retry->crash->retry loop. The job keeps its resting state and marker; the
-        operator re-processes deliberately. Each pass over a still-interrupted job
-        bumps a per-job-dir crash counter; once it exceeds ``max_attempts`` the job
-        is flagged ``exhausted`` (a deterministic crash that needs a human, not
-        another retry).
+        operator re-processes deliberately. Once the (process-bumped) crash counter
+        exceeds ``max_attempts`` the job is flagged ``exhausted``.
 
         A marker found on a TERMINAL job (a crash between COMMIT and
         ``clear_processing``) is only CLEARED — reconciliation never reopens a
@@ -675,16 +735,15 @@ class Pipeline:
         for rec in self.store.list_all():
             if not self.store.is_processing(rec.job_id):
                 continue
+            owner = self.store.processing_owner_pid(rec.job_id)
+            if owner is not None and (owner == os.getpid() or _pid_alive(owner)):
+                # A live process owns this marker: it is in-flight work, not a
+                # crash. Never flag (would be a false positive on a healthy job
+                # being processed right now) and never clear (would yank a live
+                # process's marker out from under it).
+                continue
             if rec.state in RECONCILABLE_STATES:
-                attempts = self.store.bump_interrupt_count(rec.job_id)
-                self.audit.append(
-                    ts=ts,
-                    stage="reconcile",
-                    event=EVENT_INTERRUPTED_DETECTED,
-                    job_id=rec.job_id,
-                    actor="system",
-                    extra={"attempts": attempts, "state": rec.state.value},
-                )
+                attempts = self.store.read_interrupt_count(rec.job_id)
                 interrupted.append(
                     InterruptedJob(
                         job_id=rec.job_id,

@@ -479,9 +479,15 @@ class JobStore:
     # --- transient PROCESSING marker (NOT persisted in SQLite) ---
 
     def mark_processing(self, job_id: str) -> Path:
+        """Set the transient .processing marker, STAMPED with this process's PID.
+
+        The PID lets reconcile() tell a LIVE in-flight marker (owned by a process
+        that is still running — e.g. a GUI background-thread crawl) from a STALE one
+        a hard crash left behind; only the latter is a real interruption (bug_001).
+        Still just a filesystem marker — PROCESSING is never persisted to SQLite."""
         marker = self.job_dir(job_id) / PROCESSING_MARKER
         marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.touch()
+        marker.write_text(str(os.getpid()), encoding="utf-8")
         return marker
 
     def clear_processing(self, job_id: str) -> None:
@@ -491,6 +497,20 @@ class JobStore:
 
     def is_processing(self, job_id: str) -> bool:
         return (self.job_dir(job_id) / PROCESSING_MARKER).exists()
+
+    def processing_owner_pid(self, job_id: str) -> int | None:
+        """PID recorded in the .processing marker (the process that set it), or None
+        if there is no marker or its content is missing/unparseable.
+
+        reconcile() uses this to distinguish a live in-flight marker (owned by a
+        running process) from a stale crash leftover. A None return for a marker
+        that DOES exist (legacy/empty/garbage) is treated by the caller as "owner
+        unknown" — i.e. handled as a crash leftover, the fail-safe direction."""
+        marker = self.job_dir(job_id) / PROCESSING_MARKER
+        try:
+            return int(marker.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return None
 
     # --- crash-attempt counter (per-job-dir FILE, NOT a SQLite column) ---
 

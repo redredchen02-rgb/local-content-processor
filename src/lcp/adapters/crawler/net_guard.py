@@ -42,6 +42,7 @@ from __future__ import annotations
 import ipaddress
 import os
 import socket
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -81,6 +82,17 @@ class ValidatedTarget:
     port: int | None
 
 
+# getaddrinfo has no per-call timeout, so default_resolver bounds it via the
+# PROCESS-GLOBAL socket.setdefaulttimeout(). That global is shared state: two
+# concurrent callers (the GUI runs crawls in background daemon threads, so two
+# queued jobs race here) would interleave the get/set/restore and either defeat
+# the bound for one of them or leak it onto unrelated sockets process-wide
+# (bug_004). Serialize the whole save/set/resolve/restore section so only one
+# caller owns the global default at a time. Contention is negligible — DNS
+# resolution is the crawler's slow path, not a hot loop.
+_RESOLVE_LOCK = threading.Lock()
+
+
 def default_resolver(
     host: str, *, timeout: float = DNS_RESOLVE_TIMEOUT_SECONDS
 ) -> list[str]:
@@ -88,22 +100,27 @@ def default_resolver(
 
     getaddrinfo takes no per-call timeout, so we set the process-wide socket
     default timeout for the duration of the call and restore it after (so the
-    crawler bound never leaks onto unrelated sockets). A timeout maps to a
-    retriable ExternalServiceError (the DNS server is slow/dead — a transient
-    external fault, exit 4); any other DNS failure (NXDOMAIN, etc.) stays an
-    InputValidationError (the host is genuinely unresolvable — exit 2)."""
-    prev_timeout = socket.getdefaulttimeout()
-    try:
-        socket.setdefaulttimeout(timeout)
-        infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
-    except (socket.timeout, TimeoutError) as e:
-        raise ExternalServiceError(
-            f"DNS resolution timed out for {host!r} after {timeout}s"
-        ) from e
-    except OSError as e:
-        raise InputValidationError(f"DNS resolution failed for {host!r}: {e}") from e
-    finally:
-        socket.setdefaulttimeout(prev_timeout)
+    crawler bound never leaks onto unrelated sockets). The save/set/resolve/restore
+    runs under ``_RESOLVE_LOCK`` because that default is process-global — without
+    the lock, concurrent callers would corrupt each other's save/restore (bug_004).
+    A timeout maps to a retriable ExternalServiceError (the DNS server is slow/dead
+    — a transient external fault, exit 4); any other DNS failure (NXDOMAIN, etc.)
+    stays an InputValidationError (the host is genuinely unresolvable — exit 2)."""
+    with _RESOLVE_LOCK:
+        prev_timeout = socket.getdefaulttimeout()
+        try:
+            socket.setdefaulttimeout(timeout)
+            infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+        except (socket.timeout, TimeoutError) as e:
+            raise ExternalServiceError(
+                f"DNS resolution timed out for {host!r} after {timeout}s"
+            ) from e
+        except OSError as e:
+            raise InputValidationError(
+                f"DNS resolution failed for {host!r}: {e}"
+            ) from e
+        finally:
+            socket.setdefaulttimeout(prev_timeout)
     ips: list[str] = []
     for info in infos:
         # info[4][0] is the address (str at runtime; typeshed widens to str|int).

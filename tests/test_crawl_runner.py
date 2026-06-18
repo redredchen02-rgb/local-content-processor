@@ -485,6 +485,31 @@ def test_scraped_media_urls_validated_for_ssrf(tmp_path, monkeypatch):
     assert "http://127.0.0.1/secret.png" in failed_urls
 
 
+def test_malformed_and_ssrf_drops_get_distinct_truthful_notes(tmp_path):
+    """bug_005: a malformed-URL drop must NOT be stamped 'rejected by SSRF guard'
+    in the manifest — that URL never reached the SSRF preflight. write_bundle emits
+    a per-reason note: SSRF rejections vs parse failures get distinct, truthful text."""
+    out = {
+        "title": "T", "body": "B",
+        "image_urls": [], "video_urls": [],
+        "rejected_media_urls": ["http://169.254.169.254/meta.jpg"],   # SSRF preflight
+        "malformed_media_urls": ["http://[::bad::]/x.jpg"],           # parse failure
+        "source_html": "<html></html>", "metadata": {"url": "https://example.com/a"},
+        "downloaded_images": [], "downloaded_files": [],
+    }
+    bundle = scrapy_impl.write_bundle_from_extraction(
+        _spec(tmp_path, "jnote"), out, source_domain="example.com", fetched_at=TS,
+    )
+    notes = {
+        a.source_url: a.note for a in bundle.manifest.assets
+        if a.state is AssetState.FAILED
+    }
+    assert "SSRF" in notes["http://169.254.169.254/meta.jpg"]
+    # The malformed URL is FAILED+recorded, but NOT labelled an SSRF target.
+    assert "SSRF" not in notes["http://[::bad::]/x.jpg"]
+    assert "malformed" in notes["http://[::bad::]/x.jpg"].lower()
+
+
 def test_robots_disallow_recorded_not_bypassed():
     # ROBOTSTXT_OBEY must be True in the spider settings (plan R8). We assert
     # the policy is on, never bypassed.

@@ -95,12 +95,24 @@ _SUPERSEDABLE = frozenset(
     }
 )
 
-# Source states that carry a REAL prior sign-off. Only these emit
-# SIGNOFF_INVALIDATED on supersede — a BLOCKED/DUPLICATE (and the held NEEDS_*
-# states) were never signed off, so emitting "void the old sign-off" for them
-# would be a FALSE audit statement (U8). The pre-existing supersede sources
-# keep their behavior; only the newly-added recovery sources are excluded.
-_NEVER_SIGNED_OFF = frozenset({JobState.BLOCKED, JobState.DUPLICATE})
+# Source states that were NEVER signed off. Superseding any of these must NOT
+# emit SIGNOFF_INVALIDATED — "void the old sign-off" would be a FALSE audit
+# statement, undermining the audit chain's truthfulness (U8). A real sign-off is
+# only produced by `approve` at REVIEW_PENDING (-> APPROVED); every other
+# supersede-able source reaches its state BEFORE the freeze/review-packet step:
+# BLOCKED/DUPLICATE (terminal-recovery, U8) and the held NEEDS_REVISION /
+# NEEDS_HUMAN_REVIEW (Stage-2 gate holds, pre-freeze) were all never signed off.
+# So SIGNOFF_INVALIDATED is emitted ONLY for the complement: {REVIEW_PENDING,
+# APPROVED}. (bug_008: NEEDS_* were previously omitted from this set, so a routine
+# abandon of a held job wrote a false invalidation event.)
+_NEVER_SIGNED_OFF = frozenset(
+    {
+        JobState.BLOCKED,
+        JobState.DUPLICATE,
+        JobState.NEEDS_REVISION,
+        JobState.NEEDS_HUMAN_REVIEW,
+    }
+)
 
 
 @dataclass(frozen=True)
