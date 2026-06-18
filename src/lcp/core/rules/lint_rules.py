@@ -315,7 +315,7 @@ def _copied_too_much(
     source_set = set(long_source)
     body_set = set(body_paragraphs)
     copied = sum(1 for p in source_set if p in body_set)
-    return copied, copied / len(long_source)
+    return copied, copied / len(source_set)
 
 
 def _score(errors: list[str], warnings: list[str]) -> float:
