@@ -45,6 +45,7 @@ share a SQLite handle. The GUI polls state via :meth:`Api.job_status` /
 from __future__ import annotations
 
 import functools
+import os
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -77,6 +78,23 @@ WEB_DIR = Path(__file__).resolve().parent / "web"
 # document that loopback default. This constant records the expected bind
 # address; a test asserts launch() never passes an unsupported start() kwarg.
 SERVER_HOST = "127.0.0.1"
+
+# Recognised truthy spellings of LCP_GUI_DEBUG. Kept explicit (not a bare
+# truthy check) so a misremembered LCP_GUI_DEBUG=0/false does NOT silently turn
+# the Web Inspector on — the safe, intuitive direction for a security flag.
+_TRUTHY_ENV = frozenset({"1", "true", "yes", "on"})
+
+
+def _gui_debug_enabled() -> bool:
+    """Whether to enable the WKWebView/GTK Web Inspector (DevTools).
+
+    The Inspector exposes the FULL pywebview bridge (window.pywebview.api.approve
+    (...), etc.), so production must ship with it OFF; a developer opts in via the
+    LCP_GUI_DEBUG env var. Extracted as a module-scope helper because launch() is
+    `pragma: no cover` (desktop-only) and gui.py is a CI/mypy blind spot — the flag
+    logic must be exercised by a test, not buried in the untested launch(). Mirrors
+    the LCP_ALLOW_LOOPBACK_FOR_TESTS env-flag style."""
+    return os.environ.get("LCP_GUI_DEBUG", "").strip().lower() in _TRUTHY_ENV
 
 
 def _error_dict(err: LcpError) -> dict:
@@ -749,7 +767,8 @@ def launch(config_path: str | None = None):  # pragma: no cover - desktop only
     # http_server=True uses pywebview's built-in server, which binds to
     # SERVER_HOST (loopback) by default, so the window's assets are never
     # reachable off-host. There is no host= kwarg (passing one raises).
-    # debug=True enables the WKWebView Web Inspector (right-click > Inspect
-    # Element) so a silent JS failure is diagnosable. Loopback-only http_server
-    # is unchanged; this only affects local devtools availability.
-    webview.start(http_server=True, ssl=False, debug=True)
+    # debug enables the WKWebView Web Inspector (right-click > Inspect Element),
+    # which exposes the full pywebview bridge — so it ships OFF and is opt-in via
+    # LCP_GUI_DEBUG (see _gui_debug_enabled). Loopback-only http_server is
+    # unchanged; this only affects local devtools availability.
+    webview.start(http_server=True, ssl=False, debug=_gui_debug_enabled())
