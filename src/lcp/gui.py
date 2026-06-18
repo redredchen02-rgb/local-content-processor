@@ -167,6 +167,28 @@ class Api:
     def _ctx(self) -> _Ctx:
         return _Ctx(self._config_path, self._base_dir)
 
+    # --- Setup ---------------------------------------------------------------
+
+    @bridge_safe
+    def init_workspace(self) -> dict:
+        """Mirror `init`: scaffold config.yaml (0600) + an empty site index.
+
+        Idempotent — never clobbers an existing config.yaml. Fixes the first-run
+        blockers (no reviewer whitelist; every clean job parked at dedup)."""
+        config_path = Path(self._config_path or "config.yaml")
+        if config_path.exists():
+            base_dir = self._base_dir or _config_io.load_config(
+                str(config_path)
+            ).storage.base_dir
+        else:
+            base_dir = self._base_dir or "./data"
+        created = _config_io.init_workspace(
+            config_path=config_path,
+            example_path=_config_io.find_config_example(),
+            site_index_path=Path(base_dir) / "site_index.jsonl",
+        )
+        return {"config_path": escape_html(str(config_path)), **created}
+
     # --- Stage 1: create + crawl / ingest ------------------------------------
 
     @bridge_safe

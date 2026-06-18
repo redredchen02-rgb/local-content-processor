@@ -619,6 +619,9 @@ class Pipeline:
         processed_cover: str | None = None,
         site_index_path: str | Path | None = None,
         has_videos: bool = False,
+        ai_copy: bool = True,
+        template: str | None = None,
+        watermark: bool | None = None,
     ) -> RunResult:
         """Run the pipeline up to `target` ('draft' or 'review').
 
@@ -627,6 +630,10 @@ class Pipeline:
           NEEDS_*).
         - target='review': as 'draft', then (only if PROCESSED) build the review
           packet -> REVIEW_PENDING.
+
+        `ai_copy` defaults ON for the happy path (D2): the copywriter fills the
+        required quick_facts/summary/faq (and image captions), without which a
+        real draft cannot reach PROCESSED. A dry run skips the LLM regardless.
 
         dry_run is honoured throughout (LLM never called). Stops EARLY and
         returns the resting state if any gate parks the job — it never forces a
@@ -652,6 +659,9 @@ class Pipeline:
             title=title,
             site_index_path=site_index_path,
             has_videos=has_videos,
+            ai_copy=ai_copy,
+            template=template,
+            watermark=watermark,
         )
         if proc.final_state is not JobState.PROCESSED:
             notes = list(proc.notes)

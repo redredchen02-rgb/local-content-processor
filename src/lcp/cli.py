@@ -28,7 +28,11 @@ from .adapters.crawler.ingest import LocalIngestCrawler
 from .adapters.publisher import signoff
 from .adapters.publisher.review_packet import build_review_packet
 from .adapters.storage.audit_log import AuditLog
-from .adapters.storage.config_io import load_config
+from .adapters.storage.config_io import (
+    find_config_example,
+    init_workspace,
+    load_config,
+)
 from .adapters.storage.job_store import JobStore
 from .core.errors import DependencyError, EXIT_INTERNAL, EXIT_OK, LcpError, UsageError
 from .core.models import SourceType
@@ -76,6 +80,49 @@ def cli(ctx, config_path, dry_run, as_json, verbose, quiet, output_dir):
         quiet=quiet,
         output_dir=output_dir,
     )
+
+
+# --- Setup -------------------------------------------------------------------
+
+
+@cli.command()
+@click.pass_context
+def init(ctx):
+    """Scaffold a runnable workspace: config.yaml (0600) + an empty site index.
+
+    Fixes the first-run blockers — without a config.yaml you have no reviewer
+    whitelist/settings, and without a site_index.jsonl every clean job parks at
+    the dedup honesty gate. Idempotent: never clobbers an existing config.yaml."""
+    obj = ctx.obj
+    config_path = Path(obj.get("config_path") or "config.yaml")
+    if config_path.exists():
+        base_dir = obj.get("output_dir") or load_config(
+            str(config_path)
+        ).storage.base_dir
+    else:
+        base_dir = obj.get("output_dir") or "./data"
+    created = init_workspace(
+        config_path=config_path,
+        example_path=find_config_example(),
+        site_index_path=Path(base_dir) / "site_index.jsonl",
+    )
+    parts = []
+    parts.append(
+        f"wrote {config_path} (0600)" if created["config_created"]
+        else f"kept existing {config_path}"
+    )
+    parts.append(
+        "seeded empty site_index.jsonl" if created["index_created"]
+        else "site index already present"
+    )
+    if obj.get("as_json"):
+        click.echo(_json.dumps(
+            {"config_path": str(config_path), **created}, ensure_ascii=False,
+            sort_keys=True,
+        ))
+    elif not obj.get("quiet"):
+        click.echo("init: " + "; ".join(parts)
+                   + ". Next: edit config.yaml (add a reviewer), then `lcp run`.")
 
 
 # --- Stage 1: crawl / ingest -------------------------------------------------
@@ -455,13 +502,19 @@ def list_cmd(ctx, state, summary):
 @click.option("--title", default="", help="Working title")
 @click.option("--source-url", "source_urls", multiple=True,
               help="Source URL(s) for the review packet (inert text)")
+@click.option("--ai-copy/--no-ai-copy", default=True,
+              help="Generate structural copy (captions/FAQ/quick-facts/summary/"
+                   "tags). ON by default — a complete draft needs it (D2).")
+@click.option("--template", default=None,
+              help="Per-栏目 prompt template to apply (category name)")
 @click.pass_context
-def run(ctx, url, input_dir, job_id, target, title, source_urls):
+def run(ctx, url, input_dir, job_id, target, title, source_urls, ai_copy, template):
     """End-to-end run up to a target: Stage 1 -> Stage 2 (-> review packet).
 
     Use --url (crawl) or --input (local folder ingest). Honours --dry-run (LLM
-    not called). Stops early and reports the resting state if a gate parks the
-    job (BLOCKED / DUPLICATE / NEEDS_*)."""
+    not called). --ai-copy is ON by default (a complete draft requires the
+    copywriter sections); pass --no-ai-copy to skip. Stops early and reports the
+    resting state if a gate parks the job (BLOCKED / DUPLICATE / NEEDS_*)."""
     c = Ctx(ctx.obj)
     if bool(url) == bool(input_dir):
         raise UsageError("run requires exactly one of --url or --input")
@@ -484,7 +537,7 @@ def run(ctx, url, input_dir, job_id, target, title, source_urls):
     p = pl.Pipeline(c.config, c.store, c.audit, dry_run=c.dry_run, crawler=crawler)
     res = p.run_until(
         spec, target=target, ts=_now(), title=title,
-        source_urls=list(source_urls),
+        source_urls=list(source_urls), ai_copy=ai_copy, template=template,
     )
     c.emit(
         {

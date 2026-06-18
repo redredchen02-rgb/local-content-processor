@@ -158,21 +158,68 @@ def update_llm_config_file(
     llm.pop("api_key", None)
 
     text = yaml.safe_dump(raw, allow_unicode=True, sort_keys=False)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    # Unique temp file (mkstemp creates it 0600, O_EXCL) so concurrent/aborted
-    # writers never share or leave a torn `config.yaml.tmp`.
-    fd, tmp_name = tempfile.mkstemp(dir=str(p.parent), prefix=p.name + ".", suffix=".tmp")
+    _atomic_write_0600(p, text)
+    return p
+
+
+def _atomic_write_0600(path: Path, text: str) -> None:
+    """Atomic 0600 write: unique temp in the same dir (mkstemp is 0600/O_EXCL),
+    fsync, chmod 0600, os.replace. A crash mid-write never leaves a torn or a
+    world-readable file. Shared by the settings write and `init_workspace`."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=path.name + ".", suffix=".tmp"
+    )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
             fh.flush()
             os.fsync(fh.fileno())
         os.chmod(tmp_name, 0o600)
-        os.replace(tmp_name, p)
+        os.replace(tmp_name, path)
     except BaseException:
         try:
             os.unlink(tmp_name)
         except OSError:
             pass
         raise
-    return p
+
+
+def find_config_example() -> Path:
+    """Locate ``config.example.yaml``: prefer the CWD (the documented setup runs
+    from the repo root), else the repo root relative to this installed package."""
+    cwd = Path("config.example.yaml")
+    if cwd.exists():
+        return cwd
+    return Path(__file__).resolve().parents[4] / "config.example.yaml"
+
+
+def init_workspace(
+    *,
+    config_path: str | os.PathLike[str],
+    example_path: str | os.PathLike[str],
+    site_index_path: str | os.PathLike[str],
+) -> dict[str, bool]:
+    """Scaffold a runnable workspace (plan Unit 4 — fixes blocker B1).
+
+    * Write ``config.yaml`` from the example if absent — mode **0600**, NEVER
+      clobbering an existing config. ``config.example.yaml`` ships 0644, so a
+      plain copy would leave a world-readable config holding base_url/hosts.
+    * Seed an EMPTY ``site_index.jsonl`` if absent — an empty *existing* index
+      counts as available (HIGH reliability), so a fresh clean job is judged
+      UNIQUE rather than parked UNCERTAIN at the dedup honesty gate.
+
+    Idempotent: returns ``{'config_created': bool, 'index_created': bool}``."""
+    created = {"config_created": False, "index_created": False}
+    cfg = Path(config_path)
+    if not cfg.exists():
+        example = Path(example_path)
+        if not example.exists():
+            raise InputValidationError(f"config example not found: {example}")
+        _atomic_write_0600(cfg, example.read_text(encoding="utf-8"))
+        created["config_created"] = True
+    idx = Path(site_index_path)
+    if not idx.exists():
+        _atomic_write_0600(idx, "")
+        created["index_created"] = True
+    return created

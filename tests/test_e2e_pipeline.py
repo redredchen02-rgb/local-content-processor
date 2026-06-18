@@ -110,6 +110,30 @@ def test_frozen_packet_and_manifest_are_wellformed_json(store, audit, config):
         json.loads(m.read_text(encoding="utf-8"))  # raises if torn/half-written
 
 
+def test_run_until_review_defaults_ai_copy_on(store, audit, config):
+    """D2: `run --until review` defaults --ai-copy ON, so the one-shot operator
+    path reaches a frozen packet (REVIEW_PENDING) without the dead-end."""
+    seed_clean_index(store)
+    p = build_pipeline(store, audit, config=config)
+    res = p.run_until(
+        spec_for(store, "r1"), target="review", ts=TS, title=TITLE,
+        source_urls=[SOURCE_URL],
+    )
+    assert res.final_state is JobState.REVIEW_PENDING, res.notes
+    assert res.packet is not None and res.packet.body_sha256
+
+
+def test_run_until_review_no_ai_copy_dead_ends(store, audit, config):
+    """The opposite: --no-ai-copy can't produce a complete draft (the copywriter
+    sections stay empty) -> parks at NEEDS_REVISION, never PROCESSED."""
+    seed_clean_index(store)
+    p = build_pipeline(store, audit, config=config)
+    res = p.run_until(
+        spec_for(store, "r2"), target="review", ts=TS, title=TITLE, ai_copy=False,
+    )
+    assert res.final_state is not JobState.REVIEW_PENDING
+
+
 def test_job_matching_site_index_is_detected_duplicate(store, audit, config):
     """The site index is actually consulted: a job whose body already exists in
     the index is parked DUPLICATE by the real dedup gate (proves the gate runs,
