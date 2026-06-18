@@ -368,8 +368,13 @@ def serve(  # pragma: no cover - blocking, desktop/operator entry point
     token = secrets.token_urlsafe(32)
     server = build_server(api, token=token, port=port)
     url = f"http://{SERVER_HOST}:{server.public_port}/"
-    print(f"lcp webui serving at {url}")
-    print("open this URL in Chrome to drive/debug with Claude in Chrome; Ctrl-C to stop")
+    # flush=True: the URL is the guaranteed deliverable (R1); without it a piped/
+    # redirected stdout buffers and the operator never sees where to point Chrome.
+    print(f"lcp webui serving at {url}", flush=True)
+    print(
+        "open this URL in Chrome to drive/debug with Claude in Chrome; Ctrl-C to stop",
+        flush=True,
+    )
     if open_browser:
         webbrowser.open(url)
     try:
