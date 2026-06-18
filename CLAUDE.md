@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-There is no Makefile or task runner — everything runs through the project venv (`./.venv/bin/...`). Setup: `python3.11 -m venv .venv && ./.venv/bin/pip install -e ".[crawl,media,llm,dedup,gui,dev]"`, then `./.venv/bin/lcp init` (scaffolds `config.yaml` 0600 + seeds an empty `site_index.jsonl`; idempotent, never clobbers). Requires Python 3.11+ and `ffmpeg`/`ffprobe` on `PATH`. A **complete** draft needs `--ai-copy` (the copywriter fills `quick_facts`/`summary`/`faq`; `image_sections` is required only for image-bearing bundles, D9) — `run` defaults `--ai-copy` on; `--dry-run` never calls the LLM so it cannot reach a packet.
+There is no Makefile or task runner — everything runs through the project venv (`./.venv/bin/...`). Setup: `python3.11 -m venv .venv && ./.venv/bin/pip install -e ".[crawl,media,llm,dedup,dev]"`, then `./.venv/bin/lcp init` (scaffolds `config.yaml` 0600 + seeds an empty `site_index.jsonl`; idempotent, never clobbers). Requires Python 3.11+ and `ffmpeg`/`ffprobe` on `PATH`. A **complete** draft needs `--ai-copy` (the copywriter fills `quick_facts`/`summary`/`faq`; `image_sections` is required only for image-bearing bundles, D9) — `run` defaults `--ai-copy` on; `--dry-run` never calls the LLM so it cannot reach a packet.
 
 ```sh
 ./.venv/bin/python -m pytest -q                          # full suite (~750 tests)
@@ -28,8 +28,8 @@ The single most important structural rule. Read `src/lcp/pipeline.py`'s module d
 - **`src/lcp/core/`** — pure functional core. **No I/O, no framework.** Models, rules (risk/dedup/lint/grounding), draft, and the state machine. All *business judgement* lives here.
 - **`src/lcp/adapters/`** — the imperative shell: `crawler/`, `media/`, `llm/`, `processor/` (Stage-2 gates), `publisher/`, `storage/`. These do I/O and call into the pure core.
 - **`src/lcp/pipeline.py`** — the injection seam. Holds the injected adapters (store, audit, crawler, llm client) + config, runs the stages, drives the state machine. CLI/GUI build a `Pipeline` and call it.
-- **`src/lcp/cli.py` + `src/lcp/gui.py`** — thin shells only (Click / pywebview glue). They mirror each other 1:1; **any operator action added to one must exist in the other.** Keep them logic-free.
-- **`src/lcp/web/`** — the GUI's frontend assets (`index.html`, `app.js`, `lex.js`, `app.css`). `gui.py::launch` serves this directory over pywebview's built-in HTTP server bound to **127.0.0.1 only** (never inline `html=`). The XSS-defense model lives here too: `app.js` renders bridge data with `textContent` (never `innerHTML`), `index.html` carries a strict CSP, and source URLs are inert text. Treat it as part of the GUI shell — keep logic out of it and mirror any new operator action in `cli.py`.
+- **`src/lcp/cli.py` + `src/lcp/gui.py` + `src/lcp/webserver.py`** — thin shells only (Click / the `Api` bridge / `http.server` glue). `cli.py` and the `Api` bridge in `gui.py` mirror each other 1:1; **any operator action added to one must exist in the other.** Keep them logic-free. `webserver.py` is the transport: a stdlib `ThreadingHTTPServer` bound to **127.0.0.1 only** that `lcp gui` launches; it serves `web/` and exposes each public `Api` method as a `POST /api/<method>` JSON endpoint. Because the API is now a real socket (not the old in-process pywebview bridge), `webserver.authorize` rebuilds the lost network trust boundary as a **fail-closed chain** run before any business logic: Host allowlist (anti DNS-rebinding) → per-launch token (anti local-process) → Origin/Sec-Fetch-Site (anti CSRF). DevTools is intentionally always available (browser); the real XSS defence remains the R41 output escaping + CSP. See `docs/solutions/localhost-http-api-csrf-defense.md`.
+- **`src/lcp/web/`** — the GUI's frontend assets (`index.html`, `app.js`, `lex.js`, `app.css`), served by `webserver.py`. The XSS-defense model lives here: `app.js` renders bridge data with `textContent` (never `innerHTML`), reaches the backend via a `fetch` proxy (`a.foo(x)` → `POST /api/foo {args:[x]}`) carrying the per-launch token from `<meta name="lcp-csrf">`, `index.html` carries a strict CSP (also sent as a response header, with `frame-ancestors 'none'`), and source URLs are inert text. The doc-root is locked to `web/` — `data/jobs/` is **never** served. Keep logic out of it and mirror any new operator action in `cli.py`.
 
 When adding a stage or gate: put the decision in `core/`, the I/O in an `adapters/` module, wire it in `pipeline.py`, expose it in *both* shells.
 
@@ -77,10 +77,10 @@ These are load-bearing, not aspirational. `docs/security/pii-inventory.md` is th
 
 ## Conventions
 
-- **Type gate is two-tier** (`pyproject [tool.mypy]`): `lcp.core.* / lcp.pipeline / lcp.adapters.*` are held to a strict bundle; only the `cli.py`/`gui.py` shells stay non-strict. The strict flags are **enumerated, not `strict = true`** — a per-module `strict` would apply globally and force strict onto the shells. To tighten a shell, add it to the strict override module list.
+- **Type gate is two-tier** (`pyproject [tool.mypy]`): `lcp.core.* / lcp.pipeline / lcp.adapters.*` are held to a strict bundle; only the top-level shells (`cli.py`/`gui.py`/`webserver.py`) stay non-strict (they don't match the strict globs). The strict flags are **enumerated, not `strict = true`** — a per-module `strict` would apply globally and force strict onto the shells. To tighten a shell, add it to the strict override module list.
 - **`no_implicit_reexport` is on** for strict modules — re-exports must be explicit (`from x import y as y`), as in `pipeline.py`'s draft-store re-exports.
 - Errors flow through the `core/errors.py` hierarchy (`LcpError` → `InputValidationError`, `ExternalServiceError`, `DependencyError`, …); CLI maps them to exit codes per the error contract.
-- Tests mirror the `src/` tree under `tests/` (`tests/core`, `tests/processor`, …). No `conftest.py`, no custom markers; GUI tests `importorskip("webview")`.
+- Tests mirror the `src/` tree under `tests/` (`tests/core`, `tests/processor`, …). No `conftest.py`, no custom markers. GUI/webui tests import `Api`/`webserver` directly and drive them with no socket (`tests/test_webserver_*` boot a real `127.0.0.1:0` server in-process); there is no optional GUI dependency to `importorskip` (pywebview was removed).
 - Comments explain **why**, not what (per repo style). Commit messages are English.
 
 ## Where to read more

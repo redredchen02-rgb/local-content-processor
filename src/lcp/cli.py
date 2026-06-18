@@ -583,20 +583,27 @@ def run(ctx, url, input_dir, job_id, target, title, source_urls, ai_copy, templa
 
 
 @cli.command()
+@click.option("--port", type=int, default=None, help="Port to bind on 127.0.0.1 (default 8765).")
+@click.option("--no-browser", is_flag=True, help="Do not auto-open the browser; just print the URL.")
 @click.pass_context
-def gui(ctx):
-    """Launch the minimal desktop GUI (pywebview).
+def gui(ctx, port, no_browser):
+    """Launch the local webui: a 127.0.0.1 HTTP service serving the operator UI.
 
+    Prints (and, by default, opens) a http://127.0.0.1:PORT/ URL — open it in
+    Chrome to drive/debug with Claude in Chrome. Stdlib only; no extra deps.
     Configure the LLM endpoint + api_key from the Settings panel; base_url/model
-    go to the config file, the api_key goes to the OS keyring only (never a file).
-    Needs the gui extra: pip install 'local-content-processor[gui]'."""
-    from .gui import launch
+    go to the config file, the api_key goes to the OS keyring only (never a file)."""
+    from .webserver import DEFAULT_PORT, serve
 
     try:
-        launch(config_path=ctx.obj.get("config_path"))
-    except ModuleNotFoundError as e:  # pywebview not installed
+        serve(
+            config_path=ctx.obj.get("config_path"),
+            port=port if port is not None else DEFAULT_PORT,
+            open_browser=not no_browser,
+        )
+    except OSError as e:  # e.g. port already in use (EADDRINUSE)
         raise DependencyError(
-            "GUI needs pywebview: pip install 'local-content-processor[gui]'"
+            f"could not start the webui server (port in use?): {e}; try --port"
         ) from e
 
 

@@ -1,51 +1,49 @@
-"""Minimal GUI (Unit 9) — a pywebview js_api thin shell over the SAME core the
-CLI uses (CLI/GUI parity, plan G6/G7).
+"""The operator-action bridge: :class:`Api`, one method per operator action,
+mirroring the CLI 1:1 (CLI/GUI parity, plan G6/G7).
 
-WHY THIS FILE IS TESTABLE WITHOUT A WINDOW
+This module holds ONLY the bridge logic. The transport that serves it — a
+loopback :mod:`http.server` that exposes each ``Api`` method as a JSON endpoint
+and serves the ``web/`` assets — lives in :mod:`lcp.webserver` (it replaced the
+old pywebview desktop window, 2026-06-18; ``lcp gui`` now launches that server).
+``Api`` itself is transport-agnostic and unchanged by that move.
+
+WHY THIS FILE IS TESTABLE WITHOUT A SERVER
 ==========================================
-All operator logic lives in :class:`Api` — a plain object with NO pywebview
-dependency. Tests import ``Api`` and call its methods directly; no window, no
-HTTP server, no event loop. ``import webview`` happens LAZILY inside
-:func:`launch` only, so importing this module (and exercising ``Api``) works
-headless. ``Api`` is the GUI's I/O boundary, so — exactly like ``cli.Ctx`` /
+All operator logic lives in :class:`Api` — a plain object with NO transport
+dependency. Tests import ``Api`` and call its methods directly; no socket, no
+event loop. ``Api`` is the I/O boundary, so — exactly like ``cli.Ctx`` /
 ``cli._now()`` — it builds config + adapters per call and generates the ISO8601
 timestamp here (keeping core/adapters deterministic).
 
 THE THREE LETHAL-TRIFECTA LEGS STAY CLOSED (plan redline 3 / R41)
 ================================================================
-The js_api bridge is the place a webview XSS could turn into read/write/network
-against core, so the output boundary is hardened on BOTH ends:
+The bridge is the place a webui XSS could turn into read/write/network against
+core, so the output boundary is hardened on BOTH ends:
 
   * Every ``Api`` method returns a JSON-able dict whose attacker-shapeable fields
     are already escaped via :mod:`sanitizer` (``sanitize_draft`` / ``escape_html``
     / ``inert_link``). Source URLs come back as INERT text, never an ``<a href>``,
     never fetched. ``app.js`` renders these with ``textContent`` (never
-    ``innerHTML``), and ``index.html`` carries a strict CSP with ``img-src
-    'self'``.
+    ``innerHTML``), and ``index.html`` carries a strict CSP. With the browser
+    transport, DevTools is always available — so this output escaping + CSP, NOT
+    the transport, is the real defence (the network leg is rebuilt by the server's
+    fail-closed gate chain; see :func:`lcp.webserver.authorize`).
   * Errors do NOT cross the bridge as exceptions (which could leak a stack /
     secret). Each method catches :class:`LcpError` and returns a small
-    ``{"error": ..., "exit_code": ...}`` dict instead.
-
-LOAD MODEL (feasibility-corrected, plan line 528)
-=================================================
-:func:`launch` serves the ``web/`` directory via pywebview's built-in HTTP
-server bound to ``127.0.0.1`` ONLY (loopback; off-host unreachable — kills
-network CSRF/CORS/DNS-rebinding). We do NOT use inline ``html=`` (its serverless
-mode cannot load the external ``app.js`` / ``cover.jpg`` and would clash with the
-no-inline CSP). Loopback-only stops a *network* attacker; it does not make DOM
-content trusted — which is exactly why the R41 output escaping above is the real
-defence.
+    ``{"error": ..., "exit_code": ...}`` dict instead (and the server's dispatch
+    seam re-applies this mapping so the typed exit_code survives for every route).
 
 CONCURRENCY: each handler opens its OWN JobStore connection (WAL-safe) by
 rebuilding the per-call context, so background threads (crawl/process) never
 share a SQLite handle. The GUI polls state via :meth:`Api.job_status` /
-:meth:`Api.list_jobs` / :meth:`Api.summary`.
+:meth:`Api.list_jobs` / :meth:`Api.summary`. :meth:`Api._run_bg` refuses a second
+worker for a job already running (a browser webui can fire concurrent same-job
+requests; a single pywebview window could not).
 """
 
 from __future__ import annotations
 
 import functools
-import os
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -67,34 +65,6 @@ from .adapters.storage import config_io as _config_io
 from .adapters.storage.source_store import SourceStore
 from .core.errors import EXIT_INTERNAL, LcpError
 from .core.models import SourceType
-
-# The web/ assets directory served by pywebview's 127.0.0.1-only HTTP server.
-WEB_DIR = Path(__file__).resolve().parent / "web"
-
-# pywebview's built-in HTTP server binds to this loopback address BY DEFAULT
-# (its server.address is hard-coded to 127.0.0.1 and bottle's default host is
-# loopback) — never the all-interfaces wildcard. There is NO supported `host`
-# argument to webview.start() (passing one raises TypeError), so we rely on and
-# document that loopback default. This constant records the expected bind
-# address; a test asserts launch() never passes an unsupported start() kwarg.
-SERVER_HOST = "127.0.0.1"
-
-# Recognised truthy spellings of LCP_GUI_DEBUG. Kept explicit (not a bare
-# truthy check) so a misremembered LCP_GUI_DEBUG=0/false does NOT silently turn
-# the Web Inspector on — the safe, intuitive direction for a security flag.
-_TRUTHY_ENV = frozenset({"1", "true", "yes", "on"})
-
-
-def _gui_debug_enabled() -> bool:
-    """Whether to enable the WKWebView/GTK Web Inspector (DevTools).
-
-    The Inspector exposes the FULL pywebview bridge (window.pywebview.api.approve
-    (...), etc.), so production must ship with it OFF; a developer opts in via the
-    LCP_GUI_DEBUG env var. Extracted as a module-scope helper because launch() is
-    `pragma: no cover` (desktop-only) and gui.py is a CI/mypy blind spot — the flag
-    logic must be exercised by a test, not buried in the untested launch(). Mirrors
-    the LCP_ALLOW_LOOPBACK_FOR_TESTS env-flag style."""
-    return os.environ.get("LCP_GUI_DEBUG", "").strip().lower() in _TRUTHY_ENV
 
 
 def _error_dict(err: LcpError) -> dict:
@@ -299,8 +269,18 @@ class Api:
 
     def _run_bg(self, job_id: str, fn) -> dict:
         """Run a long task (crawl/process) in a background thread; the GUI polls
-        :meth:`job_status` for completion. Returns immediately with 'running'."""
+        :meth:`job_status` for completion. Returns immediately with 'running'.
+
+        DUPLICATE-WORKER GUARD: a browser-served webui (unlike the old single
+        pywebview window) can fire two ``*_async`` POSTs for the same job at once.
+        If one is already ``running``, return its in-flight status instead of
+        spawning a second daemon worker — two workers would race the caller-owned
+        ``.processing`` marker / ``.interrupt_count``. Checked under the same
+        ``_status_lock`` that guards every other ``_status`` access."""
         with self._status_lock:
+            existing = self._status.get(job_id)
+            if existing is not None and existing.get("status") == "running":
+                return existing
             self._status[job_id] = {"job_id": escape_html(job_id), "status": "running"}
 
         def _worker():
@@ -785,34 +765,3 @@ def _input_error(msg: str) -> LcpError:
     from .core.errors import InputValidationError
 
     return InputValidationError(msg)
-
-
-def launch(config_path: str | None = None):  # pragma: no cover - desktop only
-    """Open the desktop window. LAZY ``import webview`` — this is the ONLY place
-    pywebview is imported, so the module stays importable (and Api stays testable)
-    headless. NOT called in tests.
-
-    Serves web/ via pywebview's built-in HTTP server bound to 127.0.0.1 ONLY
-    (loopback; off-host unreachable). We point the window at the served
-    index.html (NOT inline html=, which cannot load external app.js/cover.jpg and
-    clashes with the no-inline CSP)."""
-    import webview  # lazy: never imported at module top-level
-
-    # Resolve a concrete config path so the Settings panel reads and writes the
-    # SAME file the rest of the GUI loads (config.yaml in cwd by default; it is
-    # gitignored). A missing file is tolerated — the panel creates it.
-    config_path = config_path or "config.yaml"
-    api = Api(config_path=config_path)
-    webview.create_window(
-        "Local Content Processor",
-        url=str(WEB_DIR / "index.html"),
-        js_api=api,
-    )
-    # http_server=True uses pywebview's built-in server, which binds to
-    # SERVER_HOST (loopback) by default, so the window's assets are never
-    # reachable off-host. There is no host= kwarg (passing one raises).
-    # debug enables the WKWebView Web Inspector (right-click > Inspect Element),
-    # which exposes the full pywebview bridge — so it ships OFF and is opt-in via
-    # LCP_GUI_DEBUG (see _gui_debug_enabled). Loopback-only http_server is
-    # unchanged; this only affects local devtools availability.
-    webview.start(http_server=True, ssl=False, debug=_gui_debug_enabled())
