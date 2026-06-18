@@ -408,9 +408,9 @@ def list_cmd(ctx, state, summary):
         return
     interrupted = {
         i.job_id: i
-        for i in pl.Pipeline(c.config, c.store, c.audit, dry_run=c.dry_run).reconcile(
-            ts=_now()
-        )
+        for i in pl.Pipeline(
+            c.config, c.store, c.audit, dry_run=c.dry_run
+        ).reconcile()
     }
     records = pl.list_jobs(c.store, state)
     rows = [

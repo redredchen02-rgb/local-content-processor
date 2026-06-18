@@ -332,30 +332,79 @@ def test_resolve_state_aliases():
 # --- U7: .processing crash-marker reconciliation -----------------------------
 
 
+# A pid safely above any real pid_max, so os.kill(_, 0) raises ProcessLookupError
+# -> _pid_alive() reports it dead. Lets a test forge a marker that looks like a
+# HARD-CRASH leftover (owned by a now-dead process), as opposed to mark_processing()
+# stamping THIS live process's pid (which reconcile treats as in-flight work).
+_DEAD_PID = 2_000_000_000
+
+
+def _stale_marker(store, job_id):
+    """Write a .processing marker owned by a now-DEAD pid: a hard-crash leftover."""
+    from lcp.adapters.storage.job_store import PROCESSING_MARKER
+
+    d = store.job_dir(job_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / PROCESSING_MARKER).write_text(str(_DEAD_PID), encoding="utf-8")
+
+
 def _crashed_mid_stage2(store, job_id, state=JobState.CRAWLED):
     """Simulate a hard crash mid-Stage-2: a resting state + a stale .processing
-    marker (process() normally clears it in `finally`; a crash never reaches it)."""
+    marker owned by a dead process (process() clears it in `finally`; a crash never
+    reaches it, and the process that set it is gone)."""
     store.create_job(job_id, created_at=TS)
     store.set_state(job_id, state, updated_at=TS)
-    store.mark_processing(job_id)  # left behind by the crash
+    _stale_marker(store, job_id)
 
 
 def test_reconcile_detects_interrupted_crawled_job(store, audit):
-    """A crash mid-Stage-2 (marker set, job at CRAWLED) is surfaced as interrupted
+    """A crash mid-Stage-2 (stale marker, job at CRAWLED) is surfaced as interrupted
     so the operator can explicitly re-process it (not silently auto-transitioned)."""
     p = _pipeline(store, audit)
     _crashed_mid_stage2(store, "j1")
 
-    interrupted = p.reconcile(ts=TS)
+    interrupted = p.reconcile()
 
     assert [i.job_id for i in interrupted] == ["j1"]
     found = interrupted[0]
     assert found.state is JobState.CRAWLED
-    assert found.attempts == 1
+    # reconcile is a PURE READ: it reports the process-bumped counter (0 here — no
+    # retry has happened yet); it does NOT bump on a worklist view (bug_001).
+    assert found.attempts == 0
     assert found.exhausted is False
     # Flagged, NOT auto-transitioned: the job stays at its resting state and the
     # marker stays so a re-process is the operator's deliberate action.
     assert store.get_job("j1").state is JobState.CRAWLED
+
+
+def test_reconcile_is_a_pure_read_no_bump_no_audit(store, audit):
+    """bug_001: viewing the worklist must not mutate state. Repeated reconcile
+    passes over the same crashed job never bump the counter and never write an
+    INTERRUPTED_DETECTED audit event (that belongs to process(), on the retry)."""
+    p = _pipeline(store, audit)
+    _crashed_mid_stage2(store, "j1")
+
+    for _ in range(5):
+        r = p.reconcile()
+        assert r[0].attempts == 0 and r[0].exhausted is False
+
+    assert store.read_interrupt_count("j1") == 0  # never bumped by viewing
+    events = [l["event"] for l in audit._read_lines()]
+    assert "INTERRUPTED_DETECTED" not in events  # no audit spam from views
+
+
+def test_reconcile_skips_live_in_flight_marker(store, audit):
+    """bug_001: a marker owned by a LIVE process (this process — e.g. a GUI
+    background-thread crawl mid-Stage-2 with the job resting at CRAWLED) is in-flight
+    work. reconcile must NOT mis-flag it as a crash, and must NOT clear it."""
+    p = _pipeline(store, audit)
+    store.create_job("j1", created_at=TS)
+    store.set_state("j1", JobState.CRAWLED, updated_at=TS)
+    store.mark_processing("j1")  # live marker: stamped with THIS process's pid
+
+    assert p.reconcile() == []  # not surfaced as interrupted
+    assert store.is_processing("j1")  # live marker left intact
+    assert store.read_interrupt_count("j1") == 0
 
 
 def test_reconcile_ignores_healthy_job_without_marker(store, audit):
@@ -364,7 +413,7 @@ def test_reconcile_ignores_healthy_job_without_marker(store, audit):
     store.create_job("j1", created_at=TS)
     store.set_state("j1", JobState.CRAWLED, updated_at=TS)
 
-    assert p.reconcile(ts=TS) == []
+    assert p.reconcile() == []
     assert store.read_interrupt_count("j1") == 0
 
 
@@ -376,32 +425,65 @@ def test_reconcile_clears_stale_marker_at_terminal_state(store, audit):
     store.create_job("j1", created_at=TS)
     store.set_state("j1", JobState.CRAWLED, updated_at=TS)
     persist_gate_state(store, "j1", JobState.BLOCKED, updated_at=TS)
-    store.mark_processing("j1")  # stale marker from a crash after COMMIT
+    _stale_marker(store, "j1")  # dead-pid marker from a crash after COMMIT
 
-    interrupted = p.reconcile(ts=TS)
+    interrupted = p.reconcile()
 
     assert interrupted == []  # terminal job is never surfaced as recoverable
     assert store.get_job("j1").state is JobState.BLOCKED  # never reopened
     assert not store.is_processing("j1")  # marker cleared
 
 
-def test_reconcile_loop_guard_surfaces_after_n_attempts(store, audit):
-    """A DETERMINISTIC crash (same input always crashes) must surface to a human
-    after N interruptions instead of looping forever. Each reconcile pass over a
-    still-interrupted job bumps the crash counter; once it exceeds the cap the job
-    is flagged `exhausted` so the operator stops auto-retrying it."""
+def test_reconcile_reports_exhausted_when_crash_count_exceeds_cap(store, audit):
+    """A DETERMINISTIC crash (same input always crashes) surfaces to a human after N
+    real retries. process() bumps the crash counter on each retry; reconcile READS it
+    and flags `exhausted` once it exceeds the cap (a real test can't SIGKILL
+    mid-process, so the accumulated count is driven the store-level way retries do)."""
     p = _pipeline(store, audit)
     _crashed_mid_stage2(store, "j1")
 
-    # Three crash-and-reconcile cycles at the default cap of 3.
-    r1 = p.reconcile(ts=TS, max_attempts=3)
-    assert r1[0].attempts == 1 and r1[0].exhausted is False
-    r2 = p.reconcile(ts=TS, max_attempts=3)
-    assert r2[0].attempts == 2 and r2[0].exhausted is False
-    r3 = p.reconcile(ts=TS, max_attempts=3)
-    assert r3[0].attempts == 3 and r3[0].exhausted is False
-    r4 = p.reconcile(ts=TS, max_attempts=3)
-    assert r4[0].attempts == 4 and r4[0].exhausted is True
+    for _ in range(3):
+        store.bump_interrupt_count("j1")
+    assert p.reconcile(max_attempts=3)[0].exhausted is False  # 3 == cap, not over
+
+    store.bump_interrupt_count("j1")  # 4th crash-retry
+    r = p.reconcile(max_attempts=3)
+    assert r[0].attempts == 4 and r[0].exhausted is True
+
+
+def test_process_retry_after_crash_bumps_and_clears_counter(store, audit):
+    """process() owns the crash counter: a retry that finds a STALE marker bumps it
+    and writes ONE INTERRUPTED_DETECTED event; a clean completion then clears it."""
+    p = _pipeline(store, audit)
+    store.create_job("j1", created_at=TS)
+    store.set_state("j1", JobState.CRAWLED, updated_at=TS)
+    _stale_marker(store, "j1")  # a prior process() crashed here
+
+    # A redline body parks at BLOCKED with no LLM call -> a clean process() return.
+    res = p.process(
+        "j1", ts=TS, risk_input=RiskInput(title="某新聞", body="涉及未成年的私密內容"),
+    )
+    assert res.final_state is JobState.BLOCKED
+
+    events = [l for l in audit._read_lines() if l["event"] == "INTERRUPTED_DETECTED"]
+    assert len(events) == 1 and events[0]["extra"]["attempts"] == 1
+    # Clean completion resets the loop guard and leaves no marker.
+    assert store.read_interrupt_count("j1") == 0
+    assert not store.is_processing("j1")
+
+
+def test_process_first_run_does_not_bump(store, audit):
+    """A first process() run (no pre-existing marker) is not a retry: no counter
+    bump, no INTERRUPTED_DETECTED event."""
+    p = _pipeline(store, audit)
+    store.create_job("j1", created_at=TS)
+    store.set_state("j1", JobState.CRAWLED, updated_at=TS)
+
+    p.process("j1", ts=TS, risk_input=RiskInput(title="某新聞", body="涉及未成年的私密內容"))
+
+    events = [l["event"] for l in audit._read_lines()]
+    assert "INTERRUPTED_DETECTED" not in events
+    assert store.read_interrupt_count("j1") == 0
 
 
 def test_reconcile_via_cli_list_seam(store, audit, tmp_path):

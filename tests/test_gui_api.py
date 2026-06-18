@@ -375,17 +375,24 @@ def test_list_jobs_surfaces_interrupted_job(tmp_path):
     from lcp.adapters.storage.job_store import JobStore
     from lcp.core.state import JobState
 
+    from lcp.adapters.storage.job_store import PROCESSING_MARKER
+
     base = str(tmp_path)
     s = JobStore(base_dir=base)
     s.create_job("crashed", created_at="2026-06-18T00:00:00Z")
     s.set_state("crashed", JobState.CRAWLED, updated_at="2026-06-18T00:00:00Z")
-    s.mark_processing("crashed")  # stale marker a hard crash left behind
+    # A stale marker a hard crash left behind: owned by a now-DEAD pid, so the
+    # in-process reconcile() (which runs under this live test pid) treats it as a
+    # crash leftover rather than its own in-flight work (bug_001).
+    (s.job_dir("crashed") / PROCESSING_MARKER).write_text("2000000000", encoding="utf-8")
 
     api = _api(tmp_path, base)
     res = api.list_jobs()
     row = next(r for r in res["jobs"] if r["job_id"] == "crashed")
     assert row["interrupted"] is True
-    assert row["interrupt_attempts"] == 1
+    # reconcile is a pure read: attempts reflects the process-bumped crash counter
+    # (0 — no retry yet), NOT a view count.
+    assert row["interrupt_attempts"] == 0
     assert row["interrupt_exhausted"] is False
 
 
