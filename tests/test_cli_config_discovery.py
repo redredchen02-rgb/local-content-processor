@@ -61,6 +61,16 @@ def test_explicit_beats_cwd_config(tmp_path, monkeypatch):
     assert ctx.config.publisher.reviewers == ["bob"]  # explicit wins over cwd
 
 
+def test_dir_named_config_yaml_falls_through_to_defaults(tmp_path, monkeypatch):
+    # A *directory* named config.yaml must not be handed to load_config (which
+    # would read_text it -> IsADirectoryError -> exit 5). is_file() ignores it, so
+    # Ctx falls through to defaults cleanly.
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config.yaml").mkdir()
+    ctx = Ctx({})
+    assert ctx.config.publisher.reviewers == []  # defaults, no crash
+
+
 def test_explicit_missing_config_still_raises(tmp_path, monkeypatch):
     # The new implicit default must NOT mask a typo'd explicit path into defaults.
     monkeypatch.chdir(tmp_path)

@@ -73,7 +73,10 @@ class Ctx:
         # to defaults. An explicit --config is passed unchanged (and still raises if
         # missing). (The GUI does its own cwd resolution in webserver._make_api.)
         config_path = obj.get("config_path")
-        if not config_path and Path("config.yaml").exists():
+        # is_file (not exists): a *directory* or broken symlink named config.yaml
+        # must fall through to defaults, not get handed to load_config -> read_text
+        # (an IsADirectoryError would surface as exit 5, not a clean default).
+        if not config_path and Path("config.yaml").is_file():
             config_path = "config.yaml"
         self.config = load_config(config_path)
         base_dir = obj.get("output_dir") or self.config.storage.base_dir
