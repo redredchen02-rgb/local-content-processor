@@ -509,53 +509,26 @@ def test_app_js_has_no_innerhtml_and_no_wildcard_host():
     assert "0.0.0.0" not in src
 
 
-def test_gui_does_not_import_webview_at_module_level():
-    """`import webview` must appear ONLY inside launch() (lazy), never at the top
-    level — otherwise the module would be unimportable headless."""
-    src = GUI_PY.read_text(encoding="utf-8")
-    for line in src.splitlines():
-        stripped = line.strip()
-        # A top-level import has no leading indentation.
-        if stripped.startswith(("import webview", "from webview")):
-            assert line.startswith((" ", "\t")), (
-                "import webview must be indented (inside launch), not top-level"
-            )
+def test_no_webview_import_anywhere_in_src():
+    """pywebview is gone — no module under src/lcp may import it. The browser
+    webui (lcp.webserver) replaced the desktop window."""
+    src_root = Path(__file__).resolve().parents[1] / "src" / "lcp"
+    offenders = []
+    for py in src_root.rglob("*.py"):
+        for line in py.read_text(encoding="utf-8").splitlines():
+            s = line.strip()
+            if s.startswith(("import webview", "from webview")):
+                offenders.append(f"{py.name}: {s}")
+    assert not offenders, f"webview import(s) must not exist: {offenders}"
 
 
 def test_server_host_is_loopback_only():
-    from lcp.gui import SERVER_HOST
+    # SERVER_HOST moved to the transport module (webserver) when launch() left gui.
+    from lcp.webserver import SERVER_HOST
 
     assert SERVER_HOST == "127.0.0.1"
     src = GUI_PY.read_text(encoding="utf-8")
     assert "0.0.0.0" not in src
-
-
-def test_launch_passes_only_valid_webview_start_kwargs(monkeypatch, tmp_path):
-    """Regression for the mypy-surfaced GUI bug: launch() previously passed
-    host=SERVER_HOST to webview.start(), which pywebview 6 does NOT accept
-    (TypeError on launch; loopback pinning silently unenforced). Assert launch()
-    only ever passes real webview.start parameters and never a host= kwarg
-    (loopback comes from pywebview's default bind, not from us)."""
-    import inspect
-
-    import pytest
-
-    webview = pytest.importorskip("webview")
-    real_params = set(inspect.signature(webview.start).parameters)
-    assert "host" not in real_params  # documents WHY we must not pass host=
-
-    captured: dict = {}
-    monkeypatch.setattr(webview, "create_window", lambda *a, **k: None)
-    monkeypatch.setattr(webview, "start", lambda *a, **k: captured.update(k))
-
-    import lcp.gui as gui
-
-    gui.launch(config_path=str(tmp_path / "config.yaml"))
-
-    assert captured, "webview.start was not called"
-    assert "host" not in captured  # the bug must not return
-    assert set(captured) <= real_params  # every kwarg is a real start() param
-    assert captured.get("http_server") is True
 
 
 def test_index_html_has_strict_csp():
@@ -836,7 +809,8 @@ def test_module_imports_without_pywebview_window():
     import lcp.gui as gui
 
     assert hasattr(gui, "Api")
-    assert hasattr(gui, "launch")
+    # launch() is gone — the transport lives in lcp.webserver now.
+    assert not hasattr(gui, "launch")
     # Constructing Api does NOT open a window or import webview.
     api = gui.Api()
     assert api is not None

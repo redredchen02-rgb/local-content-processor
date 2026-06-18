@@ -4,7 +4,7 @@
  *   - never the markup-injecting DOM sink, never template-literal HTML, no eval,
  *   - source links are rendered as INERT text (never a live link, never fetched).
  *
- * Data from window.pywebview.api.* is ALREADY sanitized server-side. We still
+ * Data from the /api/* fetch bridge is ALREADY sanitized server-side. We still
  * only ever assign it to textContent — defence in depth behind the strict CSP.
  *
  * Three-view shell (INBOX / JOB / SETUP), state-gated actions (STATE_ACTIONS,
@@ -21,8 +21,52 @@
 
 // --- primitives (single textContent choke point) ---------------------------
 
+// The bridge: every `a.method(...)` is a same-origin `POST /api/method` carrying
+// {args:[...]} (replaces the old in-process desktop bridge with ZERO call-site
+// changes — calls are still positional and still return a promise of a dict). The
+// per-launch CSRF token is injected by the localhost server into the page's
+// <meta name="lcp-csrf"> and sent as Authorization: Bearer — a custom header that
+// forces a CORS preflight, so a cross-site caller is blocked by the browser.
+var LCP_TOKEN = (function () {
+  var m = document.querySelector('meta[name="lcp-csrf"]');
+  return m ? m.getAttribute("content") : null;
+})();
+
+function tokenReady() {
+  // The server replaces the __LCP_CSRF_TOKEN__ placeholder at serve time. If this
+  // page was NOT served by the lcp webui (placeholder intact / meta absent), every
+  // /api call would 401 — boot() surfaces an explicit cause instead.
+  return !!LCP_TOKEN && LCP_TOKEN !== "__LCP_CSRF_TOKEN__";
+}
+
+// NOTE: under this Proxy, EVERY member access returns a function, so member-
+// existence guards like `if (a && a.templates)` are now always truthy and the
+// call always fires over HTTP. That is safe for today's real methods; any FUTURE
+// optional method must be feature-detected by CALLING it and checking the
+// returned dict (e.g. an {error}/unsupported shape), never by member presence.
+var BRIDGE = new Proxy({}, {
+  get: function (_t, name) {
+    // Guard against thenable/symbol probing: returning a function for "then"
+    // would make BRIDGE look like a promise and fetch("/api/then", ...).
+    if (typeof name !== "string" || name === "then") return undefined;
+    return function () {
+      var args = Array.prototype.slice.call(arguments);
+      return fetch("/api/" + name, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + (LCP_TOKEN || ""),
+        },
+        body: JSON.stringify({ args: args }),
+      }).then(function (r) {
+        return r.json();
+      });
+    };
+  },
+});
+
 function api() {
-  return (window.pywebview && window.pywebview.api) || null;
+  return BRIDGE;
 }
 function $(id) {
   return document.getElementById(id);
@@ -1335,18 +1379,24 @@ async function init() {
   refreshInbox();
 }
 
-// Bootstrap. In pywebview the window.pywebview object + .api are injected AFTER
-// the page loads and announced by the `pywebviewready` event — so a parse-time
-// `if (window.pywebview)` check ALWAYS fails and would silently never wire the
-// bridge. We instead: (1) always subscribe to pywebviewready (covers "not yet
-// fired"), (2) immediately boot if the bridge is already present (covers
-// "already fired" / fast inject), and (3) fall back to a plain DOM boot for the
-// CLI/GUI-parity browser case where pywebview never appears. A run-once guard
-// makes every path idempotent. CSP/R41-safe: external JS, event wiring only.
+// Bootstrap. The page is now always a plain browser served by the lcp webui (the
+// fetch bridge is available synchronously — no injected object to wait for), so we
+// boot directly on DOM-ready. A run-once guard keeps it idempotent. If the page
+// was not served by the webui (no live token), surface an explicit cause rather
+// than letting every /api call 401 silently. CSP/R41-safe: external JS, textContent.
 let _booted = false;
 function boot() {
   if (_booted) return;
   _booted = true;
+  if (!tokenReady()) {
+    if (document.body) {
+      setText(
+        document.body,
+        "此页面不是由 lcp webui 服务的（缺少安全令牌）。请用 `lcp gui` 启动，并打开它印出的网址。"
+      );
+    }
+    return;
+  }
   init();
 }
 function whenDom(fn) {
@@ -1356,22 +1406,4 @@ function whenDom(fn) {
     fn();
   }
 }
-// (1) bridge may arrive later — always listen.
-window.addEventListener("pywebviewready", function () { whenDom(boot); }, { once: true });
-if (window.pywebview && window.pywebview.api) {
-  // (2) bridge already injected (event may have fired before this script ran).
-  whenDom(boot);
-} else if (typeof window.pywebview === "undefined") {
-  // (3) No bridge at parse time. This is EITHER real pywebview whose bridge is
-  //     not injected yet (the COMMON case — inject happens after load and fires
-  //     pywebviewready, handled by (1)) OR a plain browser where the event never
-  //     fires (CLI/GUI parity). Danger: a 0ms fallback runs on DOMContentLoaded,
-  //     BEFORE pywebviewready, and would boot init() against a not-yet-ready
-  //     bridge — reproducing the exact bug we are fixing. So this timer is a LAST
-  //     RESORT only: long enough that a real bridge always wins via (1) first
-  //     (boot() is idempotent, so that makes this a harmless no-op). It only
-  //     actually boots when pywebview never appears at all (real browser).
-  whenDom(function () {
-    setTimeout(boot, 3000);
-  });
-}
+whenDom(boot);

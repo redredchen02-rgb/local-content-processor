@@ -4,12 +4,18 @@
   <meta charset="utf-8">
   <!--
     Strict CSP (R41): no inline anything, scripts/styles/images from 'self' only,
-    object-src 'none'. img-src 'self' lets cover.jpg load from the 127.0.0.1-only
-    built-in server while still blocking remote beacons. UNCHANGED across the
-    UI/UX rebuild — it is the last line behind the textContent discipline.
+    object-src 'none', frame-ancestors 'none' (anti-clickjacking). img-src 'self'
+    allows assets from the 127.0.0.1-only webui while blocking remote beacons;
+    cover paths are inert TEXT (never an <img>), and data/jobs/ is never served.
+    The lcp.webserver also sends this CSP as a real response header. This is the
+    last line behind the textContent discipline.
   -->
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none'; script-src 'self'; img-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'">
+        content="default-src 'none'; script-src 'self'; img-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'">
+  <!-- Per-launch CSRF token: the localhost webui server replaces this placeholder
+       with the live token at serve time; app.js reads it (CSP-safe DOM read) and
+       sends it as Authorization: Bearer on every /api/* fetch. Never a URL/log. -->
+  <meta name="lcp-csrf" content="__LCP_CSRF_TOKEN__">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Local Content Processor</title>
   <link rel="stylesheet" href="app.css">

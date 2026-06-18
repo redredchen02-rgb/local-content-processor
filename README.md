@@ -46,8 +46,13 @@ normalization shells out to them).
 
 ```sh
 python3.11 -m venv .venv
-./.venv/bin/pip install -e ".[crawl,media,llm,dedup,gui,dev]"
+./.venv/bin/pip install -e ".[crawl,media,llm,dedup,dev]"
 ```
+
+The GUI needs **no extra dependency**: `lcp gui` starts a stdlib `http.server`
+webui bound to `127.0.0.1`, prints (and opens) a `http://127.0.0.1:8765/` URL —
+open it in Chrome to drive/debug with Claude in Chrome (`--no-browser` to only
+print the URL; `--port N` to change the port).
 
 Optional-dependency groups (install only what you need):
 
@@ -57,7 +62,7 @@ Optional-dependency groups (install only what you need):
 | `media` | pillow               | image processing                |
 | `llm`   | openai               | the constrained-rewrite step    |
 | `dedup` | datasketch           | dedup index                     |
-| `gui`   | pywebview            | the minimal local GUI           |
+| `gui`   | _(nothing)_          | webui is stdlib-only; extra kept empty for back-compat |
 | `dev`   | pytest               | the test suite                  |
 
 Configuration:
@@ -150,9 +155,12 @@ Global flags: `--config PATH`, `--dry-run`, `--json` (machine-readable),
 `--quiet`, `--output-dir DIR`. Exit codes follow the error contract
 (`0` ok, non-zero per error type).
 
-The GUI is the same operator surface (`Api` in `src/lcp/gui.py`); it must launch
-on a real desktop (`lcp` exposes the headless logic; the window itself needs
-`pywebview` and a display).
+The GUI is the same operator surface (`Api` in `src/lcp/gui.py`), served by a
+loopback `http.server` webui (`src/lcp/webserver.py`) that `lcp gui` launches and
+that you open in a browser. The server rebuilds the trust boundary the old
+in-process bridge had — a fail-closed chain (Host allowlist → per-launch token →
+Origin/Sec-Fetch-Site), bound to `127.0.0.1` only, serving only `web/` (never
+`data/jobs/`). See `docs/solutions/localhost-http-api-csrf-defense.md`.
 
 ## Pipeline stages & job state machine
 
@@ -244,7 +252,8 @@ src/lcp/
   adapters/    imperative shell: crawler, media, llm, processor, publisher, storage
   pipeline.py  injects adapters, runs stages, drives the state machine
   cli.py       thin CLI shell (every operator action)
-  gui.py       minimal pywebview js_api shell (mirrors the CLI)
+  gui.py       the Api bridge (one method per operator action; mirrors the CLI)
+  webserver.py loopback http.server webui: serves web/ + Api methods as /api/* JSON
 docs/          plans, brainstorms, security (pii-inventory.md)
 spikes/        detection_accuracy/ measurement harness
 tests/         pytest suite

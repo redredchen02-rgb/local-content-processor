@@ -16,7 +16,10 @@ crawl = ["scrapy>=2.16,<3"]
 media = ["pillow>=12.2,<13"]
 llm = ["openai>=2,<3"]
 dedup = ["datasketch>=1.6"]
-gui = ["pywebview>=6,<7"]
+# The GUI is now a stdlib http.server webui (lcp.webserver), launched by
+# `lcp gui` — it needs NO extra dependency. Kept (empty) so existing
+# `pip install '.[...,gui]'` commands keep working; pywebview was removed.
+gui = []
 dev = ["pytest>=8", "mypy>=1.18,<2", "types-PyYAML"]
 
 [project.scripts]
@@ -70,11 +73,4 @@ extra_checks = true
 
 [[tool.mypy.overrides]]
 module = ["datasketch.*"]
-ignore_missing_imports = true
-
-# pywebview (gui extra) is not installed in CI; gui.py imports it lazily. When
-# absent, treat it as untyped so the gate stays green. When present (local dev
-# with the gui extra), mypy still type-checks gui.py against the real stubs.
-[[tool.mypy.overrides]]
-module = ["webview", "webview.*"]
 ignore_missing_imports = true
