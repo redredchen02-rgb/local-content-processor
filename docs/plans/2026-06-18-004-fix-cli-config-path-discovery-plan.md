@@ -1,7 +1,7 @@
 ---
 title: "fix: CLI auto-discovers config.yaml from cwd (lcp run honours lcp init)"
 type: fix
-status: active
+status: completed
 date: 2026-06-18
 deepened: 2026-06-18
 ---
@@ -147,7 +147,7 @@ single `Ctx` chokepoint.
 
 ## Implementation Units
 
-- [ ] **Unit 1: `Ctx` auto-loads cwd `config.yaml` when no `--config` (exists-gated)**
+- [x] **Unit 1: `Ctx` auto-loads cwd `config.yaml` when no `--config` (exists-gated)**
 
 **Goal:** Make every operator command read the `config.yaml` that `lcp init` writes,
 so the documented `init → edit → run` flow works without `--config`, while leaving
@@ -208,7 +208,7 @@ it pass. This is the coverage the existing suite lacks.
 
 ---
 
-- [ ] **Unit 2: Document the cwd config auto-load**
+- [x] **Unit 2: Document the cwd config auto-load**
 
 **Goal:** State the (now-true) behavior so operators and future readers know the CLI
 reads `config.yaml` from cwd.
