@@ -20,8 +20,11 @@ NEVER fetch a URL (plan: linter/dedup MUST NOT parse/resolve URLs)."""
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from ...core.rules import dedup_rules
 from ...core.rules.dedup_rules import (
@@ -70,24 +73,54 @@ def load_site_index(path: str | Path) -> DedupIndex:
     Each line: {"job_id": "...", "title": "...", "body": "..."}. A MISSING file
     -> site_index_available=False (fail-loud, R36): we honestly report we have
     no trustworthy index to confirm uniqueness. An EMPTY existing file still
-    counts as available (the operator asserts it is the real, current index)."""
+    counts as available (the operator asserts it is the real, current index).
+
+    FAIL CLOSED on a malformed line (U2): a stray non-JSON line, a half-written
+    line, a record missing ``job_id``, or a non-object line must NOT raise a
+    ``JSONDecodeError``/``KeyError``/``TypeError`` out of the gate —
+    ``Pipeline.process`` only catches ``ExternalServiceError``, so an escape would
+    leave the job stuck at ``CRAWLED`` and surface as a bare "internal error"
+    (exit 5). Instead QUARANTINE the bad line (skip it, keep the rest of the index
+    trustworthy) — a fleet-friendly choice that does not park every job for one
+    bad line. We log the line NUMBER + error type only (the line may carry
+    PII-light title/body, so the content is never logged). If a NON-EMPTY file
+    yields ZERO valid entries (e.g. the operator pointed at the wrong file), treat
+    the whole index as untrustworthy -> available=False so the pure layer
+    downgrades unique->uncertain->human review rather than silently classifying
+    everything UNIQUE."""
     p = Path(path)
     if not p.exists():
         return DedupIndex(entries=(), site_index_available=False)
     entries: list[IndexEntry] = []
-    for raw in p.read_text(encoding="utf-8").splitlines():
-        raw = raw.strip()
+    skipped = 0
+    saw_content = False
+    for lineno, raw in enumerate(p.read_text(encoding="utf-8").splitlines(), start=1):
+        raw = raw.lstrip("﻿").strip()  # tolerate a leading UTF-8 BOM
         if not raw:
             continue
-        obj = json.loads(raw)
-        entries.append(
-            IndexEntry(
+        saw_content = True
+        try:
+            obj = json.loads(raw)
+            entry = IndexEntry(
                 job_id=str(obj["job_id"]),
                 title=str(obj.get("title", "")),
                 body=str(obj.get("body", "")),
             )
-        )
-    return DedupIndex(entries=tuple(entries), site_index_available=True)
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            skipped += 1
+            logger.warning(
+                "site index %s line %d unparseable (%s); quarantining",
+                p,
+                lineno,
+                type(exc).__name__,
+            )
+            continue
+        entries.append(entry)
+    if skipped:
+        logger.warning("site index %s: quarantined %d unparseable line(s)", p, skipped)
+    # A non-empty file that parsed to nothing is a misconfiguration -> fail closed.
+    available = not (saw_content and not entries)
+    return DedupIndex(entries=tuple(entries), site_index_available=available)
 
 
 def _map_to_state(result: DedupResult) -> tuple[JobState | None, ReviewReason | None]:

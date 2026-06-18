@@ -80,6 +80,96 @@ def test_load_index_parses_entries(tmp_path):
     assert {e.job_id for e in idx.entries} == {"a", "b"}
 
 
+# --- U2: fail closed on a malformed index (per-line quarantine) ---------------
+
+
+def test_load_index_quarantines_malformed_line_keeps_valid(tmp_path):
+    """A stray non-JSON line must NOT raise out of the gate (process() only
+    catches ExternalServiceError -> the job would be stuck CRAWLED at exit 5).
+    Skip the bad line, keep the valid entries, stay available."""
+    p = tmp_path / SITE_INDEX_FILENAME
+    p.write_text(
+        json.dumps({"job_id": "a", "title": "t", "body": "x"}, ensure_ascii=False)
+        + "\n{ this is not json\n"
+        + json.dumps({"job_id": "b", "title": "t2", "body": "y"}, ensure_ascii=False)
+        + "\n",
+        encoding="utf-8",
+    )
+    idx = load_site_index(p)
+    assert idx.site_index_available is True
+    assert {e.job_id for e in idx.entries} == {"a", "b"}
+
+
+def test_load_index_missing_job_id_is_skipped(tmp_path):
+    """A well-formed JSON line missing job_id must not raise KeyError."""
+    p = tmp_path / SITE_INDEX_FILENAME
+    p.write_text(
+        json.dumps({"title": "no id", "body": "x"}, ensure_ascii=False)
+        + "\n"
+        + json.dumps({"job_id": "b", "title": "t", "body": "y"}, ensure_ascii=False)
+        + "\n",
+        encoding="utf-8",
+    )
+    idx = load_site_index(p)
+    assert idx.site_index_available is True
+    assert {e.job_id for e in idx.entries} == {"b"}
+
+
+def test_load_index_non_object_line_is_skipped(tmp_path):
+    """A JSON scalar/array line (obj['job_id'] -> TypeError) must not raise."""
+    p = tmp_path / SITE_INDEX_FILENAME
+    p.write_text(
+        "[1, 2, 3]\n42\n"
+        + json.dumps({"job_id": "b", "title": "t", "body": "y"}, ensure_ascii=False)
+        + "\n",
+        encoding="utf-8",
+    )
+    idx = load_site_index(p)
+    assert {e.job_id for e in idx.entries} == {"b"}
+
+
+def test_load_index_bom_prefixed_line_tolerated(tmp_path):
+    """A leading UTF-8 BOM must not make an otherwise-valid line unparseable."""
+    p = tmp_path / SITE_INDEX_FILENAME
+    p.write_text(
+        "﻿" + json.dumps({"job_id": "a", "title": "t", "body": "x"}),
+        encoding="utf-8",
+    )
+    idx = load_site_index(p)
+    assert {e.job_id for e in idx.entries} == {"a"}
+
+
+def test_load_index_all_lines_unparseable_is_unavailable(tmp_path):
+    """A non-empty file that yields ZERO valid entries is a misconfiguration —
+    fail closed: mark unavailable so the pure layer downgrades unique->uncertain
+    ->human review, rather than silently classifying everything UNIQUE."""
+    p = tmp_path / SITE_INDEX_FILENAME
+    p.write_text("garbage\n{nope\nstill not json\n", encoding="utf-8")
+    idx = load_site_index(p)
+    assert idx.site_index_available is False
+    assert idx.is_empty
+
+
+def test_dedup_gate_does_not_raise_on_corrupt_index(tmp_path, store, audit):
+    """End-to-end through the gate: a corrupt index must yield an outcome, never
+    raise a JSONDecodeError/KeyError past the fail-closed boundary."""
+    p = tmp_path / SITE_INDEX_FILENAME
+    p.write_text("{ broken\n", encoding="utf-8")
+    _new_processing_job(store, "j1")
+    out = run_dedup_gate(
+        job_id="j1",
+        title="某個標題",
+        body="某段內文",
+        store=store,
+        audit=audit,
+        site_index_path=p,
+        ts=TS,
+    )
+    # All-unparseable -> unavailable -> downgrade to human review (fail closed).
+    assert out.job_state is JobState.NEEDS_HUMAN_REVIEW
+    assert out.review_reason is ReviewReason.DEDUP
+
+
 # --- dedup gate orchestration -> state ---------------------------------------
 
 
