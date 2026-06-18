@@ -91,10 +91,15 @@ def bridge_safe(fn: Callable[..., dict]) -> Callable[..., dict]:
     """Wrap a bridge method so any LcpError becomes the standard error dict.
 
     Collapses the repeated ``try/except LcpError -> _error_dict(e)`` blocks into
-    one place (the catch can't be forgotten). It catches ONLY LcpError — methods
-    that deliberately catch more (OSError/ValueError in cover_report; the
-    bare-Exception bridge guards) keep their own handlers and are NOT decorated.
-    functools.wraps preserves __name__ so pywebview still exposes each method."""
+    one place (the catch can't be forgotten). It catches ONLY LcpError; a method
+    that needs to treat MORE exception types specially (e.g. cover_report maps
+    OSError/ValueError to "no advisory") still stacks @bridge_safe on top and
+    keeps an inner try/except for the narrower types — the decorator is the outer,
+    last-resort LcpError net. The module invariant (asserted by an introspection
+    test) is that EVERY public Api method returns a bridge-safe dict; dashboard_stats
+    is the sole hand-rolled exception because its broad bare-Exception net is part
+    of the same shape. functools.wraps preserves __name__ so pywebview still
+    exposes each method."""
 
     @functools.wraps(fn)
     def _wrapped(*args: Any, **kwargs: Any) -> dict:
@@ -340,11 +345,19 @@ class Api:
         sanitized["state"] = rec.state.value if rec else None
         return sanitized
 
+    @bridge_safe
     def cover_report(self, job_id: str) -> dict:
         """Cover safe-area advisories + preview/cover paths from the media gate's
         validation report (Unit 5). Advisory text only — never a hard gate. All
         strings are escaped; paths are inert text (the GUI shows them, the
-        loopback server does not serve job dirs, so no <img> is embedded)."""
+        loopback server does not serve job dirs, so no <img> is embedded).
+
+        @bridge_safe handles LcpError. The narrower OSError/ValueError catch below
+        treats an unreadable / malformed report as "no advisory" (the report is
+        purely advisory). Any OTHER unexpected type (e.g. a KeyError from a
+        report missing a key json.loads accepts, a stat/permission surprise) must
+        NOT cross the bridge as a raw exception (path/stack leak) — it returns the
+        same "internal error" shape as dashboard_stats / _run_bg."""
         try:
             import json
 
@@ -364,10 +377,13 @@ class Api:
                 "geometry": [escape_html(g) for g in adv.get("geometry", [])],
                 "aesthetic": [escape_html(a) for a in adv.get("aesthetic", [])],
             }
-        except (LcpError, OSError, ValueError) as e:
-            if isinstance(e, LcpError):
-                return _error_dict(e)
+        except LcpError:
+            raise  # let @bridge_safe map it (preserves the typed exit code)
+        except (OSError, ValueError):
+            # Unreadable / malformed report -> advisory simply absent.
             return {"job_id": escape_html(job_id), "has_report": False}
+        except Exception:  # noqa: BLE001 - bridge boundary, never leak a stack
+            return {"error": "internal error", "exit_code": EXIT_INTERNAL}
 
     @bridge_safe
     def approve(self, job_id: str, reviewer: str) -> dict:
@@ -621,9 +637,14 @@ class Api:
         c = self._ctx()
         return {"reviewers": [escape_html(r) for r in c.config.publisher.reviewers]}
 
+    @bridge_safe
     def disclaimer(self) -> dict:
         """The VERBATIM attribution-not-authentication disclaimer (unescaped: it
-        is our own fixed text, never attacker-shapeable)."""
+        is our own fixed text, never attacker-shapeable).
+
+        @bridge_safe for uniformity — the module invariant is that EVERY public
+        Api method returns a bridge-safe dict, so a future change here can never
+        let a raw exception cross the bridge."""
         return {"disclaimer": signoff.DISCLAIMER}
 
     # --- LLM settings (base_url/model -> file; api_key -> keyring ONLY) -------
