@@ -233,6 +233,22 @@ def build_server(api: Any, *, token: str, port: int) -> _Server:
     return _Server((SERVER_HOST, port), _Handler, api=api, token=token)
 
 
+def _make_api(config_path: str | None) -> Any:
+    """Build the shared ``Api`` with a CONCRETE config path.
+
+    Defaulting ``None`` -> ``"config.yaml"`` is load-bearing: the Settings panel
+    writes via ``Api._settings_path`` (which itself falls back to ``config.yaml``),
+    but reads/readiness go through ``Api._ctx`` -> ``load_config(self._config_path)``.
+    With ``_config_path`` left ``None``, ``_ctx`` loads DEFAULTS and never reads the
+    file the panel just wrote — so saved base_url/model silently never take effect
+    (the GUI reports "endpoint 缺" forever). Resolving to ``config.yaml`` makes the
+    panel write and the rest read the SAME file (the old pywebview ``launch`` did
+    this; the move to ``serve`` must preserve it)."""
+    from .gui import Api
+
+    return Api(config_path=config_path or "config.yaml")
+
+
 class _Handler(BaseHTTPRequestHandler):
     # Quiet, body-free access log: the request LINE (method + path) never contains
     # the POST body, so a `save_settings` api_key cannot leak here.
@@ -371,9 +387,7 @@ def serve(  # pragma: no cover - blocking, desktop/operator entry point
     Claude-in-Chrome cannot attach), so it is best-effort only. On Ctrl-C, wait for
     any in-flight job (a second Ctrl-C abandons it, leaving an `interrupted` job to
     re-process, exactly like a crash)."""
-    from .gui import Api
-
-    api = Api(config_path=config_path)
+    api = _make_api(config_path)
     token = secrets.token_urlsafe(32)
     server = build_server(api, token=token, port=port)
     url = f"http://{SERVER_HOST}:{server.public_port}/"
