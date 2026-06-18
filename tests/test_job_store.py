@@ -293,3 +293,40 @@ def test_set_state_many_concurrent_writers_no_busy(tmp_path):
         t.join()
     assert errors == [], errors
     assert all(s.get_job(f"j{i}").state is JobState.CRAWLED for i in range(n))
+
+
+def test_persist_from_processing_concurrent_one_winner(tmp_path):
+    """BEGIN IMMEDIATE closes the read->update race in persist_from_processing too:
+    two gates racing the same CRAWLED job to different terminal targets resolve to
+    exactly one winner; the loser reads the committed terminal state and refuses
+    (PROCESSING is unreachable from a terminal state). No marker is leaked."""
+    s = _store(tmp_path)
+    s.create_job("j1", created_at=TS)
+    s.set_state("j1", JobState.CRAWLED, updated_at=TS)
+    barrier = threading.Barrier(2)
+    results: dict[str, str] = {}
+
+    def worker(name, target):
+        barrier.wait()
+        try:
+            s.persist_from_processing("j1", target, updated_at=TS)
+            results[name] = "ok"
+        except InputValidationError:
+            results[name] = "illegal"
+        except Exception as e:  # noqa: BLE001 - surface SQLITE_BUSY etc. as failure
+            results[name] = f"other:{type(e).__name__}"
+
+    t1 = threading.Thread(target=worker, args=("blocked", JobState.BLOCKED))
+    t2 = threading.Thread(target=worker, args=("duplicate", JobState.DUPLICATE))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    oks = [k for k, v in results.items() if v == "ok"]
+    illegals = [k for k, v in results.items() if v == "illegal"]
+    assert len(oks) == 1, results
+    assert len(illegals) == 1, results
+    expected = JobState.BLOCKED if oks[0] == "blocked" else JobState.DUPLICATE
+    assert s.get_job("j1").state is expected
+    assert not s.is_processing("j1")  # marker cleared by the winner, none leaked
