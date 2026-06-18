@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 import shutil
 import sqlite3
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -543,8 +544,6 @@ class JobStore:
         lock_path = path.with_name(f"{INTERRUPT_COUNT_MARKER}.lock")
         # Use a unique tmp name (pid + thread id) to avoid concurrent threads in
         # the same process overwriting each other's temp file.
-        import threading
-
         tmp = path.with_name(
             f".{INTERRUPT_COUNT_MARKER}.tmp.{os.getpid()}.{threading.get_ident()}"
         )
