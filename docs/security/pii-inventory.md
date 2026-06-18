@@ -125,6 +125,45 @@ include defending an audit log against an OS-level power loss on an unsupported
 platform; `verify_chain()` reporting "broken" on a truncated log is fail-loud,
 not silent acceptance.
 
+## Localhost webui attack surface (GUI transport, 2026-06-18)
+
+The GUI moved from a pywebview desktop window (an in-process bridge with **no
+socket**) to a stdlib `http.server` webui bound to `127.0.0.1` (`lcp.webserver`),
+so the operator can drive/debug it in Chrome. A real HTTP socket re-opens an
+attack surface the in-process bridge never had; the server rebuilds the lost
+*network* trust boundary as a fail-closed chain (see
+`docs/solutions/localhost-http-api-csrf-defense.md`):
+
+- **Bind:** `127.0.0.1` only — never `0.0.0.0`; a test asserts the bound socket
+  is loopback.
+- **Host allowlist** (anti DNS-rebinding), **per-launch token** (anti
+  other-local-process), **Origin/Sec-Fetch-Site** (anti cross-site CSRF), all
+  fail-closed. The token is `secrets.token_urlsafe(32)`, minted fresh per launch,
+  delivered only via the served `index.html` `<meta>` (never a URL/log/file).
+- **Doc-root locked to `web/`.** `data/jobs/` (the plaintext-0600 PII bundles
+  above) is **never** served over HTTP; cover paths remain inert text, never an
+  `<img src>`. Path traversal is rejected.
+- **CSP** is sent as a real response header (with `frame-ancestors 'none'` /
+  `X-Frame-Options: DENY` against clickjacking), and the token-bearing
+  `index.html` carries `Cache-Control: no-store` so the token never reaches the
+  browser disk cache.
+- **Errors** never cross as a stack/traceback; the access log records
+  method+path+status only (a `save_settings` body carrying `api_key` is never
+  logged).
+
+**Residuals (accepted):**
+- **Token confidentiality is now downstream of CSP + R41.** The token sits in the
+  served DOM, so it defends against *other processes / other origins*, **not** an
+  on-page XSS — that is the R41 textContent + strict-CSP discipline's job.
+- **`api_key` crosses the loopback socket as cleartext** (POST body to
+  `save_settings`). Accepted: the channel is `127.0.0.1`-only and not off-host
+  observable, it is never logged, and it goes straight to the OS keyring (never a
+  file/response). No TLS by design (stdlib server, single host).
+- **DevTools is always available** (it is a browser) — intentional (the point of
+  the change). The real defence is the output escaping + CSP, not the transport.
+- The Scrapy-path DNS-rebinding/TOCTOU SSRF residual (above) is unchanged; the
+  new CSRF chain only reduces one way to *reach* `create_and_crawl`.
+
 ## Sign-off (to be completed by PM/legal)
 
 - [ ] Confirmed in writing: no named statutory erasure obligation for MVP.
