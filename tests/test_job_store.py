@@ -1,9 +1,12 @@
+import json
 import os
+import shutil
 import sqlite3
 import threading
 
 import pytest
 
+from lcp.adapters.storage.audit_log import EVENT_ERASURE, AuditLog
 from lcp.adapters.storage.job_store import JobStore
 from lcp.core.errors import InputValidationError
 from lcp.core.state import JobState, ReviewReason
@@ -523,3 +526,124 @@ def test_persist_crawl_result_concurrent_one_winner(tmp_path):
     got = s.get_job("j1")
     assert got.state in (JobState.CRAWLED, JobState.CRAWL_FAILED)
     assert got.source_text_sha256 == "t" * 64
+
+
+# --- U10: truthful delete/erasure + BEGIN IMMEDIATE on the delete-row write ---
+
+
+def _erasure_events(audit_path):
+    """All ERASURE events in file order (external audit log)."""
+    return [
+        e for e in (json.loads(line) for line in
+                    audit_path.read_text(encoding="utf-8").splitlines() if line.strip())
+        if e["event"] == EVENT_ERASURE
+    ]
+
+
+def test_delete_records_truthful_outcome_on_clean_removal(tmp_path):
+    """A normal delete removes blobs + row AND records a confirming ERASURE event
+    whose extra reflects the REAL outcome (removed=True, the row was deleted)."""
+    s = _store(tmp_path)
+    s.create_job("j1", created_at=TS)
+    (s.job_dir("j1") / "raw" / "page.html").write_text("body", encoding="utf-8")
+    # External audit (storage-root layout) so BOTH events survive the rmtree.
+    audit = AuditLog(tmp_path / "audit.jsonl")
+
+    result = s.delete_job("j1", ts=TS, actor="operator", audit=audit)
+
+    assert result.removed is True
+    assert not s.job_dir("j1").exists()
+    assert s.get_job("j1") is None
+    events = _erasure_events(tmp_path / "audit.jsonl")
+    # A confirming event records the TRUE outcome (not just the pre-rmtree intent).
+    confirm = events[-1]
+    assert confirm["extra"]["removed"] is True
+    assert confirm["extra"]["rows_deleted"] == 1
+    assert confirm["extra"]["cryptographic_erasure"] is False
+
+
+def test_delete_reports_not_fully_removed_when_rmtree_fails(tmp_path, monkeypatch):
+    """The compliance bug U10 closes: a stuck/undeletable file must NOT be reported
+    as erased. With rmtree failing (dir survives), the returned result AND the
+    truthful audit event both say removed=False — never an unconditional 'erased'
+    paired with removed=False."""
+    s = _store(tmp_path)
+    s.create_job("j1", created_at=TS)
+    (s.job_dir("j1") / "raw" / "stuck.bin").write_text("held", encoding="utf-8")
+    audit = AuditLog(tmp_path / "audit.jsonl")
+
+    def boom(path, *a, **k):  # rmtree raises (e.g. permission-denied / held file)
+        raise OSError("device busy")
+
+    monkeypatch.setattr(shutil, "rmtree", boom)
+
+    result = s.delete_job("j1", ts=TS, actor="operator", audit=audit)
+
+    assert result.removed is False  # truthful: the blob dir still exists
+    assert s.job_dir("j1").exists()
+    confirm = _erasure_events(tmp_path / "audit.jsonl")[-1]
+    assert confirm["extra"]["removed"] is False  # audit matches reality, no mismatch
+
+
+def test_delete_unknown_job_no_spurious_audit_or_crash(tmp_path):
+    """Deleting an unknown id behaves predictably: no crash, removed reflects that
+    nothing was there, rows_deleted=0, and the truthful event says so."""
+    s = _store(tmp_path)
+    audit = AuditLog(tmp_path / "audit.jsonl")
+
+    result = s.delete_job("ghost", ts=TS, actor="operator", audit=audit)
+
+    assert result.removed is False  # nothing to remove
+    confirm = _erasure_events(tmp_path / "audit.jsonl")[-1]
+    assert confirm["extra"]["rows_deleted"] == 0
+    assert confirm["extra"]["dir_existed"] is False
+
+
+def test_delete_uses_begin_immediate_single_connection(tmp_path, monkeypatch):
+    """The delete-row write holds the WAL write lock under BEGIN IMMEDIATE on a
+    single connection (uniform with set_state/persist_crawl_result). A trace
+    callback observes every SQL statement issued on the connection."""
+    s = _store(tmp_path)
+    s.create_job("j1", created_at=TS)
+    seen: list[str] = []
+    connects = {"n": 0}
+    orig_connect = s._connect
+
+    def tracing_connect():
+        connects["n"] += 1
+        conn = orig_connect()
+        conn.set_trace_callback(lambda sql: seen.append(sql.strip().split()[0].upper()))
+        return conn
+
+    monkeypatch.setattr(s, "_connect", tracing_connect)
+    s.delete_job("j1", ts=TS, actor="operator", audit=None)
+    assert connects["n"] == 1  # one connection for the row delete
+    assert "BEGIN" in seen  # explicit BEGIN IMMEDIATE, not the legacy implicit BEGIN
+    assert "DELETE" in seen
+
+
+def test_delete_row_concurrent_writers_no_busy(tmp_path):
+    """N concurrent deletes of distinct rows serialize under the write lock and all
+    complete without SQLITE_BUSY (the BEGIN IMMEDIATE hold must not regress into
+    contention), mirroring the existing N-writer set_state test."""
+    s = _store(tmp_path)
+    n = 8
+    for i in range(n):
+        s.create_job(f"j{i}", created_at=TS)
+    barrier = threading.Barrier(n)
+    errors: list[str] = []
+
+    def worker(i):
+        barrier.wait()
+        try:
+            s.delete_job(f"j{i}", ts=TS, actor="operator", audit=None)
+        except Exception as e:  # noqa: BLE001 - any raise is a regression here
+            errors.append(repr(e))
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == [], errors
+    assert all(s.get_job(f"j{i}") is None for i in range(n))

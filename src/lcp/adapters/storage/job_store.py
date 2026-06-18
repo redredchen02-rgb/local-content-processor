@@ -82,6 +82,17 @@ def _row_to_record(row: sqlite3.Row) -> JobRecord:
     )
 
 
+def _is_within(path: Path, ancestor: Path) -> bool:
+    """True if `path` is `ancestor` or lives under it (resolved, so `..` cannot
+    smuggle a path out). Used to detect an in-job-dir audit log so the confirming
+    erasure event does not resurrect a just-deleted job dir."""
+    try:
+        path.resolve().relative_to(ancestor.resolve())
+        return True
+    except ValueError:
+        return False
+
+
 class BestEffortDeletionResult:
     """Result of a job deletion. Names make the honest limitation explicit:
     files were unlinked best-effort; this is NOT cryptographic erasure (SSD
@@ -517,15 +528,27 @@ class JobStore:
         audit: AuditLog | None = None,
     ) -> BestEffortDeletionResult:
         """Best-effort delete: rmtree the job dir + remove the SQLite row, and
-        record an ERASURE audit event. We do NOT claim cryptographic erasure —
+        record ERASURE audit events. We do NOT claim cryptographic erasure —
         SSD wear-leveling may retain copies (plan R42). The returned result's
         cryptographic_erasure flag is always False.
 
-        The ERASURE event is recorded BEFORE rmtree so that, with the default
-        layout where audit.jsonl lives inside the job dir, the event is written
-        and then removed together with the dir; an external audit log survives
-        the deletion and still verifies."""
+        Two-event design so the audit can never assert an erasure that did not
+        happen (U10). The FIRST event (intent) is recorded BEFORE rmtree so that,
+        with the default layout where audit.jsonl lives inside the job dir, the
+        event is written and then removed together with the dir; an external audit
+        log survives the deletion and still verifies. Because it is written before
+        the blob removal, it cannot know the real outcome — so a SECOND confirming
+        event records the TRUE result (removed / rows_deleted / dir_existed) after
+        the writes complete. Without it, a stuck/permission-denied file would leave
+        the tamper-evident log asserting 'erased' while reality (and the returned
+        removed=False) say otherwise — a compliance-relevant mismatch.
+
+        rmtree runs WITHOUT ignore_errors so a stuck file is detected and reported,
+        not silently swallowed: removed reflects whether the dir actually went away."""
+        d = self.job_dir(job_id)
+        dir_existed = d.exists()
         if audit is not None:
+            # Intent record. Survives even if the blob removal below fails.
             audit.append(
                 ts=ts,
                 stage="storage",
@@ -534,15 +557,51 @@ class JobStore:
                 actor=actor,
                 extra={"method": "best_effort_unlink", "cryptographic_erasure": False},
             )
-        d = self.job_dir(job_id)
-        removed = False
-        if d.exists():
-            shutil.rmtree(d, ignore_errors=True)
-            removed = not d.exists()
+        if dir_existed:
+            try:
+                shutil.rmtree(d)
+            except OSError:
+                # A held/permission-denied file: detect-and-report rather than the
+                # old ignore_errors swallow. removed below will be False (the dir
+                # still exists), keeping the reported outcome truthful.
+                pass
+        # removed == "there was a job dir and it is now gone". An unknown job
+        # (no dir) reports removed=False — "nothing was erased" — never a vacuous
+        # True off an empty path, and never True while a stuck file survives.
+        removed = dir_existed and not d.exists()
+
+        # Delete the row under BEGIN IMMEDIATE + isolation_level=None, uniform with
+        # set_state/persist_crawl_result, so a future read-then-write edit here
+        # cannot silently reintroduce the read->update race PR #8 closed.
         conn = self._connect()
+        conn.isolation_level = None  # manual transaction control (mirrors set_state)
         try:
-            conn.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
-            conn.commit()
+            conn.execute("BEGIN IMMEDIATE")  # take the WAL write lock
+            cur = conn.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
+            rows_deleted = cur.rowcount if cur.rowcount is not None else 0
+            conn.execute("COMMIT")
         finally:
-            conn.close()
+            conn.close()  # rolls back if we raised before COMMIT
+
+        # Confirming record: the TRUE outcome (PII-free codes/bools/counts). Skip
+        # it when the audit log lives INSIDE the job dir we just removed — writing
+        # it there would resurrect the deleted dir, and that in-dir log was
+        # deliberately sacrificed with the blobs (the intent record above is its
+        # surviving trace). The external-log layout (production: audit at the
+        # storage root) is where a compliance reader needs the truthful outcome.
+        if audit is not None and not _is_within(audit.path, d):
+            audit.append(
+                ts=ts,
+                stage="storage",
+                event=EVENT_ERASURE,
+                job_id=job_id,
+                actor=actor,
+                extra={
+                    "method": "best_effort_unlink",
+                    "cryptographic_erasure": False,
+                    "dir_existed": dir_existed,
+                    "removed": removed,
+                    "rows_deleted": rows_deleted,
+                },
+            )
         return BestEffortDeletionResult(job_id=job_id, removed=removed)
