@@ -15,11 +15,12 @@ These use an injectable resolver so we never hit real DNS in tests.
 from __future__ import annotations
 
 import os
+import socket
 
 import pytest
 
 from lcp.adapters.crawler import net_guard
-from lcp.core.errors import InputValidationError
+from lcp.core.errors import ExternalServiceError, InputValidationError
 
 
 def _resolver(mapping):
@@ -191,6 +192,77 @@ def test_validate_url_rejects_internal_targets(url, resolved):
     mapping = {} if resolved is None else {"intranet.example": [resolved]}
     with pytest.raises(InputValidationError):
         net_guard.validate_url(url, resolver=_resolver(mapping))
+
+
+# --------------------------------------------------------------------------
+# DNS resolver timeout (U11): a slow/dead DNS must not hang the parent process
+# inside crawl_runner.preflight. socket.getaddrinfo has no per-call timeout, so
+# default_resolver bounds it via socket.setdefaulttimeout and maps a timeout to
+# a retriable ExternalServiceError (NOT a hang, NOT exit-5).
+# --------------------------------------------------------------------------
+
+def test_default_resolver_times_out_instead_of_hanging(monkeypatch):
+    """A getaddrinfo that blocks past the timeout surfaces as a typed
+    ExternalServiceError, not an indefinite hang."""
+
+    def slow_getaddrinfo(*args, **kwargs):
+        # Honour the default timeout the resolver set — emulate the OS raising
+        # socket.timeout when the bounded resolution exceeds it.
+        raise socket.timeout("simulated slow DNS")
+
+    monkeypatch.setattr(net_guard.socket, "getaddrinfo", slow_getaddrinfo)
+    with pytest.raises(ExternalServiceError):
+        net_guard.default_resolver("slow.example", timeout=0.01)
+
+
+def test_default_resolver_restores_default_timeout(monkeypatch):
+    """The bounded resolution must save/restore the process-wide socket default
+    timeout so it never leaks the crawler timeout onto unrelated sockets."""
+    sentinel = object()
+    monkeypatch.setattr(net_guard.socket, "getdefaulttimeout", lambda: sentinel)
+    seen = {}
+
+    def record_setdefaulttimeout(value):
+        seen.setdefault("values", []).append(value)
+
+    def fake_getaddrinfo(host, *args, **kwargs):
+        return [(0, 0, 0, "", ("93.184.216.34", 0))]
+
+    monkeypatch.setattr(net_guard.socket, "setdefaulttimeout", record_setdefaulttimeout)
+    monkeypatch.setattr(net_guard.socket, "getaddrinfo", fake_getaddrinfo)
+
+    net_guard.default_resolver("example.com", timeout=2.0)
+
+    # It sets the bound, then restores the prior default (the sentinel).
+    assert seen["values"][0] == 2.0
+    assert seen["values"][-1] is sentinel
+
+
+def test_default_resolver_non_timeout_oserror_stays_input_error(monkeypatch):
+    """A non-timeout DNS failure (e.g. NXDOMAIN) stays an InputValidationError —
+    only a true timeout is reclassified as a retriable external failure."""
+
+    def nxdomain(*args, **kwargs):
+        raise socket.gaierror("Name or service not known")
+
+    monkeypatch.setattr(net_guard.socket, "getaddrinfo", nxdomain)
+    with pytest.raises(InputValidationError):
+        net_guard.default_resolver("does-not-exist.example", timeout=2.0)
+
+
+def test_default_resolver_happy_path_unchanged(monkeypatch):
+    """Normal resolution still returns deduped A+AAAA literals under the bound."""
+
+    def fake_getaddrinfo(host, *args, **kwargs):
+        return [
+            (0, 0, 0, "", ("93.184.216.34", 0)),
+            (0, 0, 0, "", ("93.184.216.34", 0)),  # duplicate -> deduped
+            (0, 0, 0, "", ("2606:2800:220:1:248:1893:25c8:1946%en0", 0, 0, 0)),
+        ]
+
+    monkeypatch.setattr(net_guard.socket, "getaddrinfo", fake_getaddrinfo)
+    ips = net_guard.default_resolver("example.com")
+    assert ips == ["93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"]
 
 
 # --------------------------------------------------------------------------
