@@ -14,6 +14,7 @@ config without touching this module.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 from lcp.core.models import AssetState
@@ -82,7 +83,13 @@ def is_blurry(
 ) -> bool:
     """True if the variance-of-Laplacian is below ``threshold`` (low edge energy
     == out of focus). The variance is *measured* by the adapter; this is the
-    pure decision step so the threshold is testable in isolation."""
+    pure decision step so the threshold is testable in isolation.
+
+    A non-finite variance (NaN/inf from a degenerate image) is treated as blurry
+    (fail closed): ``nan < threshold`` is False, so without this guard an
+    unmeasurable image would silently pass the blur check."""
+    if not math.isfinite(laplacian_variance):
+        return True
     return laplacian_variance < threshold
 
 
