@@ -559,13 +559,21 @@ class Pipeline:
             has_images=has_images,
         )
         if lint_out.job_state is not None:
+            # Surface WHICH sections/claims failed so the operator (CLI/GUI) can
+            # act without re-deriving them. PII-free: lint errors are canonical
+            # section labels + counts; grounding only a boolean reason here.
+            park_notes = list(notes)
+            if lint_out.lint is not None:
+                park_notes.extend(f"lint: {e}" for e in lint_out.lint.errors)
+            if lint_out.grounding is not None and lint_out.grounding.needs_human_review:
+                park_notes.append("grounding: ungrounded claim(s) need human review")
             return ProcessResult(
                 job_id=job_id,
                 draft=draft,
                 final_state=lint_out.job_state,
                 dry_run=self.dry_run,
                 stopped_at="lint",
-                notes=notes,
+                notes=park_notes,
             )
 
         # --- all gates passed: PROCESSING -> PROCESSED ---

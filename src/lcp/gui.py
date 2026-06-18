@@ -105,6 +105,25 @@ def _error_dict(err: LcpError) -> dict:
     return {"error": escape_html(str(err)), "exit_code": getattr(err, "exit_code", EXIT_INTERNAL)}
 
 
+def _completion_advisory(state: Any, *, dry_run: bool) -> str | None:
+    """Operator-facing hint when a run did not reach a packet (Unit 5). Mirrors
+    the CLI ``_completion_advisory`` 1:1 (the two shells are independent)."""
+    from .core.state import JobState
+
+    if dry_run and state is JobState.NEEDS_REVISION:
+        return (
+            "dry-run did not call the LLM, so image_sections/quick_facts/summary "
+            "are empty and the draft cannot reach PROCESSED — re-run WITHOUT "
+            "--dry-run (and with --ai-copy) for a complete review packet."
+        )
+    if state is JobState.NEEDS_REVISION:
+        return (
+            "draft parked for revision — see notes for the missing sections; a "
+            "complete draft needs --ai-copy (and captions only for image bundles)."
+        )
+    return None
+
+
 def bridge_safe(fn: Callable[..., dict]) -> Callable[..., dict]:
     """Wrap a bridge method so any LcpError becomes the standard error dict.
 
@@ -271,6 +290,9 @@ class Api:
             "stopped_at": escape_html(res.stopped_at) if res.stopped_at else None,
             "dry_run": res.dry_run,
             "notes": [escape_html(n) for n in res.notes],
+            # Mirror the CLI's completion advisory (Unit 5): why a run did not
+            # reach a packet, in operator terms.
+            "advisory": _completion_advisory(res.final_state, dry_run=res.dry_run),
         }
 
     # --- Long tasks: background thread + polled status -----------------------

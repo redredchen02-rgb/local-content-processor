@@ -39,6 +39,27 @@ from .core.models import SourceType
 from .runtime_hardening import apply_hardening
 
 
+def _completion_advisory(state, *, dry_run: bool) -> str | None:
+    """An operator-facing hint when a run did not reach a packet (Unit 5).
+
+    dry-run never calls the LLM, so the copywriter sections stay empty and the
+    draft cannot reach PROCESSED — say so plainly instead of a bare state."""
+    from .core.state import JobState
+
+    if dry_run and state is JobState.NEEDS_REVISION:
+        return (
+            "dry-run did not call the LLM, so image_sections/quick_facts/summary "
+            "are empty and the draft cannot reach PROCESSED — re-run WITHOUT "
+            "--dry-run (and with --ai-copy) for a complete review packet."
+        )
+    if state is JobState.NEEDS_REVISION:
+        return (
+            "draft parked for revision — see notes for the missing sections; a "
+            "complete draft needs --ai-copy (and captions only for image bundles)."
+        )
+    return None
+
+
 class Ctx:
     """Resolved per-invocation context: config + adapters, built once from flags."""
 
@@ -248,6 +269,11 @@ def process(ctx, job_id, title, watermark, template, ai_copy):
             f"processed {job_id}: {res.final_state.value}"
             + (f" (stopped at {res.stopped_at})" if res.stopped_at else "")
             + (" [dry-run]" if res.dry_run else "")
+            + (
+                f"\n  → {adv}"
+                if (adv := _completion_advisory(res.final_state, dry_run=res.dry_run))
+                else ""
+            )
         ),
     )
 
@@ -546,7 +572,12 @@ def run(ctx, url, input_dir, job_id, target, title, source_urls, ai_copy, templa
             "body_sha256": res.packet.body_sha256 if res.packet else None,
         },
         human=f"run {job_id} --until {target}: {res.final_state.value}"
-        + (" [dry-run]" if res.dry_run else ""),
+        + (" [dry-run]" if res.dry_run else "")
+        + (
+            f"\n  → {adv}"
+            if (adv := _completion_advisory(res.final_state, dry_run=res.dry_run))
+            else ""
+        ),
     )
 
 
