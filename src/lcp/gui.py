@@ -468,8 +468,18 @@ class Api:
     @bridge_safe
     def list_jobs(self, state: str | None = None) -> dict:
         """Mirror `list`: the pull-style worklist, optionally filtered by state
-        (alias or enum value). review_reason is escaped for display."""
+        (alias or enum value). review_reason is escaped for display.
+
+        Also the .processing crash-marker's consumer (U7), mirroring the CLI `list`:
+        a reconciliation pass flags any job a crash interrupted mid-Stage-2 as
+        ``interrupted`` (with its crash-attempt count) — surfaced for explicit
+        re-process, never auto-run. All flag values are numbers/bools from our own
+        vocabulary, so no escaping is needed for them."""
         c = self._ctx()
+        interrupted = {
+            i.job_id: i
+            for i in pl.Pipeline(c.config, c.store, c.audit).reconcile(ts=_now())
+        }
         records = pl.list_jobs(c.store, state)
         rows = [
             {
@@ -479,6 +489,15 @@ class Api:
                     escape_html(r.review_reason.value) if r.review_reason else None
                 ),
                 "updated_at": escape_html(r.updated_at),
+                "interrupted": r.job_id in interrupted,
+                "interrupt_attempts": (
+                    interrupted[r.job_id].attempts if r.job_id in interrupted else 0
+                ),
+                "interrupt_exhausted": (
+                    interrupted[r.job_id].exhausted
+                    if r.job_id in interrupted
+                    else False
+                ),
             }
             for r in records
         ]

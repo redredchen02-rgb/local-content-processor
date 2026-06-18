@@ -37,6 +37,9 @@ GENESIS_HASH = "0" * 64
 EVENT_ERASURE = "ERASURE"
 EVENT_SIGNOFF_INVALIDATED = "SIGNOFF_INVALIDATED"
 EVENT_SUPERSEDED = "SUPERSEDED"
+# A crash left a .processing marker on a non-terminal job; reconciliation surfaced
+# it for explicit operator re-process (U7). PII-free: job_id + a crash-attempt count.
+EVENT_INTERRUPTED_DETECTED = "INTERRUPTED_DETECTED"
 
 # Keys that would smuggle PII into the audit. Rejected by append().
 _PROHIBITED_KEYS = frozenset(

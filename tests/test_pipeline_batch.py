@@ -251,6 +251,104 @@ def test_list_jobs_unknown_state_raises(store, audit):
 
 def test_resolve_state_aliases():
     assert pl.resolve_state("pending") is JobState.REVIEW_PENDING
+
+
+# --- U7: .processing crash-marker reconciliation -----------------------------
+
+
+def _crashed_mid_stage2(store, job_id, state=JobState.CRAWLED):
+    """Simulate a hard crash mid-Stage-2: a resting state + a stale .processing
+    marker (process() normally clears it in `finally`; a crash never reaches it)."""
+    store.create_job(job_id, created_at=TS)
+    store.set_state(job_id, state, updated_at=TS)
+    store.mark_processing(job_id)  # left behind by the crash
+
+
+def test_reconcile_detects_interrupted_crawled_job(store, audit):
+    """A crash mid-Stage-2 (marker set, job at CRAWLED) is surfaced as interrupted
+    so the operator can explicitly re-process it (not silently auto-transitioned)."""
+    p = _pipeline(store, audit)
+    _crashed_mid_stage2(store, "j1")
+
+    interrupted = p.reconcile(ts=TS)
+
+    assert [i.job_id for i in interrupted] == ["j1"]
+    found = interrupted[0]
+    assert found.state is JobState.CRAWLED
+    assert found.attempts == 1
+    assert found.exhausted is False
+    # Flagged, NOT auto-transitioned: the job stays at its resting state and the
+    # marker stays so a re-process is the operator's deliberate action.
+    assert store.get_job("j1").state is JobState.CRAWLED
+
+
+def test_reconcile_ignores_healthy_job_without_marker(store, audit):
+    """A healthy CRAWLED job with no marker is untouched (not flagged, no counter)."""
+    p = _pipeline(store, audit)
+    store.create_job("j1", created_at=TS)
+    store.set_state("j1", JobState.CRAWLED, updated_at=TS)
+
+    assert p.reconcile(ts=TS) == []
+    assert store.read_interrupt_count("j1") == 0
+
+
+def test_reconcile_clears_stale_marker_at_terminal_state(store, audit):
+    """A crash BETWEEN commit and clear_processing can leave a marker on a terminal
+    job (e.g. BLOCKED). Reconciliation must only CLEAR it — never reopen a terminal
+    job, never flag it as interrupted (it already came to rest correctly)."""
+    p = _pipeline(store, audit)
+    store.create_job("j1", created_at=TS)
+    store.set_state("j1", JobState.CRAWLED, updated_at=TS)
+    persist_gate_state(store, "j1", JobState.BLOCKED, updated_at=TS)
+    store.mark_processing("j1")  # stale marker from a crash after COMMIT
+
+    interrupted = p.reconcile(ts=TS)
+
+    assert interrupted == []  # terminal job is never surfaced as recoverable
+    assert store.get_job("j1").state is JobState.BLOCKED  # never reopened
+    assert not store.is_processing("j1")  # marker cleared
+
+
+def test_reconcile_loop_guard_surfaces_after_n_attempts(store, audit):
+    """A DETERMINISTIC crash (same input always crashes) must surface to a human
+    after N interruptions instead of looping forever. Each reconcile pass over a
+    still-interrupted job bumps the crash counter; once it exceeds the cap the job
+    is flagged `exhausted` so the operator stops auto-retrying it."""
+    p = _pipeline(store, audit)
+    _crashed_mid_stage2(store, "j1")
+
+    # Three crash-and-reconcile cycles at the default cap of 3.
+    r1 = p.reconcile(ts=TS, max_attempts=3)
+    assert r1[0].attempts == 1 and r1[0].exhausted is False
+    r2 = p.reconcile(ts=TS, max_attempts=3)
+    assert r2[0].attempts == 2 and r2[0].exhausted is False
+    r3 = p.reconcile(ts=TS, max_attempts=3)
+    assert r3[0].attempts == 3 and r3[0].exhausted is False
+    r4 = p.reconcile(ts=TS, max_attempts=3)
+    assert r4[0].attempts == 4 and r4[0].exhausted is True
+
+
+def test_reconcile_via_cli_list_seam(store, audit, tmp_path):
+    """Drive reconciliation through the real worklist seam (the CLI `list` command),
+    not just the Pipeline leaf — the marker consumer must be reachable end-to-end."""
+    from click.testing import CliRunner
+
+    from lcp import cli
+
+    _crashed_mid_stage2(store, "j1")
+    base = str(store.base_dir)
+
+    runner = CliRunner()
+    res = runner.invoke(
+        cli.cli,
+        ["--output-dir", base, "--json", "list"],
+    )
+    assert res.exit_code == 0, res.output
+    import json
+
+    payload = json.loads(res.output)
+    rows = {r["job_id"]: r for r in payload["jobs"]}
+    assert rows["j1"]["interrupted"] is True
     assert pl.resolve_state("published") is JobState.PUBLISHED_RECORDED
     assert pl.resolve_state("blocked") is JobState.BLOCKED
 

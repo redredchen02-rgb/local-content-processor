@@ -371,7 +371,12 @@ def supersede(ctx, job_id, new_job_id):
 @click.pass_context
 def list_cmd(ctx, state, summary):
     """Pull-style worklist (G5/G7): list jobs, optionally filtered by state, or
-    show the batch counts-by-state summary."""
+    show the batch counts-by-state summary.
+
+    The worklist is also the .processing crash-marker's consumer (U7): a
+    reconciliation pass runs here so a job a crash interrupted mid-Stage-2 is
+    flagged ``interrupted`` (with its crash-attempt count) the moment the operator
+    looks at the worklist — it is surfaced for explicit re-process, never auto-run."""
     c = Ctx(ctx.obj)
     if summary:
         counts = pl.batch_summary(c.store)
@@ -380,11 +385,22 @@ def list_cmd(ctx, state, summary):
             human="\n".join(f"{k}: {v}" for k, v in counts.items()),
         )
         return
+    interrupted = {
+        i.job_id: i
+        for i in pl.Pipeline(c.config, c.store, c.audit, dry_run=c.dry_run).reconcile(
+            ts=_now()
+        )
+    }
     records = pl.list_jobs(c.store, state)
     rows = [
         {"job_id": r.job_id, "state": r.state.value,
          "review_reason": r.review_reason.value if r.review_reason else None,
-         "updated_at": r.updated_at}
+         "updated_at": r.updated_at,
+         "interrupted": r.job_id in interrupted,
+         "interrupt_attempts": (
+             interrupted[r.job_id].attempts if r.job_id in interrupted else 0),
+         "interrupt_exhausted": (
+             interrupted[r.job_id].exhausted if r.job_id in interrupted else False)}
         for r in records
     ]
     c.emit(
@@ -393,6 +409,12 @@ def list_cmd(ctx, state, summary):
             "\n".join(
                 f"{r['job_id']}\t{r['state']}"
                 + (f"\t({r['review_reason']})" if r["review_reason"] else "")
+                + (
+                    "\t[INTERRUPTED"
+                    + (" needs-human" if r["interrupt_exhausted"] else "")
+                    + f" x{r['interrupt_attempts']}]"
+                    if r["interrupted"] else ""
+                )
                 for r in rows
             )
             or "(no jobs)"

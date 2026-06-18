@@ -31,6 +31,12 @@ from .audit_log import EVENT_ERASURE, AuditLog
 
 DB_NAME = "lcp.db"
 PROCESSING_MARKER = ".processing"
+# Per-job-dir crash-attempt counter (U7). A FILE, never a jobs-table column: the
+# jobs schema is PII-free-by-construction (see module docstring) and adding a
+# count column would collide with that tripwire. Presence-only like .processing,
+# but carries a small integer (no PII) so a DETERMINISTIC crash surfaces to a
+# human after N reconcile passes instead of looping retry->crash->retry forever.
+INTERRUPT_COUNT_MARKER = ".interrupt_count"
 _BUSY_TIMEOUT_MS = 5000
 
 # Allowed index columns only — see module docstring / pii-inventory.md.
@@ -332,9 +338,12 @@ class JobStore:
         clears the ``.processing`` marker AFTER the commit.
 
         The marker is the CALLER's to set (Pipeline.process drops it at Stage-2
-        entry — the ``.processing`` evidence the _persist seam requires); this
-        method only clears it once the resting state is committed. Marker
-        filesystem I/O therefore stays OUTSIDE the write transaction, so the WAL
+        entry); this method does NOT require or assert the marker — it only clears
+        it (idempotently) once the resting state is committed. Not asserting is
+        deliberate: a marker-present check here would re-pull filesystem I/O under
+        the WAL write lock and break the legitimate PROCESS_FAILED retry path,
+        which re-enters without the original marker. Marker filesystem I/O
+        therefore stays OUTSIDE the write transaction, so the WAL
         write lock is never held across a touch()/mkdir."""
         if target in TRANSIENT_STATES:
             raise InputValidationError(
@@ -397,6 +406,48 @@ class JobStore:
 
     def is_processing(self, job_id: str) -> bool:
         return (self.job_dir(job_id) / PROCESSING_MARKER).exists()
+
+    # --- crash-attempt counter (per-job-dir FILE, NOT a SQLite column) ---
+
+    def read_interrupt_count(self, job_id: str) -> int:
+        """Crash-attempt count for `job_id` (0 if absent/unreadable/corrupt).
+
+        Fail-safe: a missing, half-written, or garbage counter file reads as 0 so
+        reconciliation never crashes on the very artifact it manages."""
+        counter = self.job_dir(job_id) / INTERRUPT_COUNT_MARKER
+        try:
+            return int(counter.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return 0
+
+    def bump_interrupt_count(self, job_id: str) -> int:
+        """Increment and persist the crash-attempt count; return the new value.
+
+        Atomic write (temp-in-same-dir + fsync + 0600 + os.replace) so a crash
+        mid-bump can never leave a half-written count that a later read would
+        mistake for a different value — it reads back as 0 (fail-safe) at worst."""
+        new = self.read_interrupt_count(job_id) + 1
+        d = self.job_dir(job_id)
+        d.mkdir(parents=True, exist_ok=True)
+        path = d / INTERRUPT_COUNT_MARKER
+        tmp = path.with_name(f".{INTERRUPT_COUNT_MARKER}.tmp.{os.getpid()}")
+        try:
+            with tmp.open("w", encoding="utf-8") as f:
+                f.write(str(new))
+                f.flush()
+                os.fsync(f.fileno())
+            os.chmod(tmp, 0o600)  # PII-at-rest discipline (no group/other access)
+            os.replace(tmp, path)  # atomic
+        finally:
+            if tmp.exists():
+                tmp.unlink()
+        return new
+
+    def clear_interrupt_count(self, job_id: str) -> None:
+        """Reset the counter (a clean re-process starts the loop guard fresh)."""
+        counter = self.job_dir(job_id) / INTERRUPT_COUNT_MARKER
+        if counter.exists():
+            counter.unlink()
 
     # --- best-effort deletion (NOT cryptographic erasure) ---
 

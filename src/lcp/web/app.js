@@ -380,6 +380,17 @@ function jobRow(job) {
   }
   const why = el("span", whyShort); why.className = "job-why";
   row.appendChild(why);
+  // U7: a crash left this job mid-processing. Surface it (the marker's consumer);
+  // the operator re-processes deliberately — we never auto-run an interrupted job.
+  // After N attempts the job is "exhausted" (a deterministic crash needs a human).
+  if (job.interrupted) {
+    const label = job.interrupt_exhausted
+      ? "中断 需人工 x" + (job.interrupt_attempts || 0)
+      : "中断 x" + (job.interrupt_attempts || 0);
+    const flag = el("span", label);
+    flag.className = "job-interrupted" + (job.interrupt_exhausted ? " is-exhausted" : "");
+    row.appendChild(flag);
+  }
   if (job.updated_at) { const w = el("span", job.updated_at); w.className = "job-when"; row.appendChild(w); }
   const open = button("打开 ›", "btn-secondary");
   open.addEventListener("click", function (e) { e.stopPropagation(); openJob(job.job_id); });

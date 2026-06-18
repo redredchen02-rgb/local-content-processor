@@ -77,6 +77,84 @@ def test_processing_marker_file(tmp_path):
     assert not s.is_processing("j1")
 
 
+# --- U7: per-job-dir crash-attempt counter (no jobs-schema column) -----------
+
+
+def test_interrupt_count_defaults_to_zero(tmp_path):
+    """A job with no .interrupt_count file reads as 0 (never crashes on absence)."""
+    s = _store(tmp_path)
+    s.create_job("j1", created_at=TS)
+    assert s.read_interrupt_count("j1") == 0
+
+
+def test_interrupt_count_increments_and_persists(tmp_path):
+    """bump_interrupt_count returns the new value and persists it across calls."""
+    s = _store(tmp_path)
+    s.create_job("j1", created_at=TS)
+    assert s.bump_interrupt_count("j1") == 1
+    assert s.read_interrupt_count("j1") == 1
+    assert s.bump_interrupt_count("j1") == 2
+    assert s.read_interrupt_count("j1") == 2
+
+
+def test_interrupt_count_cleared(tmp_path):
+    """clear_interrupt_count resets the counter (a clean re-process starts fresh)."""
+    s = _store(tmp_path)
+    s.create_job("j1", created_at=TS)
+    s.bump_interrupt_count("j1")
+    s.clear_interrupt_count("j1")
+    assert s.read_interrupt_count("j1") == 0
+
+
+def test_interrupt_count_file_is_0600(tmp_path):
+    """The counter is a per-job-dir file (no SQLite column) written 0600 — it must
+    never carry PII and must not be world-readable (PII-at-rest discipline)."""
+    s = _store(tmp_path)
+    s.create_job("j1", created_at=TS)
+    s.bump_interrupt_count("j1")
+    counter = s.job_dir("j1") / ".interrupt_count"
+    assert counter.exists()
+    assert (counter.stat().st_mode & 0o777) == 0o600
+
+
+def test_interrupt_count_tolerates_corrupt_file(tmp_path):
+    """A garbage/half-written counter file reads as 0 (fail-safe), never raises."""
+    s = _store(tmp_path)
+    s.create_job("j1", created_at=TS)
+    (s.job_dir("j1") / ".interrupt_count").write_text("not-a-number", encoding="utf-8")
+    assert s.read_interrupt_count("j1") == 0
+    # And a bump still recovers to a clean count.
+    assert s.bump_interrupt_count("j1") == 1
+
+
+# --- U7 / plan-004 deferred: clear-after-COMMIT failure must not corrupt row ---
+
+
+def test_persist_from_processing_commit_survives_marker_clear_failure(
+    tmp_path, monkeypatch
+):
+    """plan-004 deferred 'marker-touch-failure rollback' test.
+
+    persist_from_processing commits the resting state FIRST, then clears the marker
+    OUTSIDE the transaction. If clear_processing() fails (e.g. EROFS / lock), the
+    committed resting state must still stand — the row is already durable — and the
+    stale marker is exactly what U7's reconciliation later cleans up. The DB must
+    never roll back a committed state because of a post-commit filesystem error."""
+    s = _store(tmp_path)
+    s.create_job("j1", created_at=TS)
+    s.set_state("j1", JobState.CRAWLED, updated_at=TS)
+    s.mark_processing("j1")
+
+    def boom(_job_id):
+        raise OSError("read-only filesystem")
+
+    monkeypatch.setattr(s, "clear_processing", boom)
+    with pytest.raises(OSError):
+        s.persist_from_processing("j1", JobState.BLOCKED, updated_at=TS)
+    # The resting state committed before the marker clear — it must persist.
+    assert s.get_job("j1").state is JobState.BLOCKED
+
+
 def test_list_by_state(tmp_path):
     s = _store(tmp_path)
     s.create_job("a", created_at="2026-06-16T00:00:01Z")

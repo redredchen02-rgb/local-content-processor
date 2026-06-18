@@ -324,6 +324,27 @@ def test_list_jobs_bad_state_returns_error(tmp_path):
     assert "error" in res and res["exit_code"] == 2
 
 
+def test_list_jobs_surfaces_interrupted_job(tmp_path):
+    """CLI/GUI parity (U7): a crash-interrupted job (.processing marker on a
+    CRAWLED job) is flagged ``interrupted`` through the GUI worklist, just like the
+    CLI `list` command — the marker's consumer exists on BOTH shells."""
+    from lcp.adapters.storage.job_store import JobStore
+    from lcp.core.state import JobState
+
+    base = str(tmp_path)
+    s = JobStore(base_dir=base)
+    s.create_job("crashed", created_at="2026-06-18T00:00:00Z")
+    s.set_state("crashed", JobState.CRAWLED, updated_at="2026-06-18T00:00:00Z")
+    s.mark_processing("crashed")  # stale marker a hard crash left behind
+
+    api = _api(tmp_path, base)
+    res = api.list_jobs()
+    row = next(r for r in res["jobs"] if r["job_id"] == "crashed")
+    assert row["interrupted"] is True
+    assert row["interrupt_attempts"] == 1
+    assert row["interrupt_exhausted"] is False
+
+
 # --- reviewers / disclaimer -------------------------------------------------
 
 

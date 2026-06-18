@@ -43,18 +43,30 @@ from .adapters.llm.client import LlmClient
 from .adapters.processor import dedup_checker, media_checker, risk_checker
 from .adapters.processor.draft_linter import build_lint_config, run_draft_lint_gate
 from .adapters.publisher.review_packet import ReviewPacket, build_review_packet
-from .adapters.storage.audit_log import AuditLog
+from .adapters.storage.audit_log import EVENT_INTERRUPTED_DETECTED, AuditLog
 from .adapters.storage.job_store import JobRecord, JobStore
 from .core.config import Config
 from .core.draft import Draft, DraftStatus
 from .core.errors import ExternalServiceError, InputValidationError, LcpError
 from .core.models import SourceType
 from .core.rules.risk_rules import RiskInput
-from .core.state import JobState, TRANSIENT_STATES
+from .core.state import JobState, TERMINAL_STATES, TRANSIENT_STATES
 
 # Targets for run_until.
 TARGET_DRAFT = "draft"
 TARGET_REVIEW = "review"
+
+# Persisted resting states a job can legally be in WHILE mid-Stage-2 (the
+# .processing marker stands in for the transient PROCESSING). A marker found on
+# one of these is a crash-interruption to surface to the operator (U7). Markers
+# on any other (e.g. terminal) state are stale leftovers and are only cleared.
+RECONCILABLE_STATES: frozenset[JobState] = frozenset(
+    {JobState.CRAWLED, JobState.CRAWLED_WARN, JobState.PROCESS_FAILED}
+)
+
+# Crash-attempt cap before a deterministically-crashing job is flagged exhausted
+# (surfaced to a human) instead of being treated as routinely re-processable.
+DEFAULT_MAX_INTERRUPT_ATTEMPTS = 3
 
 # Map a crawl status string onto the persisted JobState after Stage 1.
 _CRAWL_STATUS_TO_STATE: dict[str, JobState] = {
@@ -102,6 +114,22 @@ class RunResult:
     draft: Draft | None = None
     packet: ReviewPacket | None = None
     notes: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class InterruptedJob:
+    """A job a crash left mid-Stage-2: a resting state + a stale .processing marker.
+
+    Surfaced by :meth:`Pipeline.reconcile` for explicit operator re-process (we do
+    NOT auto-transition — a hard crash is not a transient error). ``attempts`` is the
+    crash-attempt count carried in the per-job-dir counter; ``exhausted`` is True once
+    it exceeds the cap, the signal that a DETERMINISTIC crash needs a human (stop
+    re-trying) rather than another retry->crash->retry loop."""
+
+    job_id: str
+    state: JobState
+    attempts: int
+    exhausted: bool
 
 
 # Persisted-draft I/O lives in the storage layer (adapters/storage/draft_store).
@@ -581,6 +609,63 @@ class Pipeline:
             packet=packet,
             notes=proc.notes,
         )
+
+    # --- crash reconciliation: the .processing marker's consumer (U7) --------
+
+    def reconcile(
+        self, *, ts: str, max_attempts: int = DEFAULT_MAX_INTERRUPT_ATTEMPTS
+    ) -> list[InterruptedJob]:
+        """Find jobs a crash left mid-Stage-2 and surface them for the operator.
+
+        This is the marker's real consumer (it had none): something must read
+        ``is_processing()`` at a worklist lifecycle boundary. Both shells call it
+        from their worklist entry point (CLI ``list`` / GUI ``list_jobs``), so a
+        stale ``.processing`` marker becomes visible the moment the operator looks
+        at the worklist.
+
+        We **flag, never auto-transition**: a hard crash (the only thing that leaves
+        a stale marker — ``process()`` clears it in ``finally``) is NOT a transient
+        ``ExternalServiceError``, so silently re-driving it risks a deterministic
+        retry->crash->retry loop. The job keeps its resting state and marker; the
+        operator re-processes deliberately. Each pass over a still-interrupted job
+        bumps a per-job-dir crash counter; once it exceeds ``max_attempts`` the job
+        is flagged ``exhausted`` (a deterministic crash that needs a human, not
+        another retry).
+
+        A marker found on a TERMINAL job (a crash between COMMIT and
+        ``clear_processing``) is only CLEARED — reconciliation never reopens a
+        terminal job (that would be the content-laundering path the freeze model
+        forbids)."""
+        interrupted: list[InterruptedJob] = []
+        for rec in self.store.list_all():
+            if not self.store.is_processing(rec.job_id):
+                continue
+            if rec.state in RECONCILABLE_STATES:
+                attempts = self.store.bump_interrupt_count(rec.job_id)
+                self.audit.append(
+                    ts=ts,
+                    stage="reconcile",
+                    event=EVENT_INTERRUPTED_DETECTED,
+                    job_id=rec.job_id,
+                    actor="system",
+                    extra={"attempts": attempts, "state": rec.state.value},
+                )
+                interrupted.append(
+                    InterruptedJob(
+                        job_id=rec.job_id,
+                        state=rec.state,
+                        attempts=attempts,
+                        exhausted=attempts > max_attempts,
+                    )
+                )
+            elif rec.state in TERMINAL_STATES:
+                # Crash between COMMIT and clear_processing: the resting state is
+                # already correct; just drop the stale marker (never reopen).
+                self.store.clear_processing(rec.job_id)
+            # Any other state with a marker (e.g. a persisted PROCESSING is
+            # impossible — it is transient) is left untouched: we neither flag nor
+            # clear, since it is not a recognised crash-interruption shape.
+        return interrupted
 
 
 # --- pull-style worklist + batch summary (flow G5/G7) -----------------------

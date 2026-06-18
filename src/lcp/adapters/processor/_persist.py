@@ -8,11 +8,21 @@ persisted predecessor of a gate write is CRAWLED / CRAWLED_WARN with a
 
 ``JobStore.set_state`` validates ``persisted_current -> new`` and so cannot
 express ``PROCESSING -> target`` (PROCESSING can't be the persisted current).
-This helper bridges that seam WITHOUT modifying Unit 3: it requires the
-``.processing`` marker (evidence the job is mid-processing), validates the
-canonical ``PROCESSING -> target`` edge via the pure state machine, persists the
-resting state through the same PII-free SQLite update JobStore uses, then clears
-the marker. All judgement still flows through ``core/state.validate_transition``.
+This helper bridges that seam WITHOUT modifying Unit 3: it validates the
+canonical ``persisted_current -> PROCESSING -> target`` edge via the pure state
+machine, persists the resting state through the same PII-free SQLite update
+JobStore uses, then clears the ``.processing`` marker. All judgement still flows
+through ``core/state.validate_transition``.
+
+CONTRACT (caller-owned marker): this seam does NOT require the ``.processing``
+marker to be present, and it does not assert on it. The marker is the CALLER's
+to set — ``Pipeline.process`` drops it at Stage-2 entry — and this seam only
+clears it (idempotently) after the resting state is committed. Adding a
+marker-present assertion here would (a) pull filesystem marker I/O back under the
+WAL write lock (the PR #8 constraint forbids holding the lock across file I/O)
+and (b) break the legitimate ``PROCESS_FAILED`` retry path, which re-enters
+without the original marker. The marker's real consumer is
+``Pipeline.reconcile`` (U7), which reads it at the worklist boundary.
 """
 
 from __future__ import annotations

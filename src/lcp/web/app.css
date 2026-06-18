@@ -145,6 +145,12 @@ input[type="text"], select { flex: 1; min-width: 11rem; padding: var(--sp-1); }
 .job-id { font-family: var(--font-mono); font-size: var(--fs-300); color: var(--ink-500); letter-spacing: .02em; }
 .job-why { color: var(--ink-900); font-weight: var(--fw-medium); }
 .job-when { color: var(--ink-500); font-size: var(--fs-300); margin-left: auto; }
+/* U7: a crash interrupted this job mid-processing — surfaced for explicit
+   re-process. "is-exhausted" = a deterministic crash that now needs a human. */
+.job-interrupted { display: inline-flex; padding: 1px var(--sp-2); border-radius: var(--radius-pill);
+  border: 1px solid var(--c-attention-bd); background: var(--paper); color: var(--ink-900);
+  font-size: var(--fs-300); white-space: nowrap; }
+.job-interrupted.is-exhausted { border-color: var(--c-stop-bd); font-weight: var(--fw-medium); }
 /* counts: a contained summary strip of per-state chips, not console output (P0-5/P1-1) */
 .counts { margin-top: var(--sp-6); padding: var(--sp-3) var(--sp-4); background: var(--paper-2);
   border: 1px solid var(--line); border-radius: var(--radius-md); display: flex; flex-wrap: wrap; gap: var(--sp-2); }
