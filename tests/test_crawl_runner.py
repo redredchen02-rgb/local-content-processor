@@ -268,6 +268,70 @@ def test_runner_no_manifest_raises_external_service_error(tmp_path):
         runner.crawl_url(spec, ts=TS)
 
 
+def test_runner_nonzero_rc_with_stale_manifest_raises(tmp_path):
+    """U6 (REL-1): a child that exits NON-ZERO must be a retriable failure even if
+    a (stale, from a prior run) manifest is present — the runner must check
+    proc.returncode, not just manifest presence, or it reports a stale manifest as
+    this run's success."""
+    job_dir = tmp_path / "j6"
+    # A leftover manifest from a previous run sits on disk.
+    from lcp.adapters.crawler.bundle import build_manifest
+
+    stale = build_manifest(
+        job_id="j6", source_type=SourceType.URL, source_domain="example.com",
+        fetched_at=TS, assets=[], source_html="<html>old</html>", source_text="old",
+        crawl_status=STATUS_CRAWLED,
+    )
+    write_manifest(job_dir, stale, create_only=True)
+
+    def fake_run(cmd, **kwargs):
+        class P:
+            returncode = 2  # child crashed this run
+        return P()
+
+    runner = CrawlRunner(_registry(), resolver=_good_resolver, subprocess_runner=fake_run)
+    spec = SourceSpec(
+        job_id="j6", source_type=SourceType.URL,
+        job_dir=job_dir, url="https://example.com/x",
+    )
+    with pytest.raises(ExternalServiceError):
+        runner.crawl_url(spec, ts=TS)
+
+
+def test_read_manifest_corrupt_raises_external_service_error(tmp_path):
+    """U6 (REL-2): a truncated/garbage manifest (e.g. a SIGKILL mid-write) must map
+    to a retriable failure, not crash the run with a raw pydantic ValidationError."""
+    job_dir = tmp_path / "jc"
+    job_dir.mkdir(parents=True, exist_ok=True)
+    (job_dir / "manifest.json").write_text('{"job_id": "jc", "asse', encoding="utf-8")
+    with pytest.raises(ExternalServiceError):
+        read_manifest(job_dir)
+
+
+def test_scrapy_main_unexpected_error_returns_nonzero(tmp_path, monkeypatch):
+    """U6 (REL-1, child side): a non-LcpError crash inside the spider must become a
+    clean non-zero exit + JSON error line, not an escaping traceback the parent
+    silently ignores."""
+    monkeypatch.setenv("LCP_ALLOW_LOOPBACK_FOR_TESTS", "1")  # skip real DNS preflight
+
+    def boom(*a, **k):
+        raise RuntimeError("reactor exploded")
+
+    monkeypatch.setattr(scrapy_impl, "_run_spider", boom)
+    rc = scrapy_impl.main(
+        [
+            "--url", "http://127.0.0.1/x",
+            "--job-id", "jboom",
+            "--job-dir", str(tmp_path / "jboom"),
+            "--allow-domain", "127.0.0.1",
+            "--timeout", "5",
+            "--source-domain", "127.0.0.1",
+            "--fetched-at", TS,
+        ]
+    )
+    assert rc != 0
+
+
 # --------------------------------------------------------------------------
 # Real per-asset/manifest output path via extract_content + write_bundle
 # (fabricated Scrapy Response — no network)

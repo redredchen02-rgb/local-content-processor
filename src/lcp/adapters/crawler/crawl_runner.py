@@ -130,11 +130,17 @@ class CrawlRunner:
         except subprocess.TimeoutExpired as e:
             raise ExternalServiceError(f"crawl subprocess timed out: {e}") from e
 
+        # Surface a child failure BEFORE trusting the manifest (U6): a non-zero exit
+        # (or a child that crashed outside the LcpError path) is a retriable failure
+        # regardless of manifest presence — otherwise a stale/partial manifest from a
+        # PRIOR run would be mistaken for this run's success.
+        rc = getattr(proc, "returncode", None)
+        if rc != 0:
+            raise ExternalServiceError(f"crawl subprocess failed (rc={rc})")
+
         manifest = read_manifest(spec.job_dir)
         if manifest is None:
-            raise ExternalServiceError(
-                f"crawl subprocess produced no manifest (rc={getattr(proc,'returncode',None)})"
-            )
+            raise ExternalServiceError(f"crawl subprocess produced no manifest (rc={rc})")
 
         if self.audit is not None:
             self.audit.append(

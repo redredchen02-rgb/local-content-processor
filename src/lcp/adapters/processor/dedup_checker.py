@@ -24,8 +24,6 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
-
 from ...core.rules import dedup_rules
 from ...core.rules.dedup_rules import (
     DedupIndex,
@@ -38,6 +36,8 @@ from ...core.state import JobState, ReviewReason
 from ..storage.audit_log import AuditLog
 from ..storage.job_store import JobStore
 from ._persist import persist_gate_state
+
+logger = logging.getLogger(__name__)
 
 EVENT_DEDUP_GATE = "DEDUP_GATE"
 

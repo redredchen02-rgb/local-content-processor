@@ -16,7 +16,7 @@ import json
 import os
 from pathlib import Path
 
-from ...core.errors import InputValidationError
+from ...core.errors import ExternalServiceError, InputValidationError
 from ...core.models import Manifest
 
 MANIFEST_NAME = "manifest.json"
@@ -56,10 +56,24 @@ def _atomic_write(path: Path, text: str) -> None:
 
 
 def read_manifest(job_dir: str | os.PathLike[str]) -> Manifest | None:
+    """Read the job manifest, or None if absent.
+
+    A PRESENT-but-corrupt manifest (truncated by a SIGKILL'd child mid-write,
+    invalid JSON, or a schema mismatch) maps to a retriable ``ExternalServiceError``
+    (U6) rather than escaping as a raw ``OSError``/``JSONDecodeError``/pydantic
+    ``ValidationError`` that the crawl path never catches. Absence (file not there)
+    is the legitimate "no manifest" signal and still returns None."""
     path = manifest_path(job_dir)
     if not path.exists():
         return None
-    return Manifest.model_validate_json(path.read_text(encoding="utf-8"))
+    try:
+        return Manifest.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        # pydantic ValidationError and json.JSONDecodeError are both ValueError
+        # subclasses; OSError covers a read failure on a present file.
+        raise ExternalServiceError(
+            f"corrupt or unreadable manifest at {path}: {type(exc).__name__}"
+        ) from exc
 
 
 def write_manifest(

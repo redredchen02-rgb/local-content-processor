@@ -378,6 +378,15 @@ def main(argv: list[str] | None = None) -> int:
     except LcpError as e:
         print(json.dumps({"error": type(e).__name__, "message": str(e)}), file=sys.stderr)
         return e.exit_code
+    except Exception as e:  # noqa: BLE001 - child boundary: any unexpected crash
+        # A non-LcpError crash (ReactorNotRestartable, MemoryError, an unexpected
+        # ValueError, ...) must become a clean non-zero exit + JSON error line so the
+        # parent maps it to a retriable failure, NOT an escaping traceback the parent
+        # silently ignores once a (stale) manifest is present (U6).
+        from ...core.errors import EXIT_INTERNAL
+
+        print(json.dumps({"error": type(e).__name__, "message": str(e)}), file=sys.stderr)
+        return EXIT_INTERNAL
 
 
 if __name__ == "__main__":
