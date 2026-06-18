@@ -20,6 +20,18 @@ _IMAGE_EXT = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
 _VIDEO_EXT = (".mp4", ".webm", ".mov", ".m4v", ".mkv")
 
 
+def _safe_urljoin(response: Any, raw: str) -> str | None:
+    """``response.urljoin`` raises ``ValueError`` on a malformed host (a bracketed
+    IPv6 literal like ``http://[::bad::]/x`` — stdlib ``urlsplit`` validates it via
+    ``ipaddress``). A single bad URL on an allowlisted page must NOT abort the whole
+    page's extraction, so return ``None`` and let the caller drop it."""
+    try:
+        joined: str = response.urljoin(raw)
+    except ValueError:
+        return None
+    return joined
+
+
 def classify_media_url(url: str) -> AssetKind | None:
     low = url.lower().split("?", 1)[0]
     if low.endswith(_IMAGE_EXT):
@@ -63,14 +75,25 @@ def extract_content(
         target.append(full)
 
     for src in response.css("img::attr(src)").getall():
-        _accept(response.urljoin(src), AssetKind.IMAGE)
+        full = _safe_urljoin(response, src)
+        if full is None:
+            rejected_media_urls.append(src)  # malformed URL -> drop, record, never fatal
+            continue
+        _accept(full, AssetKind.IMAGE)
 
     for src in response.css("video::attr(src), video source::attr(src)").getall():
-        _accept(response.urljoin(src), AssetKind.VIDEO)
+        full = _safe_urljoin(response, src)
+        if full is None:
+            rejected_media_urls.append(src)
+            continue
+        _accept(full, AssetKind.VIDEO)
 
-    # Also classify links pointing at media files.
+    # Also classify links pointing at media files. A malformed href is skipped
+    # (it may not be media at all), never fatal.
     for href in response.css("a::attr(href)").getall():
-        full = response.urljoin(href)
+        full = _safe_urljoin(response, href)
+        if full is None:
+            continue
         kind = classify_media_url(full)
         if kind is not None:
             _accept(full, kind)
