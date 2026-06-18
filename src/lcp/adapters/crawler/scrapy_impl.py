@@ -290,19 +290,31 @@ def _assets_from_pipeline_output(
             return
         result = by_url.get(url)
         if result and result.get("path"):
-            disk_path = store / result["path"]  # path is relative to STORE
+            # CONTAIN the pipeline-reported path BEFORE any read/chmod. `path` is
+            # relative to STORE; route it through safe_join (resolve() +
+            # is_relative_to) so a traversal path (`../../etc/passwd`) cannot map to
+            # a disk path outside the store. Path.relative_to is NOT a containment
+            # check here: it does not collapse `..`, so the old `store / path` +
+            # relative_to(job_dir) let a traversal path through. Today `path` is a
+            # SHA1 of the URL (not attacker-controlled), so this is defense-in-depth
+            # against a future pipeline swap (plan R10/U12).
             try:
-                data = disk_path.read_bytes()
-                os.chmod(disk_path, 0o600)
-                sha = sha256_bytes(data)
-                rel = disk_path.relative_to(job_dir).as_posix()
-                assets.append(
-                    AssetRef(kind=kind, path=rel, source_url=url,
-                             sha256=sha, state=AssetState.OK)
-                )
-                return
-            except OSError:
-                pass
+                disk_path = net_guard.safe_join(store, result["path"])
+            except InputValidationError:
+                disk_path = None
+            if disk_path is not None:
+                try:
+                    data = disk_path.read_bytes()
+                    os.chmod(disk_path, 0o600)
+                    sha = sha256_bytes(data)
+                    rel = disk_path.relative_to(job_dir).as_posix()
+                    assets.append(
+                        AssetRef(kind=kind, path=rel, source_url=url,
+                                 sha256=sha, state=AssetState.OK)
+                    )
+                    return
+                except OSError:
+                    pass
         assets.append(
             AssetRef(
                 kind=kind,

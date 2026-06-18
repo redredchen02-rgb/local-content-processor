@@ -449,3 +449,201 @@ def test_robots_disallow_recorded_not_bypassed():
     assert settings["ROBOTSTXT_OBEY"] is True
     assert settings["REDIRECT_ENABLED"] is False  # redirects not blindly followed
     assert settings["AUTOTHROTTLE_ENABLED"] is True
+
+
+# --------------------------------------------------------------------------
+# U12: pipeline-output path containment (defense-in-depth, SECURITY)
+# --------------------------------------------------------------------------
+
+def test_relative_to_does_not_collapse_dotdot(tmp_path):
+    """U12 regression guard: documents WHY safe_join is required. Path.relative_to
+    does NOT resolve `..`, so a traversal path passes a naive relative_to/startswith
+    containment check — exactly the gap the old line-298 code had. safe_join
+    (resolve() + is_relative_to) is the only correct containment primitive here."""
+    store = tmp_path / "raw" / "images"
+    store.mkdir(parents=True)
+    escaping = store / "../../../../etc/passwd"
+    # relative_to happily returns a value for an escaping path (no `..` collapse),
+    # i.e. it would NOT have caught the traversal.
+    rel = escaping.relative_to(store)
+    assert ".." in rel.as_posix()
+    # safe_join, by contrast, rejects it.
+    with pytest.raises(InputValidationError):
+        net_guard.safe_join(store, "../../../../etc/passwd")
+
+
+def test_pipeline_output_traversal_path_marked_failed_no_oob_access(tmp_path, monkeypatch):
+    """U12: a downloaded-file `path` that escapes the store (e.g. a future malicious
+    pipeline swap) must be routed through safe_join BEFORE read_bytes/chmod, marked
+    FAILED, and must touch NO file outside the job dir."""
+    # An out-of-tree secret the traversal path resolves to.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    secret = outside / "passwd"
+    secret.write_bytes(b"root:x:0:0:")
+    secret_mode_before = os.stat(secret).st_mode
+
+    # Fail loudly if anything reads or chmods outside the job dir.
+    real_read = Path.read_bytes
+    real_chmod = os.chmod
+
+    def guarded_read(self):
+        assert tmp_path / "outside" not in self.parents, f"OOB read: {self}"
+        return real_read(self)
+
+    def guarded_chmod(path, mode, *a, **k):
+        p = Path(path).resolve()
+        assert outside.resolve() not in p.parents, f"OOB chmod: {p}"
+        return real_chmod(path, mode, *a, **k)
+
+    monkeypatch.setattr(Path, "read_bytes", guarded_read)
+    monkeypatch.setattr(os, "chmod", guarded_chmod)
+
+    spec = _spec(tmp_path, "jtrav")
+    out = {
+        "title": "Good Title", "body": "Good body text",
+        "image_urls": ["https://example.com/evil.jpg"], "video_urls": [],
+        "source_html": "<html></html>", "metadata": {"url": "https://example.com/a"},
+        # the relative path the (hypothetically malicious) pipeline reported escapes
+        # the images store via `..` and points at the out-of-tree secret.
+        "downloaded_images": [
+            {"url": "https://example.com/evil.jpg",
+             "path": "../../../outside/passwd", "checksum": "x"}
+        ],
+        "downloaded_files": [],
+    }
+    bundle = scrapy_impl.write_bundle_from_extraction(
+        spec, out, source_domain="example.com", fetched_at=TS,
+    )
+    # The asset is FAILED (rejected by containment), not OK.
+    failed = [a for a in bundle.manifest.assets if a.state is AssetState.FAILED]
+    assert len(failed) == 1
+    assert failed[0].source_url == "https://example.com/evil.jpg"
+    # The out-of-tree secret was neither read nor chmod'd.
+    assert os.stat(secret).st_mode == secret_mode_before
+
+
+def test_pipeline_output_normal_relative_path_resolves_and_reads(tmp_path):
+    """U12 happy path: a normal sha1-style relative path under the store resolves,
+    is read, chmod'd 0600, and recorded OK — unchanged behavior."""
+    spec = _spec(tmp_path, "jok")
+    images_store = spec.job_dir / "raw" / "images"
+    images_store.mkdir(parents=True)
+    # sha1-style nested path Scrapy's ImagesPipeline produces (full/<sha1>.jpg).
+    rel = "full/da39a3ee5e6b4b0d3255bfef95601890afd80709.jpg"
+    disk = images_store / rel
+    disk.parent.mkdir(parents=True, exist_ok=True)
+    disk.write_bytes(_real_jpeg())
+
+    out = {
+        "title": "Good Title", "body": "Good body text",
+        "image_urls": ["https://example.com/a.jpg"], "video_urls": [],
+        "source_html": "<html></html>", "metadata": {"url": "https://example.com/a"},
+        "downloaded_images": [
+            {"url": "https://example.com/a.jpg", "path": rel, "checksum": "x"}
+        ],
+        "downloaded_files": [],
+    }
+    bundle = scrapy_impl.write_bundle_from_extraction(
+        spec, out, source_domain="example.com", fetched_at=TS,
+    )
+    ok = [a for a in bundle.manifest.assets if a.state is AssetState.OK]
+    assert len(ok) == 1
+    assert ok[0].sha256 and len(ok[0].sha256) == 64
+    assert ok[0].path == ("raw/images/" + rel)
+    assert os.stat(disk).st_mode & 0o077 == 0  # chmod 0600 still applied
+
+
+# --------------------------------------------------------------------------
+# U12: raw/ cleanup on a killed/failed crawl so a retry starts clean
+# --------------------------------------------------------------------------
+
+def test_timeout_clears_raw_for_clean_retry(tmp_path):
+    """U12: a SIGKILL'd (TimeoutExpired) crawl must clear the job's raw/ dir so a
+    retry does not inherit an orphaned partial download. The first run leaves a
+    partial source.txt behind; after the timeout the runner must have removed it."""
+    job_dir = tmp_path / "jto"
+
+    def fake_run_timeout(cmd, **kwargs):
+        # simulate the child writing a partial download before being SIGKILL'd
+        raw = job_dir / "raw"
+        raw.mkdir(parents=True, exist_ok=True)
+        (raw / "source.txt").write_text("partial", encoding="utf-8")
+        raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout", 1))
+
+    runner = CrawlRunner(_registry(), resolver=_good_resolver, subprocess_runner=fake_run_timeout)
+    spec = SourceSpec(
+        job_id="jto", source_type=SourceType.URL,
+        job_dir=job_dir, url="https://example.com/x",
+    )
+    with pytest.raises(ExternalServiceError):
+        runner.crawl_url(spec, ts=TS)
+    # raw/ must be clean: no orphaned partial source.txt left for the retry.
+    assert not (job_dir / "raw" / "source.txt").exists()
+
+
+def test_failed_run_no_manifest_clears_raw(tmp_path):
+    """U12: a non-zero-exit crawl that produced no valid manifest must also clear
+    raw/ (orphaned partial downloads) so create_only does not trip on retry."""
+    job_dir = tmp_path / "jnoman"
+
+    def fake_run_fail(cmd, **kwargs):
+        raw = job_dir / "raw"
+        raw.mkdir(parents=True, exist_ok=True)
+        (raw / "source.txt").write_text("partial", encoding="utf-8")
+
+        class P:
+            returncode = 1
+        return P()
+
+    runner = CrawlRunner(_registry(), resolver=_good_resolver, subprocess_runner=fake_run_fail)
+    spec = SourceSpec(
+        job_id="jnoman", source_type=SourceType.URL,
+        job_dir=job_dir, url="https://example.com/x",
+    )
+    with pytest.raises(ExternalServiceError):
+        runner.crawl_url(spec, ts=TS)
+    assert not (job_dir / "raw" / "source.txt").exists()
+
+
+def test_clean_raw_then_retry_succeeds(tmp_path):
+    """U12: after a failed crawl clears raw/, a subsequent successful crawl into the
+    same job dir produces a valid bundle (the retry is not blocked by orphans)."""
+    job_dir = tmp_path / "jretry"
+
+    # First run: fail with a leftover partial in raw/.
+    def fake_fail(cmd, **kwargs):
+        raw = job_dir / "raw"
+        raw.mkdir(parents=True, exist_ok=True)
+        (raw / "source.txt").write_text("partial", encoding="utf-8")
+
+        class P:
+            returncode = 1
+        return P()
+
+    runner = CrawlRunner(_registry(), resolver=_good_resolver, subprocess_runner=fake_fail)
+    spec = SourceSpec(
+        job_id="jretry", source_type=SourceType.URL,
+        job_dir=job_dir, url="https://example.com/x",
+    )
+    with pytest.raises(ExternalServiceError):
+        runner.crawl_url(spec, ts=TS)
+    assert not (job_dir / "raw").exists() or not any((job_dir / "raw").iterdir())
+
+    # Retry: a clean child write succeeds.
+    def fake_ok(cmd, **kwargs):
+        from lcp.adapters.crawler.bundle import build_manifest
+        m = build_manifest(
+            job_id="jretry", source_type=SourceType.URL, source_domain="example.com",
+            fetched_at=TS, assets=[], source_html="<html></html>", source_text="body",
+            crawl_status=STATUS_CRAWLED,
+        )
+        write_manifest(job_dir, m, create_only=True)
+
+        class P:
+            returncode = 0
+        return P()
+
+    runner2 = CrawlRunner(_registry(), resolver=_good_resolver, subprocess_runner=fake_ok)
+    bundle = runner2.crawl_url(spec, ts=TS)
+    assert bundle.job_status == STATUS_CRAWLED
