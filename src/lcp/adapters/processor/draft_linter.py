@@ -81,6 +81,7 @@ def run_draft_lint_gate(
     audit: AuditLog,
     ts: str,
     has_videos: bool = False,
+    has_images: bool = False,
     grounding_strategy: GroundingStrategy | None = None,
     actor: str = "system",
 ) -> DraftLintOutcome:
@@ -136,7 +137,8 @@ def run_draft_lint_gate(
 
     # --- lint (structure / quality; local-only, no URL parse) --------------
     lint_result = _run_lint(
-        draft, lint_config, source_text, has_videos, job_id, audit, ts, actor
+        draft, lint_config, source_text, has_videos, job_id, audit, ts, actor,
+        has_images=has_images,
     )
 
     if lint_result.status in (LintStatus.NEEDS_REVISION, LintStatus.BLOCKED):
@@ -163,6 +165,7 @@ def relint_after_grounding_cleared(
     audit: AuditLog,
     ts: str,
     has_videos: bool = False,
+    has_images: bool = False,
     actor: str = "human",
 ) -> DraftLintOutcome:
     """Re-run LINT after a human cleared the grounding hold (plan 架構審查 2d).
@@ -180,7 +183,8 @@ def relint_after_grounding_cleared(
     Returns ``job_state=None`` always (no persist here); inspect
     ``outcome.lint`` to decide the next move."""
     lint_result = _run_lint(
-        draft, lint_config, source_text, has_videos, job_id, audit, ts, actor
+        draft, lint_config, source_text, has_videos, job_id, audit, ts, actor,
+        has_images=has_images,
     )
     return DraftLintOutcome(lint=lint_result, grounding=None, job_state=None)
 
@@ -194,6 +198,7 @@ def relint_clears_hold(
     audit: AuditLog,
     ts: str,
     has_videos: bool = False,
+    has_images: bool = False,
     actor: str = "human",
 ) -> bool:
     """Re-run lint for the grounding-cleared resolve path and report whether it
@@ -212,6 +217,7 @@ def relint_clears_hold(
         audit=audit,
         ts=ts,
         has_videos=has_videos,
+        has_images=has_images,
         actor=actor,
     )
     return outcome.lint is not None and outcome.lint.passed
@@ -226,6 +232,7 @@ def _run_lint(
     audit: AuditLog,
     ts: str,
     actor: str,
+    has_images: bool = False,
 ) -> LintResult:
     """Run pure lint + write a PII-free audit event. Helper for both paths."""
     lint_result = lint_rules.lint_draft(
@@ -233,6 +240,7 @@ def _run_lint(
         lint_config,
         source_paragraphs=_source_paragraphs(source_text),
         has_videos=has_videos,
+        has_images=has_images,
     )
     audit.append(
         ts=ts,

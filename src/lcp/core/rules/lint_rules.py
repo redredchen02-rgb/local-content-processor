@@ -43,12 +43,12 @@ from ..draft import Draft
 # --- Canonical required sections (plan R17) ----------------------------------
 
 # The human-facing section labels (for messages) keyed by the Draft attribute we
-# verify is non-empty. video_sections is handled separately (present IFF videos).
+# verify is non-empty. image_sections and video_sections are handled separately
+# (present IFF the bundle has images / videos respectively — D9).
 REQUIRED_SECTIONS: tuple[tuple[str, str], ...] = (
     ("intro", "引言"),
     ("quick_facts", "一分鐘快速看懂"),
     ("event_body", "事件經過"),
-    ("image_sections", "圖片展示"),
     ("faq", "FAQ"),
     ("summary", "結尾"),
 )
@@ -165,14 +165,16 @@ def lint_draft(
     *,
     source_paragraphs: list[str] | None = None,
     has_videos: bool = False,
+    has_images: bool = False,
 ) -> LintResult:
     """Lint a Draft against structural/quality rules. Pure: no I/O, no URL parse.
 
     `source_paragraphs` (optional) is the cleaned source split into paragraphs —
     the caller cleans it with the SAME ``sanitize_source`` used for grounding;
     we only do local substring/equality comparison to detect copied-too-much.
-    `has_videos` says whether the job actually has video assets (so we can flag a
-    missing/extra video section). Returns a structured :class:`LintResult`."""
+    `has_videos`/`has_images` say whether the job actually has video/image assets
+    (so we can flag a missing image/video section IFF the bundle has that media —
+    D9). Returns a structured :class:`LintResult`."""
     errors: list[str] = []
     warnings: list[str] = []
     block = False
@@ -196,6 +198,13 @@ def lint_draft(
     for attr, label in REQUIRED_SECTIONS:
         if not _section_present(draft, attr):
             errors.append(f"missing required section: {label}")
+
+    # --- image section required IFF the bundle has images (D9) -------------
+    # Asymmetric on purpose: captions may legitimately exist without bundle
+    # images (the copywriter generates them), so a present-without-images
+    # section is NOT flagged — only a missing one when images exist.
+    if has_images and not draft.image_sections:
+        errors.append("圖片展示 section missing while images exist")
 
     # --- video section present IFF videos exist ----------------------------
     has_video_section = bool(draft.video_sections)

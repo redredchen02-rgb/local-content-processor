@@ -19,8 +19,10 @@ from lcp.adapters.processor.draft_linter import (
     EVENT_LINT_GATE,
     build_lint_config,
     relint_after_grounding_cleared,
+    relint_clears_hold,
     run_draft_lint_gate,
 )
+from lcp.adapters.processor.media_checker import media_presence
 from lcp.adapters.storage.audit_log import AuditLog
 from lcp.adapters.storage.job_store import JobStore
 from lcp.core.config import ContentConfig
@@ -71,7 +73,9 @@ def _good_draft(**overrides) -> Draft:
         event_body="華山文創園區本週末舉辦美食市集。現場有上百個攤位提供各式小吃與飲料。",
         image_sections=[MediaSection(asset_ref="img/a.jpg", caption="攤位")],
         faq=[FaqItem(question="要錢嗎？", answer="現場有上百個攤位提供各式小吃與飲料")],
-        summary="不容錯過的週末活動。",
+        # summary is now grounded (Unit 1 / D1: copywriter summary is checked) —
+        # a verbatim source line keeps this "good" fixture passing grounding.
+        summary="主辦單位預估將吸引大量人潮前往參觀。",
         tags=["美食", "市集", "華山"],
         keywords=["美食"],
         category="美食",
@@ -79,6 +83,38 @@ def _good_draft(**overrides) -> Draft:
     )
     base.update(overrides)
     return Draft(**base)
+
+
+# --- relint applies media-conditional rules (D9 fail-open fix) ----------------
+
+
+def test_relint_requires_image_sections_when_bundle_has_images(audit, lint_config):
+    # An image-bearing job whose draft has no image_sections must NOT clear on
+    # relint — otherwise the grounding-hold recovery path silently skips the
+    # conditional image-section requirement (fail-open the correctness review found).
+    d = _good_draft(image_sections=[])
+    assert relint_clears_hold(
+        job_id="ri", draft=d, source_text=SOURCE, lint_config=lint_config,
+        audit=audit, ts=TS, has_images=True,
+    ) is False
+    # Text-only (no bundle images) -> image_sections not required -> clears.
+    assert relint_clears_hold(
+        job_id="ri2", draft=d, source_text=SOURCE, lint_config=lint_config,
+        audit=audit, ts=TS, has_images=False,
+    ) is True
+
+
+def test_media_presence_reads_persisted_report(store):
+    import json
+    job_dir = store.job_dir("mp")
+    (job_dir / "processed").mkdir(parents=True, exist_ok=True)
+    (job_dir / "processed" / "validation_report.json").write_text(
+        json.dumps({"image_count": 2, "video_count": 0}), encoding="utf-8"
+    )
+    assert media_presence(store, "mp") == (True, False)
+    # Absent report -> conservative (False, False) floor (never happens at a
+    # grounding hold, where media has already run).
+    assert media_presence(store, "absent") == (False, False)
 
 
 # --- Happy path: both pass -> no state write ---------------------------------

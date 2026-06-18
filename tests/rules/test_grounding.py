@@ -47,6 +47,41 @@ def test_grounded_draft_passes():
     assert r.ungrounded_claims == []
 
 
+# --- Unit 1 (B0 fix): generated quick_facts + summary must be grounded too ----
+
+
+def test_ungrounded_quick_fact_routes_to_human():
+    d = Draft(
+        event_body="華山文創園區本週末舉辦美食市集。",
+        quick_facts=["主辦單位涉嫌收受廠商鉅額回扣遭檢方約談偵訊"],  # not in source
+        quotes=[],
+    )
+    r = verify_grounding(d, SOURCE)
+    assert r.needs_human_review
+    assert any(u.kind == "claim" for u in r.ungrounded_claims)
+
+
+def test_ungrounded_summary_routes_to_human():
+    d = Draft(
+        event_body="華山文創園區本週末舉辦美食市集。",
+        summary="據傳市長與廠商之間存在不可告人的金錢往來與利益輸送關係",  # absent
+        quotes=[],
+    )
+    r = verify_grounding(d, SOURCE)
+    assert r.needs_human_review
+
+
+def test_grounded_quick_fact_and_summary_pass():
+    d = Draft(
+        event_body="華山文創園區本週末舉辦美食市集。",
+        quick_facts=["現場有上百個攤位提供各式小吃與飲料"],  # substring of SOURCE
+        summary="主辦單位預估將吸引大量人潮前往參觀",  # substring of SOURCE
+        quotes=[],
+    )
+    r = verify_grounding(d, SOURCE)
+    assert r.passed
+
+
 # --- Fail: quote not in source ----------------------------------------------
 
 

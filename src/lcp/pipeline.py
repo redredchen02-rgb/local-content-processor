@@ -543,6 +543,9 @@ class Pipeline:
             )
 
         # --- lint + grounding gate ---
+        # Derive has_images from the actual media gate result (D9): image_sections
+        # is required IFF the bundle has images. has_videos stays the caller hint.
+        has_images = bool(media_out.report.get("image_count", 0))
         lint_config = build_lint_config(self.config.content, self.config.categories)
         lint_out = run_draft_lint_gate(
             job_id=job_id,
@@ -553,15 +556,24 @@ class Pipeline:
             audit=self.audit,
             ts=ts,
             has_videos=has_videos,
+            has_images=has_images,
         )
         if lint_out.job_state is not None:
+            # Surface WHICH sections/claims failed so the operator (CLI/GUI) can
+            # act without re-deriving them. PII-free: lint errors are canonical
+            # section labels + counts; grounding only a boolean reason here.
+            park_notes = list(notes)
+            if lint_out.lint is not None:
+                park_notes.extend(f"lint: {e}" for e in lint_out.lint.errors)
+            if lint_out.grounding is not None and lint_out.grounding.needs_human_review:
+                park_notes.append("grounding: ungrounded claim(s) need human review")
             return ProcessResult(
                 job_id=job_id,
                 draft=draft,
                 final_state=lint_out.job_state,
                 dry_run=self.dry_run,
                 stopped_at="lint",
-                notes=notes,
+                notes=park_notes,
             )
 
         # --- all gates passed: PROCESSING -> PROCESSED ---
@@ -615,6 +627,9 @@ class Pipeline:
         processed_cover: str | None = None,
         site_index_path: str | Path | None = None,
         has_videos: bool = False,
+        ai_copy: bool = True,
+        template: str | None = None,
+        watermark: bool | None = None,
     ) -> RunResult:
         """Run the pipeline up to `target` ('draft' or 'review').
 
@@ -623,6 +638,10 @@ class Pipeline:
           NEEDS_*).
         - target='review': as 'draft', then (only if PROCESSED) build the review
           packet -> REVIEW_PENDING.
+
+        `ai_copy` defaults ON for the happy path (D2): the copywriter fills the
+        required quick_facts/summary/faq (and image captions), without which a
+        real draft cannot reach PROCESSED. A dry run skips the LLM regardless.
 
         dry_run is honoured throughout (LLM never called). Stops EARLY and
         returns the resting state if any gate parks the job — it never forces a
@@ -648,6 +667,9 @@ class Pipeline:
             title=title,
             site_index_path=site_index_path,
             has_videos=has_videos,
+            ai_copy=ai_copy,
+            template=template,
+            watermark=watermark,
         )
         if proc.final_state is not JobState.PROCESSED:
             notes = list(proc.notes)

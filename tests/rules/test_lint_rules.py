@@ -71,6 +71,26 @@ def test_title_too_long_needs_revision():
     assert any("title too long" in e for e in r.errors)
 
 
+# --- D9: image_sections is conditional (required iff the bundle has images) ---
+
+
+def test_image_sections_not_required_for_text_only_article():
+    # A text-only draft (no bundle images) passes without an image section.
+    r = lint_draft(_good_draft(image_sections=[]), CFG, has_images=False)
+    assert r.passed, r.errors
+
+
+def test_image_sections_required_when_bundle_has_images():
+    r = lint_draft(_good_draft(image_sections=[]), CFG, has_images=True)
+    assert r.status == LintStatus.NEEDS_REVISION
+    assert any("圖片展示" in e for e in r.errors)
+
+
+def test_well_formed_draft_with_images_passes_when_has_images():
+    r = lint_draft(_good_draft(), CFG, has_images=True)
+    assert r.passed, r.errors
+
+
 def test_title_too_short_needs_revision():
     r = lint_draft(_good_draft(title="短"), CFG)
     assert r.status == LintStatus.NEEDS_REVISION

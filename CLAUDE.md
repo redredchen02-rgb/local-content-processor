@@ -6,10 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-There is no Makefile or task runner — everything runs through the project venv (`./.venv/bin/...`). Setup: `python3.11 -m venv .venv && ./.venv/bin/pip install -e ".[crawl,media,llm,dedup,gui,dev]"`. Requires Python 3.11+ and `ffmpeg`/`ffprobe` on `PATH`.
+There is no Makefile or task runner — everything runs through the project venv (`./.venv/bin/...`). Setup: `python3.11 -m venv .venv && ./.venv/bin/pip install -e ".[crawl,media,llm,dedup,gui,dev]"`, then `./.venv/bin/lcp init` (scaffolds `config.yaml` 0600 + seeds an empty `site_index.jsonl`; idempotent, never clobbers). Requires Python 3.11+ and `ffmpeg`/`ffprobe` on `PATH`. A **complete** draft needs `--ai-copy` (the copywriter fills `quick_facts`/`summary`/`faq`; `image_sections` is required only for image-bearing bundles, D9) — `run` defaults `--ai-copy` on; `--dry-run` never calls the LLM so it cannot reach a packet.
 
 ```sh
-./.venv/bin/python -m pytest -q                          # full suite (~600 tests)
+./.venv/bin/python -m pytest -q                          # full suite (~750 tests)
 ./.venv/bin/python -m pytest tests/test_state_machine.py # one file
 ./.venv/bin/python -m pytest tests/processor -q          # one subdir (mirrors src/)
 ./.venv/bin/python -m pytest -k grounding -q             # by keyword
@@ -29,6 +29,7 @@ The single most important structural rule. Read `src/lcp/pipeline.py`'s module d
 - **`src/lcp/adapters/`** — the imperative shell: `crawler/`, `media/`, `llm/`, `processor/` (Stage-2 gates), `publisher/`, `storage/`. These do I/O and call into the pure core.
 - **`src/lcp/pipeline.py`** — the injection seam. Holds the injected adapters (store, audit, crawler, llm client) + config, runs the stages, drives the state machine. CLI/GUI build a `Pipeline` and call it.
 - **`src/lcp/cli.py` + `src/lcp/gui.py`** — thin shells only (Click / pywebview glue). They mirror each other 1:1; **any operator action added to one must exist in the other.** Keep them logic-free.
+- **`src/lcp/web/`** — the GUI's frontend assets (`index.html`, `app.js`, `lex.js`, `app.css`). `gui.py::launch` serves this directory over pywebview's built-in HTTP server bound to **127.0.0.1 only** (never inline `html=`). The XSS-defense model lives here too: `app.js` renders bridge data with `textContent` (never `innerHTML`), `index.html` carries a strict CSP, and source URLs are inert text. Treat it as part of the GUI shell — keep logic out of it and mirror any new operator action in `cli.py`.
 
 When adding a stage or gate: put the decision in `core/`, the I/O in an `adapters/` module, wire it in `pipeline.py`, expose it in *both* shells.
 
@@ -84,4 +85,4 @@ These are load-bearing, not aspirational. `docs/security/pii-inventory.md` is th
 
 ## Where to read more
 
-`docs/plans/` (numbered implementation plans, e.g. `2026-06-17-002-feat-content-pipeline-upgrade-plan.md`), `docs/brainstorms/` (requirements), `docs/security/pii-inventory.md`, and `docs/*-runbook.md` (operator go/no-go procedures).
+`docs/plans/` (numbered implementation plans, e.g. `2026-06-17-002-feat-content-pipeline-upgrade-plan.md`), `docs/brainstorms/` (requirements), `docs/spec/`, `docs/security/pii-inventory.md`, and `docs/*-runbook.md` (operator go/no-go procedures). **`docs/solutions/`** holds distilled institutional learnings (one pattern per file, e.g. `mypy-from-venv-not-pyenv.md`, `begin-immediate-isolation-level.md`) — read it before solving a problem that smells familiar, and add to it after landing a non-obvious fix.

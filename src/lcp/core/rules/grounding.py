@@ -195,6 +195,16 @@ def _split_claims(draft: Draft) -> list[str]:
         s = sub.strip()
         if len(s) >= _MIN_CLAIM_CHARS:
             claims.append(s)
+    # Unit 1 (B0 fix): quick_facts items + summary sentences are copywriter-
+    # generated narrative content, so they are grounded too — an ungrounded
+    # quick fact / summary routes to a human, never silently passes.
+    for qf in draft.quick_facts:
+        q = qf.strip()
+        if len(q) >= _MIN_CLAIM_CHARS:
+            claims.append(q)
+    for chunk in _sentences(draft.summary):
+        if len(chunk) >= _MIN_CLAIM_CHARS:
+            claims.append(chunk)
     return claims
 
 
