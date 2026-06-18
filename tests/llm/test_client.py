@@ -132,12 +132,24 @@ def test_finish_reason_length_needs_revision(with_key):
     assert res.revision_reason == "truncated:length"
 
 
-def test_finish_reason_content_filter_needs_revision(with_key):
-    stub = StubOpenAI(response=_response("blocked", "content_filter"))
-    client = LlmClient(_config(), client_factory=stub.factory)
-    res = client.chat(system="r", user="d")
-    assert res.needs_revision is True
-    assert res.revision_reason == "truncated:content_filter"
+def test_finish_reason_content_filter_distinct_from_truncation(with_key):
+    # Unit 15: content_filter is a PROVIDER BLOCK, not a cut-off completion. It
+    # must carry a distinct reviewer-visible signal from a `length` truncation so
+    # a human can tell "the model was censored" from "the output ran out of room".
+    filtered = StubOpenAI(response=_response("blocked", "content_filter"))
+    res_f = LlmClient(_config(), client_factory=filtered.factory).chat(
+        system="r", user="d"
+    )
+    assert res_f.needs_revision is True
+    assert res_f.revision_reason == "filtered:content_filter"
+
+    truncated = StubOpenAI(response=_response("cut off", "length"))
+    res_t = LlmClient(_config(), client_factory=truncated.factory).chat(
+        system="r", user="d"
+    )
+    # The two reasons are distinct strings (not both "truncated:<reason>").
+    assert res_t.revision_reason == "truncated:length"
+    assert res_f.revision_reason != res_t.revision_reason
 
 
 def test_empty_content_needs_revision(with_key):
@@ -452,3 +464,197 @@ def test_temperature_above_ceiling_rejected(with_key):
     client = LlmClient(_config(), client_factory=StubOpenAI().factory)
     with pytest.raises(InputValidationError):
         client.chat(system="r", user="d", temperature=0.9)
+
+
+# --------------------------------------------------------------------------
+# per-process cooldown after repeated failures (Unit 14)
+#
+# The SDK already retries+jitters per call; the residual gap is no cross-job
+# cooldown — a sustained-5xx provider is re-hammered on every job re-run. We
+# inject a monotonic clock so these tests drive the window without sleeping.
+# --------------------------------------------------------------------------
+
+class FakeMonotonic:
+    """A controllable monotonic clock for cooldown tests."""
+
+    def __init__(self, start: float = 0.0):
+        self.t = start
+
+    def __call__(self) -> float:
+        return self.t
+
+    def advance(self, seconds: float) -> None:
+        self.t += seconds
+
+
+class CountingCompletions:
+    """Records how many times create() is actually invoked, and can raise on the
+    first N calls then succeed (to model a transient vs. sustained outage)."""
+
+    def __init__(self, *, raises, fail_count=None, response=None, recorder):
+        self._raises = raises
+        self._fail_count = fail_count  # None => always raise
+        self._response = response if response is not None else _response("ok", "stop")
+        self._recorder = recorder
+
+    def create(self, **kwargs):
+        self._recorder["calls"] += 1
+        if self._raises is not None and (
+            self._fail_count is None or self._recorder["calls"] <= self._fail_count
+        ):
+            raise self._raises
+        return self._response
+
+
+class CountingOpenAI:
+    def __init__(self, *, raises=None, fail_count=None, response=None):
+        self.recorder = {"calls": 0}
+        self.chat = types.SimpleNamespace(
+            completions=CountingCompletions(
+                raises=raises,
+                fail_count=fail_count,
+                response=response,
+                recorder=self.recorder,
+            )
+        )
+
+    def factory(self, **kwargs):
+        return self
+
+
+def _server_error():
+    import httpx
+
+    from openai import APIStatusError
+
+    resp = httpx.Response(503, request=httpx.Request("POST", "https://x/v1"))
+    return APIStatusError("server error", response=resp, body=None)
+
+
+def test_cooldown_short_circuits_after_threshold(with_key):
+    # N consecutive ExternalServiceErrors trip the cooldown; the very next call
+    # must short-circuit WITHOUT re-hitting the endpoint (no new create() call).
+    clock = FakeMonotonic()
+    stub = CountingOpenAI(raises=_server_error())  # always 503
+    client = LlmClient(
+        _config(),
+        client_factory=stub.factory,
+        monotonic=clock,
+        cooldown_failure_threshold=3,
+        cooldown_seconds=30.0,
+    )
+    for _ in range(3):
+        with pytest.raises(ExternalServiceError):
+            client.chat(system="r", user="d")
+    assert stub.recorder["calls"] == 3  # all three actually hit the endpoint
+
+    # 4th call, still inside the window -> short-circuit, NO new create() call.
+    with pytest.raises(ExternalServiceError) as ei:
+        client.chat(system="r", user="d")
+    assert ei.value.exit_code == EXIT_EXTERNAL
+    assert stub.recorder["calls"] == 3  # unchanged: endpoint NOT re-hit
+    assert SECRET not in str(ei.value)
+
+
+def test_single_transient_error_does_not_trip_cooldown(with_key):
+    # A single transient failure that then succeeds must NOT trip the cooldown:
+    # the next call goes through, and the success resets the counter.
+    clock = FakeMonotonic()
+    # raises once, succeeds thereafter
+    stub = CountingOpenAI(raises=_server_error(), fail_count=1, response=_response("ok", "stop"))
+    client = LlmClient(
+        _config(),
+        client_factory=stub.factory,
+        monotonic=clock,
+        cooldown_failure_threshold=3,
+        cooldown_seconds=30.0,
+    )
+    with pytest.raises(ExternalServiceError):
+        client.chat(system="r", user="d")  # call 1: transient failure
+    res = client.chat(system="r", user="d")  # call 2: succeeds, no cooldown
+    assert res.text == "ok"
+    assert stub.recorder["calls"] == 2  # both reached the endpoint
+
+
+def test_success_resets_consecutive_failure_counter(with_key):
+    # Two failures, then a success, then two more failures should NOT trip a
+    # threshold-3 cooldown — the success in the middle resets the counter.
+    clock = FakeMonotonic()
+    recorder = {"calls": 0}
+
+    class Flaky:
+        def __init__(self):
+            self.script = ["fail", "fail", "ok", "fail", "fail"]
+
+        def create(self, **kwargs):
+            recorder["calls"] += 1
+            outcome = self.script[recorder["calls"] - 1]
+            if outcome == "fail":
+                raise _server_error()
+            return _response("ok", "stop")
+
+    stub = types.SimpleNamespace(chat=types.SimpleNamespace(completions=Flaky()))
+    client = LlmClient(
+        _config(),
+        client_factory=lambda **kw: stub,
+        monotonic=clock,
+        cooldown_failure_threshold=3,
+        cooldown_seconds=30.0,
+    )
+    with pytest.raises(ExternalServiceError):
+        client.chat(system="r", user="d")  # 1 fail
+    with pytest.raises(ExternalServiceError):
+        client.chat(system="r", user="d")  # 2 fail
+    res = client.chat(system="r", user="d")  # success -> counter reset
+    assert res.text == "ok"
+    with pytest.raises(ExternalServiceError):
+        client.chat(system="r", user="d")  # 1 fail (post-reset)
+    with pytest.raises(ExternalServiceError):
+        client.chat(system="r", user="d")  # 2 fail
+    # All five reached the endpoint: the cooldown never tripped.
+    assert recorder["calls"] == 5
+
+
+def test_cooldown_expires_after_window(with_key):
+    # Once the cooldown window elapses (advance the injected clock), a call is
+    # attempted against the endpoint again.
+    clock = FakeMonotonic()
+    stub = CountingOpenAI(raises=_server_error())  # always 503
+    client = LlmClient(
+        _config(),
+        client_factory=stub.factory,
+        monotonic=clock,
+        cooldown_failure_threshold=3,
+        cooldown_seconds=30.0,
+    )
+    for _ in range(3):
+        with pytest.raises(ExternalServiceError):
+            client.chat(system="r", user="d")
+    assert stub.recorder["calls"] == 3
+
+    # Still inside the window -> short-circuit (no new call).
+    with pytest.raises(ExternalServiceError):
+        client.chat(system="r", user="d")
+    assert stub.recorder["calls"] == 3
+
+    # Advance past the window -> the endpoint is tried again.
+    clock.advance(31.0)
+    with pytest.raises(ExternalServiceError):
+        client.chat(system="r", user="d")
+    assert stub.recorder["calls"] == 4
+
+
+def test_dry_run_never_trips_cooldown(with_key):
+    # dry-run never calls the API, so it must never engage the cooldown path.
+    clock = FakeMonotonic()
+    client = LlmClient(
+        _config(),
+        dry_run=True,
+        client_factory=StubOpenAI(raises=_server_error()).factory,
+        monotonic=clock,
+        cooldown_failure_threshold=1,
+        cooldown_seconds=30.0,
+    )
+    for _ in range(5):
+        res = client.chat(system="r", user="d")
+        assert res.executed is False

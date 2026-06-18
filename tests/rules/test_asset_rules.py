@@ -27,6 +27,13 @@ def test_is_blurry_uses_threshold():
     assert not asset_rules.is_blurry(500.0, threshold=100.0)
 
 
+def test_is_blurry_treats_non_finite_as_blurry():
+    """U5: a NaN/inf variance (degenerate image) must fail closed (blurry), not
+    silently pass because ``nan < threshold`` is False."""
+    assert asset_rules.is_blurry(float("nan"), threshold=100.0)
+    assert asset_rules.is_blurry(float("inf"), threshold=100.0)
+
+
 # --- judge_image --------------------------------------------------------------
 
 

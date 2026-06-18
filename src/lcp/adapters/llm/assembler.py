@@ -219,6 +219,28 @@ def assemble(
             executed=True,
         )
 
+    # Fail-closed grounding anchor (Unit 15): a clean rewrite with a non-empty
+    # source but ZERO extractable verbatim quotes (every source line < 8 chars)
+    # would reach grounding with nothing extractive to verify — a vacuous pass.
+    # Route it to NEEDS_REVISION so a human checks it, rather than shipping a
+    # draft whose quote-grounding step has no anchor.
+    if sanitized.strip() and not quotes:
+        return Draft(
+            title=title or "",
+            intro="",
+            quotes=quotes,
+            tags=tags or [],
+            keywords=keywords or [],
+            category=category,
+            status=DraftStatus.NEEDS_REVISION,
+            needs_human_review=True,
+            constrained_rewrite=True,
+            review_reason="no_verbatim_quotes",
+            model=result.model,
+            finish_reason=result.finish_reason,
+            executed=True,
+        )
+
     # Clean completion: carry the rewritten body. We deliberately keep the raw
     # rewrite in event_body + intro; Unit 7b parses/lints the canonical sections
     # and verifies the quotes are grounded substrings.

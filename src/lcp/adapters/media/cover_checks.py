@@ -16,7 +16,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageStat
 from lcp.core.rules import asset_rules
 from lcp.core.rules.asset_rules import CoverAdvisory
 
-from .normalizer import _open_guarded, cover_cell_rects
+from .normalizer import _open_guarded, cover_cell_rects, downscale_to_working_pixels
 
 _STRIP = 8  # px thickness of the edge strips sampled for letterbox detection
 _SAFE_BOX_OUTLINE = (255, 80, 80)  # preview overlay colour
@@ -53,6 +53,11 @@ def evaluate_cover(
     """Measure a composed cover and return advisory-only findings."""
     img = _open_guarded(cover_path)
     try:
+        # Bound in-process CPU: the bomb cap limits memory, not the cost of the
+        # full-frame FIND_EDGES + entropy below. A normal cover (1300x640) is
+        # already under the working cap, so this is a no-op and its verdict is
+        # unchanged; only a pathological-but-legal multi-MP input is downscaled.
+        img = downscale_to_working_pixels(img)
         gray = img.convert("L")
         border_strips = {s: _strip_stats(gray, s) for s in ("top", "bottom", "left", "right")}
         upper, lower = _edge_energy_split(gray)

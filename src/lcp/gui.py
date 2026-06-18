@@ -45,6 +45,7 @@ share a SQLite handle. The GUI polls state via :meth:`Api.job_status` /
 from __future__ import annotations
 
 import functools
+import os
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -78,6 +79,23 @@ WEB_DIR = Path(__file__).resolve().parent / "web"
 # address; a test asserts launch() never passes an unsupported start() kwarg.
 SERVER_HOST = "127.0.0.1"
 
+# Recognised truthy spellings of LCP_GUI_DEBUG. Kept explicit (not a bare
+# truthy check) so a misremembered LCP_GUI_DEBUG=0/false does NOT silently turn
+# the Web Inspector on — the safe, intuitive direction for a security flag.
+_TRUTHY_ENV = frozenset({"1", "true", "yes", "on"})
+
+
+def _gui_debug_enabled() -> bool:
+    """Whether to enable the WKWebView/GTK Web Inspector (DevTools).
+
+    The Inspector exposes the FULL pywebview bridge (window.pywebview.api.approve
+    (...), etc.), so production must ship with it OFF; a developer opts in via the
+    LCP_GUI_DEBUG env var. Extracted as a module-scope helper because launch() is
+    `pragma: no cover` (desktop-only) and gui.py is a CI/mypy blind spot — the flag
+    logic must be exercised by a test, not buried in the untested launch(). Mirrors
+    the LCP_ALLOW_LOOPBACK_FOR_TESTS env-flag style."""
+    return os.environ.get("LCP_GUI_DEBUG", "").strip().lower() in _TRUTHY_ENV
+
 
 def _error_dict(err: LcpError) -> dict:
     """Map an LcpError to a bridge-safe dict (no stack, no secrets leaked).
@@ -91,10 +109,15 @@ def bridge_safe(fn: Callable[..., dict]) -> Callable[..., dict]:
     """Wrap a bridge method so any LcpError becomes the standard error dict.
 
     Collapses the repeated ``try/except LcpError -> _error_dict(e)`` blocks into
-    one place (the catch can't be forgotten). It catches ONLY LcpError — methods
-    that deliberately catch more (OSError/ValueError in cover_report; the
-    bare-Exception bridge guards) keep their own handlers and are NOT decorated.
-    functools.wraps preserves __name__ so pywebview still exposes each method."""
+    one place (the catch can't be forgotten). It catches ONLY LcpError; a method
+    that needs to treat MORE exception types specially (e.g. cover_report maps
+    OSError/ValueError to "no advisory") still stacks @bridge_safe on top and
+    keeps an inner try/except for the narrower types — the decorator is the outer,
+    last-resort LcpError net. The module invariant (asserted by an introspection
+    test) is that EVERY public Api method returns a bridge-safe dict; dashboard_stats
+    is the sole hand-rolled exception because its broad bare-Exception net is part
+    of the same shape. functools.wraps preserves __name__ so pywebview still
+    exposes each method."""
 
     @functools.wraps(fn)
     def _wrapped(*args: Any, **kwargs: Any) -> dict:
@@ -340,11 +363,19 @@ class Api:
         sanitized["state"] = rec.state.value if rec else None
         return sanitized
 
+    @bridge_safe
     def cover_report(self, job_id: str) -> dict:
         """Cover safe-area advisories + preview/cover paths from the media gate's
         validation report (Unit 5). Advisory text only — never a hard gate. All
         strings are escaped; paths are inert text (the GUI shows them, the
-        loopback server does not serve job dirs, so no <img> is embedded)."""
+        loopback server does not serve job dirs, so no <img> is embedded).
+
+        @bridge_safe handles LcpError. The narrower OSError/ValueError catch below
+        treats an unreadable / malformed report as "no advisory" (the report is
+        purely advisory). Any OTHER unexpected type (e.g. a KeyError from a
+        report missing a key json.loads accepts, a stat/permission surprise) must
+        NOT cross the bridge as a raw exception (path/stack leak) — it returns the
+        same "internal error" shape as dashboard_stats / _run_bg."""
         try:
             import json
 
@@ -364,10 +395,13 @@ class Api:
                 "geometry": [escape_html(g) for g in adv.get("geometry", [])],
                 "aesthetic": [escape_html(a) for a in adv.get("aesthetic", [])],
             }
-        except (LcpError, OSError, ValueError) as e:
-            if isinstance(e, LcpError):
-                return _error_dict(e)
+        except LcpError:
+            raise  # let @bridge_safe map it (preserves the typed exit code)
+        except (OSError, ValueError):
+            # Unreadable / malformed report -> advisory simply absent.
             return {"job_id": escape_html(job_id), "has_report": False}
+        except Exception:  # noqa: BLE001 - bridge boundary, never leak a stack
+            return {"error": "internal error", "exit_code": EXIT_INTERNAL}
 
     @bridge_safe
     def approve(self, job_id: str, reviewer: str) -> dict:
@@ -450,17 +484,29 @@ class Api:
         }
 
     @bridge_safe
-    def supersede(self, job_id: str, new_job_id: str | None = None) -> dict:
-        """Mirror `supersede`: REVIEW_PENDING/APPROVED/NEEDS_REVISION ->
-        SUPERSEDED, voiding the old sign-off and back-linking the new job."""
+    def supersede(
+        self,
+        job_id: str,
+        new_job_id: str | None = None,
+        redline_override: bool = False,
+    ) -> dict:
+        """Mirror CLI `supersede` (the recovery seam too, U8): -> SUPERSEDED.
+
+        Ordinary abandon and recovering a false-terminal DUPLICATE are
+        single-step. Recovering a BLOCKED (redline) job requires
+        ``redline_override=True`` — the dedicated GUI redline dialog passes it;
+        the plain `supersedeRow` path does not, so a BLOCKED supersede via the
+        ordinary button is refused. The actor recorded is the OBSERVED OS user."""
         c = self._ctx()
         new_state = signoff.supersede(
             job_id, store=c.store, audit=c.audit, ts=_now(), new_job_id=new_job_id,
+            actor=signoff.observed_os_user(), redline_override=bool(redline_override),
         )
         return {
             "job_id": escape_html(job_id),
             "state": new_state.value,
             "new_job_id": escape_html(new_job_id) if new_job_id else None,
+            "redline_override": bool(redline_override),
         }
 
     # --- Worklist + home counts (G7) -----------------------------------------
@@ -468,8 +514,18 @@ class Api:
     @bridge_safe
     def list_jobs(self, state: str | None = None) -> dict:
         """Mirror `list`: the pull-style worklist, optionally filtered by state
-        (alias or enum value). review_reason is escaped for display."""
+        (alias or enum value). review_reason is escaped for display.
+
+        Also the .processing crash-marker's consumer (U7), mirroring the CLI `list`:
+        a reconciliation pass flags any job a crash interrupted mid-Stage-2 as
+        ``interrupted`` (with its crash-attempt count) — surfaced for explicit
+        re-process, never auto-run. All flag values are numbers/bools from our own
+        vocabulary, so no escaping is needed for them."""
         c = self._ctx()
+        interrupted = {
+            i.job_id: i
+            for i in pl.Pipeline(c.config, c.store, c.audit).reconcile(ts=_now())
+        }
         records = pl.list_jobs(c.store, state)
         rows = [
             {
@@ -479,6 +535,15 @@ class Api:
                     escape_html(r.review_reason.value) if r.review_reason else None
                 ),
                 "updated_at": escape_html(r.updated_at),
+                "interrupted": r.job_id in interrupted,
+                "interrupt_attempts": (
+                    interrupted[r.job_id].attempts if r.job_id in interrupted else 0
+                ),
+                "interrupt_exhausted": (
+                    interrupted[r.job_id].exhausted
+                    if r.job_id in interrupted
+                    else False
+                ),
             }
             for r in records
         ]
@@ -590,9 +655,14 @@ class Api:
         c = self._ctx()
         return {"reviewers": [escape_html(r) for r in c.config.publisher.reviewers]}
 
+    @bridge_safe
     def disclaimer(self) -> dict:
         """The VERBATIM attribution-not-authentication disclaimer (unescaped: it
-        is our own fixed text, never attacker-shapeable)."""
+        is our own fixed text, never attacker-shapeable).
+
+        @bridge_safe for uniformity — the module invariant is that EVERY public
+        Api method returns a bridge-safe dict, so a future change here can never
+        let a raw exception cross the bridge."""
         return {"disclaimer": signoff.DISCLAIMER}
 
     # --- LLM settings (base_url/model -> file; api_key -> keyring ONLY) -------
@@ -697,7 +767,8 @@ def launch(config_path: str | None = None):  # pragma: no cover - desktop only
     # http_server=True uses pywebview's built-in server, which binds to
     # SERVER_HOST (loopback) by default, so the window's assets are never
     # reachable off-host. There is no host= kwarg (passing one raises).
-    # debug=True enables the WKWebView Web Inspector (right-click > Inspect
-    # Element) so a silent JS failure is diagnosable. Loopback-only http_server
-    # is unchanged; this only affects local devtools availability.
-    webview.start(http_server=True, ssl=False, debug=True)
+    # debug enables the WKWebView Web Inspector (right-click > Inspect Element),
+    # which exposes the full pywebview bridge — so it ships OFF and is opt-in via
+    # LCP_GUI_DEBUG (see _gui_debug_enabled). Loopback-only http_server is
+    # unchanged; this only affects local devtools availability.
+    webview.start(http_server=True, ssl=False, debug=_gui_debug_enabled())

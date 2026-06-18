@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import sys
 
 # Keys whose values must be masked in logs / audit.
 _SECRET_KEY_RE = re.compile(
@@ -91,11 +92,54 @@ def set_restrictive_umask() -> None:
         pass
 
 
+# Vetted system bin dirs the child may resolve binaries from (POSIX target).
+# Deliberately NOT the operator's PATH — see _pinned_path.
+_SYSTEM_BIN_DIRS = ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
+
+
+def _pinned_path() -> str:
+    """A vetted minimal PATH for subprocesses, NOT the operator's PATH wholesale.
+
+    DELIBERATE EXCEPTION to "forward the parent env": the parent's PATH is
+    attacker-influenceable (a shell profile, a poisoned env var), so forwarding
+    it lets a planted `ffmpeg`/`python` earlier on PATH be the one the media/
+    crawler subprocess resolves. We pin to a fixed vetted set instead:
+
+      - the running interpreter's bin dir (so the child finds OUR python), and
+      - the standard system bin dirs (so it finds ffmpeg/ffprobe).
+
+    The interpreter's own bin dir is trusted UNCONDITIONALLY: we are already
+    executing from it, so its trust is established, and rejecting it would also
+    break hardened CI runners whose tool-cache bin is world-writable. Every OTHER
+    candidate (the system bin dirs) is admitted only if it is an ABSOLUTE path,
+    exists, and is NOT world-writable (mode & 0o002) — a world-writable system dir
+    on PATH is a binary-planting vector. Order is preserved and duplicates dropped."""
+    out: list[str] = []
+    interp_bin = os.path.dirname(sys.executable)
+    if interp_bin and os.path.isabs(interp_bin) and os.path.isdir(interp_bin):
+        out.append(interp_bin)  # trusted: the interpreter we are running from
+    for d in _SYSTEM_BIN_DIRS:
+        if not d or not os.path.isabs(d) or d in out:
+            continue
+        try:
+            st = os.stat(d)
+        except OSError:
+            continue
+        if st.st_mode & 0o002:  # world-writable system dir -> planting vector, skip
+            continue
+        out.append(d)
+    return os.pathsep.join(out)
+
+
 def minimal_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     """A scrubbed environment for subprocesses parsing untrusted media, so they
-    cannot inherit secrets from the parent process env."""
-    keep = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "SystemRoot")
+    cannot inherit secrets from the parent process env.
+
+    PATH is PINNED to a vetted minimal set (_pinned_path), never forwarded from
+    the parent — see that helper for the rationale."""
+    keep = ("HOME", "LANG", "LC_ALL", "TMPDIR", "SystemRoot")
     env = {k: os.environ[k] for k in keep if k in os.environ}
+    env["PATH"] = _pinned_path()
     if extra:
         env.update(extra)
     return env

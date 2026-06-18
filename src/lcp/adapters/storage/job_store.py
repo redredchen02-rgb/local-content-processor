@@ -31,6 +31,12 @@ from .audit_log import EVENT_ERASURE, AuditLog
 
 DB_NAME = "lcp.db"
 PROCESSING_MARKER = ".processing"
+# Per-job-dir crash-attempt counter (U7). A FILE, never a jobs-table column: the
+# jobs schema is PII-free-by-construction (see module docstring) and adding a
+# count column would collide with that tripwire. Presence-only like .processing,
+# but carries a small integer (no PII) so a DETERMINISTIC crash surfaces to a
+# human after N reconcile passes instead of looping retry->crash->retry forever.
+INTERRUPT_COUNT_MARKER = ".interrupt_count"
 _BUSY_TIMEOUT_MS = 5000
 
 # Allowed index columns only — see module docstring / pii-inventory.md.
@@ -61,6 +67,22 @@ class JobRecord:
     review_reason: ReviewReason | None = None
 
 
+def _chmod_db_0600(db_path: Path) -> None:
+    """Force lcp.db (and its WAL/SHM sidecars) to 0600 after init.
+
+    Defense-in-depth: apply_hardening()'s 0o077 umask already yields 0600, but
+    this store SHARES lcp.db with the plaintext-PII saved_sources table, so we
+    do not want correctness to depend on an entry point remembering the umask.
+    The -wal/-shm sidecars carry the same plaintext page data, so tighten them
+    too when present. Best-effort: a chmod failure must not break the store."""
+    for p in (db_path, Path(f"{db_path}-wal"), Path(f"{db_path}-shm")):
+        try:
+            if p.exists():
+                os.chmod(p, 0o600)
+        except OSError:
+            pass
+
+
 def _row_to_record(row: sqlite3.Row) -> JobRecord:
     return JobRecord(
         job_id=row["job_id"],
@@ -74,6 +96,17 @@ def _row_to_record(row: sqlite3.Row) -> JobRecord:
             ReviewReason(row["review_reason"]) if row["review_reason"] else None
         ),
     )
+
+
+def _is_within(path: Path, ancestor: Path) -> bool:
+    """True if `path` is `ancestor` or lives under it (resolved, so `..` cannot
+    smuggle a path out). Used to detect an in-job-dir audit log so the confirming
+    erasure event does not resurrect a just-deleted job dir."""
+    try:
+        path.resolve().relative_to(ancestor.resolve())
+        return True
+    except ValueError:
+        return False
 
 
 class BestEffortDeletionResult:
@@ -127,6 +160,7 @@ class JobStore:
             conn.commit()
         finally:
             conn.close()
+        _chmod_db_0600(self.db_path)
 
     # --- job directory layout: data/jobs/<job_id>/{raw,processed,review}/ ---
 
@@ -251,25 +285,82 @@ class JobStore:
             review_reason=review_reason,
         )
 
-    def set_hashes(
+    def persist_crawl_result(
         self,
         job_id: str,
+        target: JobState,
         *,
         updated_at: str,
         source_html_sha256: str | None = None,
         source_text_sha256: str | None = None,
-    ) -> None:
-        conn = self._connect()
-        try:
-            conn.execute(
-                "UPDATE jobs SET source_html_sha256 = COALESCE(?, source_html_sha256), "
-                "source_text_sha256 = COALESCE(?, source_text_sha256), updated_at = ? "
-                "WHERE job_id = ?",
-                (source_html_sha256, source_text_sha256, updated_at, job_id),
+    ) -> JobRecord:
+        """Land a Stage-1 outcome — the state transition AND the source hashes —
+        in ONE transaction.
+
+        Stage 1 used to write the hashes then the state transition as two SEPARATE
+        committed transactions: a crash between them left a job at NEW WITH hashes
+        or at CRAWLED WITHOUT hashes (a torn write), and the hash write mutated the
+        row even when the subsequent state validation would reject the transition
+        (partial mutation on an illegal re-crawl). Folding both writes under one
+        ``BEGIN IMMEDIATE`` makes ``(state, hashes)`` atomic: either both land or
+        neither does.
+
+        Read + validate + update run under ``BEGIN IMMEDIATE``
+        (``isolation_level=None``) so the write lock is held across the whole
+        read->validate->update, mirroring ``set_state``. Validates ``current ->
+        target`` via the canonical state machine (so an illegal predecessor refuses
+        BEFORE any mutation — there is no longer a half-written hash to clean up),
+        and refuses a transient target. Hashes use COALESCE so a None leaves the
+        existing value intact."""
+        if target in TRANSIENT_STATES:
+            raise InputValidationError(
+                f"cannot persist transient state {target.value} to SQLite"
             )
-            conn.commit()
+        conn = self._connect()
+        conn.isolation_level = None  # manual transaction control (mirrors set_state)
+        try:
+            conn.execute("BEGIN IMMEDIATE")  # take the WAL write lock before reading
+            row = conn.execute(
+                "SELECT * FROM jobs WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            if row is None:
+                raise InputValidationError(f"unknown job: {job_id}")
+            current = _row_to_record(row)
+            validate_transition(current.state, target)  # raises if illegal
+            conn.execute(
+                "UPDATE jobs SET state = ?, updated_at = ?, "
+                "source_html_sha256 = COALESCE(?, source_html_sha256), "
+                "source_text_sha256 = COALESCE(?, source_text_sha256) "
+                "WHERE job_id = ?",
+                (
+                    target.value,
+                    updated_at,
+                    source_html_sha256,
+                    source_text_sha256,
+                    job_id,
+                ),
+            )
+            conn.execute("COMMIT")
         finally:
-            conn.close()
+            conn.close()  # rolls back if we raised before COMMIT
+        return JobRecord(
+            job_id=job_id,
+            state=target,
+            created_at=current.created_at,
+            updated_at=updated_at,
+            source_html_sha256=(
+                source_html_sha256
+                if source_html_sha256 is not None
+                else current.source_html_sha256
+            ),
+            source_text_sha256=(
+                source_text_sha256
+                if source_text_sha256 is not None
+                else current.source_text_sha256
+            ),
+            error_code=current.error_code,
+            review_reason=current.review_reason,
+        )
 
     def list_by_state(self, state: JobState) -> list[JobRecord]:
         conn = self._connect()
@@ -332,9 +423,12 @@ class JobStore:
         clears the ``.processing`` marker AFTER the commit.
 
         The marker is the CALLER's to set (Pipeline.process drops it at Stage-2
-        entry — the ``.processing`` evidence the _persist seam requires); this
-        method only clears it once the resting state is committed. Marker
-        filesystem I/O therefore stays OUTSIDE the write transaction, so the WAL
+        entry); this method does NOT require or assert the marker — it only clears
+        it (idempotently) once the resting state is committed. Not asserting is
+        deliberate: a marker-present check here would re-pull filesystem I/O under
+        the WAL write lock and break the legitimate PROCESS_FAILED retry path,
+        which re-enters without the original marker. Marker filesystem I/O
+        therefore stays OUTSIDE the write transaction, so the WAL
         write lock is never held across a touch()/mkdir."""
         if target in TRANSIENT_STATES:
             raise InputValidationError(
@@ -398,6 +492,48 @@ class JobStore:
     def is_processing(self, job_id: str) -> bool:
         return (self.job_dir(job_id) / PROCESSING_MARKER).exists()
 
+    # --- crash-attempt counter (per-job-dir FILE, NOT a SQLite column) ---
+
+    def read_interrupt_count(self, job_id: str) -> int:
+        """Crash-attempt count for `job_id` (0 if absent/unreadable/corrupt).
+
+        Fail-safe: a missing, half-written, or garbage counter file reads as 0 so
+        reconciliation never crashes on the very artifact it manages."""
+        counter = self.job_dir(job_id) / INTERRUPT_COUNT_MARKER
+        try:
+            return int(counter.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return 0
+
+    def bump_interrupt_count(self, job_id: str) -> int:
+        """Increment and persist the crash-attempt count; return the new value.
+
+        Atomic write (temp-in-same-dir + fsync + 0600 + os.replace) so a crash
+        mid-bump can never leave a half-written count that a later read would
+        mistake for a different value — it reads back as 0 (fail-safe) at worst."""
+        new = self.read_interrupt_count(job_id) + 1
+        d = self.job_dir(job_id)
+        d.mkdir(parents=True, exist_ok=True)
+        path = d / INTERRUPT_COUNT_MARKER
+        tmp = path.with_name(f".{INTERRUPT_COUNT_MARKER}.tmp.{os.getpid()}")
+        try:
+            with tmp.open("w", encoding="utf-8") as f:
+                f.write(str(new))
+                f.flush()
+                os.fsync(f.fileno())
+            os.chmod(tmp, 0o600)  # PII-at-rest discipline (no group/other access)
+            os.replace(tmp, path)  # atomic
+        finally:
+            if tmp.exists():
+                tmp.unlink()
+        return new
+
+    def clear_interrupt_count(self, job_id: str) -> None:
+        """Reset the counter (a clean re-process starts the loop guard fresh)."""
+        counter = self.job_dir(job_id) / INTERRUPT_COUNT_MARKER
+        if counter.exists():
+            counter.unlink()
+
     # --- best-effort deletion (NOT cryptographic erasure) ---
 
     def delete_job(
@@ -409,15 +545,27 @@ class JobStore:
         audit: AuditLog | None = None,
     ) -> BestEffortDeletionResult:
         """Best-effort delete: rmtree the job dir + remove the SQLite row, and
-        record an ERASURE audit event. We do NOT claim cryptographic erasure —
+        record ERASURE audit events. We do NOT claim cryptographic erasure —
         SSD wear-leveling may retain copies (plan R42). The returned result's
         cryptographic_erasure flag is always False.
 
-        The ERASURE event is recorded BEFORE rmtree so that, with the default
-        layout where audit.jsonl lives inside the job dir, the event is written
-        and then removed together with the dir; an external audit log survives
-        the deletion and still verifies."""
+        Two-event design so the audit can never assert an erasure that did not
+        happen (U10). The FIRST event (intent) is recorded BEFORE rmtree so that,
+        with the default layout where audit.jsonl lives inside the job dir, the
+        event is written and then removed together with the dir; an external audit
+        log survives the deletion and still verifies. Because it is written before
+        the blob removal, it cannot know the real outcome — so a SECOND confirming
+        event records the TRUE result (removed / rows_deleted / dir_existed) after
+        the writes complete. Without it, a stuck/permission-denied file would leave
+        the tamper-evident log asserting 'erased' while reality (and the returned
+        removed=False) say otherwise — a compliance-relevant mismatch.
+
+        rmtree runs WITHOUT ignore_errors so a stuck file is detected and reported,
+        not silently swallowed: removed reflects whether the dir actually went away."""
+        d = self.job_dir(job_id)
+        dir_existed = d.exists()
         if audit is not None:
+            # Intent record. Survives even if the blob removal below fails.
             audit.append(
                 ts=ts,
                 stage="storage",
@@ -426,15 +574,51 @@ class JobStore:
                 actor=actor,
                 extra={"method": "best_effort_unlink", "cryptographic_erasure": False},
             )
-        d = self.job_dir(job_id)
-        removed = False
-        if d.exists():
-            shutil.rmtree(d, ignore_errors=True)
-            removed = not d.exists()
+        if dir_existed:
+            try:
+                shutil.rmtree(d)
+            except OSError:
+                # A held/permission-denied file: detect-and-report rather than the
+                # old ignore_errors swallow. removed below will be False (the dir
+                # still exists), keeping the reported outcome truthful.
+                pass
+        # removed == "there was a job dir and it is now gone". An unknown job
+        # (no dir) reports removed=False — "nothing was erased" — never a vacuous
+        # True off an empty path, and never True while a stuck file survives.
+        removed = dir_existed and not d.exists()
+
+        # Delete the row under BEGIN IMMEDIATE + isolation_level=None, uniform with
+        # set_state/persist_crawl_result, so a future read-then-write edit here
+        # cannot silently reintroduce the read->update race PR #8 closed.
         conn = self._connect()
+        conn.isolation_level = None  # manual transaction control (mirrors set_state)
         try:
-            conn.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
-            conn.commit()
+            conn.execute("BEGIN IMMEDIATE")  # take the WAL write lock
+            cur = conn.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
+            rows_deleted = cur.rowcount if cur.rowcount is not None else 0
+            conn.execute("COMMIT")
         finally:
-            conn.close()
+            conn.close()  # rolls back if we raised before COMMIT
+
+        # Confirming record: the TRUE outcome (PII-free codes/bools/counts). Skip
+        # it when the audit log lives INSIDE the job dir we just removed — writing
+        # it there would resurrect the deleted dir, and that in-dir log was
+        # deliberately sacrificed with the blobs (the intent record above is its
+        # surviving trace). The external-log layout (production: audit at the
+        # storage root) is where a compliance reader needs the truthful outcome.
+        if audit is not None and not _is_within(audit.path, d):
+            audit.append(
+                ts=ts,
+                stage="storage",
+                event=EVENT_ERASURE,
+                job_id=job_id,
+                actor=actor,
+                extra={
+                    "method": "best_effort_unlink",
+                    "cryptographic_erasure": False,
+                    "dir_existed": dir_existed,
+                    "removed": removed,
+                    "rows_deleted": rows_deleted,
+                },
+            )
         return BestEffortDeletionResult(job_id=job_id, removed=removed)

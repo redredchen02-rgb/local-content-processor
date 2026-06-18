@@ -48,10 +48,17 @@ class ReviewReason(str, Enum):
 TRANSIENT_STATES: frozenset[JobState] = frozenset({JobState.PROCESSING})
 
 # Terminal states have no outgoing edges.
+#
+# BLOCKED and DUPLICATE are deliberately NOT terminal (operator decision,
+# 2026-06-18, U8): with false-terminal classifications provably possible, an
+# unrecoverable dead-end is the larger harm. They carry a single operator-only
+# recovery edge to SUPERSEDED (never automatic; see _TRANSITIONS below).
+# SUPERSEDED itself STAYS terminal — recovery never reopens a blocked job in
+# place; the only way back into review is a brand-new job re-entering at NEW.
+# That asymmetry is what stops the recovery edge from becoming a
+# content-laundering path.
 TERMINAL_STATES: frozenset[JobState] = frozenset(
     {
-        JobState.BLOCKED,
-        JobState.DUPLICATE,
         JobState.REJECTED,
         JobState.SUPERSEDED,
         JobState.PUBLISHED_RECORDED,
@@ -101,9 +108,14 @@ _TRANSITIONS: dict[JobState, frozenset[JobState]] = {
     JobState.APPROVED: frozenset(
         {JobState.PUBLISHED_RECORDED, JobState.SUPERSEDED}
     ),
+    # Operator-only recovery edge (U8): a false-terminal BLOCKED/DUPLICATE job
+    # can be abandoned to SUPERSEDED by an explicit human action (never reached
+    # by any automatic path in _process_inner/pipeline). The successor set is
+    # EXACTLY {SUPERSEDED} — no edge back to PROCESSING/CRAWLED — so this never
+    # reopens the job in place (anti-laundering; SUPERSEDED stays terminal).
+    JobState.BLOCKED: frozenset({JobState.SUPERSEDED}),
+    JobState.DUPLICATE: frozenset({JobState.SUPERSEDED}),
     # Terminal states (no outgoing edges).
-    JobState.BLOCKED: frozenset(),
-    JobState.DUPLICATE: frozenset(),
     JobState.REJECTED: frozenset(),
     JobState.SUPERSEDED: frozenset(),
     JobState.PUBLISHED_RECORDED: frozenset(),

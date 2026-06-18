@@ -54,6 +54,11 @@ class RiskCategory(str, Enum):
     DEFAMATION = "defamation"  # accusatory/defamatory phrasing
     PRIVATE_PII = "private_pii"  # identifiable private individual's PII
     COPYRIGHT_SOURCE_MISSING = "copyright_source_missing"
+    # A bare "footgun" redline token matched WITHOUT a confident redline signal
+    # (e.g. '童' inside 童話, '政治' inside 政治大學). Routes to human review — NOT a
+    # terminal BLOCK (false-positive recovery, U4) and NOT a silent PASS. The
+    # originally-suspected redline category is carried in the flag reason.
+    AMBIGUOUS_REDLINE = "ambiguous_redline"
 
     # Restricted category, disabled by default (R3) — see is_category_enabled.
     CAMPUS_STUDENT = "campus_student"  # 學生校園
@@ -79,6 +84,7 @@ DAILY_CHECK_CATEGORIES: frozenset[RiskCategory] = frozenset(
         RiskCategory.DEFAMATION,
         RiskCategory.PRIVATE_PII,
         RiskCategory.COPYRIGHT_SOURCE_MISSING,
+        RiskCategory.AMBIGUOUS_REDLINE,  # footgun-only match -> human review (U4)
     }
 )
 
@@ -188,12 +194,36 @@ class RiskDetector(Protocol):
 # starting points, intentionally broad on redlines (fail-closed), to be tuned
 # against our own annotated corpus. Lowercased substring match.
 _REDLINE_KEYWORDS: dict[RiskCategory, tuple[str, ...]] = {
-    RiskCategory.MINOR: ("未成年", "兒少", "童", "minor", "underage", "child"),
+    # NOTE (U4): the bare single-/short tokens '童' (MINOR) and '政治' (POLITICAL)
+    # were MOVED to _FOOTGUN_KEYWORDS below — as bare substrings they matched
+    # innocent superstrings (童話/童年/兒童樂園, 政治大學) and drove those into the
+    # UNRECOVERABLE terminal BLOCKED state. The specific, high-precision tokens
+    # here stay HARD redlines.
+    RiskCategory.MINOR: ("未成年", "兒少", "minor", "underage"),
     RiskCategory.NCII: ("外流", "私密照", "復仇式", "ncii", "revenge porn", "leaked nude"),
     RiskCategory.HIDDEN_CAM: ("偷拍", "針孔", "上空偷", "hidden cam", "upskirt", "voyeur"),
-    RiskCategory.POLITICAL: ("政治", "選舉", "政黨", "political", "election"),
+    RiskCategory.POLITICAL: ("選舉", "政黨", "election"),
     RiskCategory.VIOLENCE: ("血腥", "凌虐", "斬首", "gore", "graphic violence"),
     RiskCategory.HUMAN_RIGHTS: ("人口販運", "強迫勞動", "trafficking", "forced labor"),
+}
+
+# OPERATOR-TUNABLE COMPLIANCE KNOB (U4). A "footgun" token is one whose bare
+# substring match produces too many innocent false-positives to justify an
+# AUTO-BLOCK. When matched WITHOUT any confident redline signal in the same text,
+# it routes to NEEDS_HUMAN_REVIEW (a human decides) — never a silent PASS, never a
+# terminal BLOCK. The downgrade-to-human guardrail makes any choice here fail-safe.
+#
+# >>> COMPLIANCE NOTE — the operator owns this set <<<
+# Moving '童' here means a term like '兒童色情' (which contains 童 but none of the
+# high-precision MINOR keywords) routes to HUMAN REVIEW rather than auto-BLOCK. That
+# is "never PASS" compliant (nothing auto-publishes; a human always gates), but the
+# operator may prefer to (a) keep '童' a HARD redline and instead allow-list the
+# innocent compounds 童話/童年/兒童樂園, or (b) add charged collocations. This is an
+# initial CONSERVATIVE default for the two confirmed false-positive tokens; tune it
+# against the real corpus before relying on it.
+_FOOTGUN_KEYWORDS: dict[RiskCategory, tuple[str, ...]] = {
+    RiskCategory.MINOR: ("童",),
+    RiskCategory.POLITICAL: ("政治",),
 }
 
 _DEFAMATION_KEYWORDS: tuple[str, ...] = (
@@ -222,6 +252,9 @@ class KeywordRiskDetector:
     redline_keywords: dict[RiskCategory, tuple[str, ...]] = field(
         default_factory=lambda: dict(_REDLINE_KEYWORDS)
     )
+    footgun_keywords: dict[RiskCategory, tuple[str, ...]] = field(
+        default_factory=lambda: dict(_FOOTGUN_KEYWORDS)
+    )
     defamation_keywords: tuple[str, ...] = _DEFAMATION_KEYWORDS
     pii_keywords: tuple[str, ...] = _PII_KEYWORDS
     campus_keywords: tuple[str, ...] = _CAMPUS_KEYWORDS
@@ -237,6 +270,26 @@ class KeywordRiskDetector:
                 if w.lower() in haystack:
                     flags.append(
                         RiskFlag(category, f"redline keyword matched: {category.value}")
+                    )
+                    break
+
+        # Footgun tokens (U4): a bare token (童/政治) that matched but produced NO
+        # confident redline for its category -> ambiguous. Emit a non-redline
+        # AMBIGUOUS_REDLINE flag (confident=False) so assess_risk routes it to
+        # NEEDS_HUMAN_REVIEW (never a terminal BLOCK, never a silent PASS). Skipped
+        # when a real redline already fired for that category (it blocks anyway).
+        redlined = {f.category for f in flags}
+        for category, words in self.footgun_keywords.items():
+            if category in redlined:
+                continue
+            for w in words:
+                if w.lower() in haystack:
+                    flags.append(
+                        RiskFlag(
+                            RiskCategory.AMBIGUOUS_REDLINE,
+                            f"ambiguous redline token (suspected {category.value})",
+                            confident=False,
+                        )
                     )
                     break
 

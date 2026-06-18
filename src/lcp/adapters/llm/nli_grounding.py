@@ -91,4 +91,7 @@ class LlmGroundingStrategy:
         if result.needs_revision:  # truncated / empty / filtered -> fail closed
             return False
         verdict = (result.text or "").strip().upper()
-        return verdict.startswith("YES")
+        # Exact match, not startswith: the prompt demands EXACTLY "YES". A
+        # startswith would read "YESNO"/"YESSS"/"YES BUT..." as grounded —
+        # fail-closed means only the bare affirmative word counts.
+        return verdict == "YES"

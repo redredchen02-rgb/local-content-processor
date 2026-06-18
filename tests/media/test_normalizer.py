@@ -154,6 +154,28 @@ def test_corrupt_file_reported_as_validation_error(tmp_path):
         normalizer.normalize_image(bad, tmp_path / "out.jpg")
 
 
+# --- working-pixel cap for the analysis path (Unit 13) ------------------------
+
+
+def test_downscale_leaves_within_budget_image_untouched():
+    # A normal cover (1300x640 ~= 0.83 MP) is well under the 4 MP working cap,
+    # so thumbnail() must not resample it -> verdict-preserving no-op.
+    img = Image.new("RGB", (1300, 640), (120, 120, 120))
+    out = normalizer.downscale_to_working_pixels(img)
+    assert out is img
+    assert out.size == (1300, 640)
+
+
+def test_downscale_bounds_oversize_image_to_working_cap():
+    # An image far above the working cap is shrunk to <= the cap, aspect kept.
+    cap = 1_000_000
+    img = Image.new("RGB", (4000, 2000))  # 8 MP > 1 MP cap
+    out = normalizer.downscale_to_working_pixels(img, max_pixels=cap)
+    w, h = out.size
+    assert w * h <= cap
+    assert abs((w / h) - 2.0) < 0.05  # aspect ratio preserved
+
+
 # --- cover composition --------------------------------------------------------
 
 
@@ -180,6 +202,19 @@ def test_cover_ignores_sources_beyond_four(tmp_path):
 def test_cover_requires_at_least_one_source(tmp_path):
     with pytest.raises(InputValidationError):
         normalizer.make_cover([], tmp_path / "cover.jpg")
+
+
+def test_cover_fails_closed_on_mid_loop_load_failure(tmp_path):
+    # Unit 15 guard: a source that fails to decode mid-compose must raise (not
+    # return a partially filled canvas). _open_guarded already raises
+    # InputValidationError and the save is never reached — lock that in.
+    good = _save_rgb(tmp_path / "good.jpg", (400, 400))
+    bad = tmp_path / "bad.jpg"
+    bad.write_bytes(b"not an image")
+    dst = tmp_path / "cover.jpg"
+    with pytest.raises(InputValidationError):
+        normalizer.make_cover([good, bad], dst)
+    assert not dst.exists()  # no partial cover written
 
 
 def test_no_decompressionbomb_warning_filter_leaks(tmp_path):

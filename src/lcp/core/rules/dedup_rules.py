@@ -262,17 +262,24 @@ def assess_dedup(
         )
 
     # --- Stage 1: normalized title hash exact match ---
-    cand_th = title_hash(title)
-    for entry in index.entries:
-        if title_hash(entry.title) == cand_th:
-            return DedupResult(
-                status=DedupStatus.DUPLICATE,
-                matched_items=[MatchedItem(entry.job_id, "title_hash")],
-                queries=queries,
-                decision_reason="normalized title hash exact match",
-                reliability=reliability,
-                warnings=warnings,
-            )
+    # An EMPTY normalized title (emoji-only / punctuation-only / all-stopword)
+    # carries NO duplication signal — skip the title-hash match so two unrelated
+    # such articles don't collide on the hash of "" -> false terminal DUPLICATE
+    # (U4). Fall through to the body comparison instead. Also guard the entry side
+    # so a real-titled candidate never matches an empty-titled index entry.
+    cand_norm = normalize_title(title)
+    if cand_norm:
+        cand_th = title_hash(title)
+        for entry in index.entries:
+            if normalize_title(entry.title) and title_hash(entry.title) == cand_th:
+                return DedupResult(
+                    status=DedupStatus.DUPLICATE,
+                    matched_items=[MatchedItem(entry.job_id, "title_hash")],
+                    queries=queries,
+                    decision_reason="normalized title hash exact match",
+                    reliability=reliability,
+                    warnings=warnings,
+                )
 
     # --- Stage 2: MinHash/LSH candidate retrieval + exact Jaccard re-verify ---
     if body.strip() and not index.is_empty:

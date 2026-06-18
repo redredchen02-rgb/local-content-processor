@@ -43,18 +43,39 @@ from .adapters.llm.client import LlmClient
 from .adapters.processor import dedup_checker, media_checker, risk_checker
 from .adapters.processor.draft_linter import build_lint_config, run_draft_lint_gate
 from .adapters.publisher.review_packet import ReviewPacket, build_review_packet
-from .adapters.storage.audit_log import AuditLog
+from .adapters.storage.audit_log import EVENT_INTERRUPTED_DETECTED, AuditLog
 from .adapters.storage.job_store import JobRecord, JobStore
 from .core.config import Config
 from .core.draft import Draft, DraftStatus
 from .core.errors import ExternalServiceError, InputValidationError, LcpError
 from .core.models import SourceType
 from .core.rules.risk_rules import RiskInput
-from .core.state import JobState, TRANSIENT_STATES
+from .core.state import JobState, TERMINAL_STATES, TRANSIENT_STATES
 
 # Targets for run_until.
 TARGET_DRAFT = "draft"
 TARGET_REVIEW = "review"
+
+# Persisted resting states a job can legally be in WHILE mid-Stage-2 (the
+# .processing marker stands in for the transient PROCESSING). A marker found on
+# one of these is a crash-interruption to surface to the operator (U7). Markers
+# on any other (e.g. terminal) state are stale leftovers and are only cleared.
+RECONCILABLE_STATES: frozenset[JobState] = frozenset(
+    {JobState.CRAWLED, JobState.CRAWLED_WARN, JobState.PROCESS_FAILED}
+)
+
+# States where a stale .processing marker is a crash-between-COMMIT-and-clear
+# leftover that reconciliation only CLEARS (never reopens): the truly-terminal
+# states PLUS BLOCKED/DUPLICATE. The latter two are gate resting states that U8
+# moved out of TERMINAL_STATES (they gained an operator-only recovery edge), so
+# they must be named explicitly here or their crash-leftover markers would leak.
+_MARKER_ONLY_CLEAR_STATES: frozenset[JobState] = TERMINAL_STATES | frozenset(
+    {JobState.BLOCKED, JobState.DUPLICATE}
+)
+
+# Crash-attempt cap before a deterministically-crashing job is flagged exhausted
+# (surfaced to a human) instead of being treated as routinely re-processable.
+DEFAULT_MAX_INTERRUPT_ATTEMPTS = 3
 
 # Map a crawl status string onto the persisted JobState after Stage 1.
 _CRAWL_STATUS_TO_STATE: dict[str, JobState] = {
@@ -102,6 +123,22 @@ class RunResult:
     draft: Draft | None = None
     packet: ReviewPacket | None = None
     notes: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class InterruptedJob:
+    """A job a crash left mid-Stage-2: a resting state + a stale .processing marker.
+
+    Surfaced by :meth:`Pipeline.reconcile` for explicit operator re-process (we do
+    NOT auto-transition — a hard crash is not a transient error). ``attempts`` is the
+    crash-attempt count carried in the per-job-dir counter; ``exhausted`` is True once
+    it exceeds the cap, the signal that a DETERMINISTIC crash needs a human (stop
+    re-trying) rather than another retry->crash->retry loop."""
+
+    job_id: str
+    state: JobState
+    attempts: int
+    exhausted: bool
 
 
 # Persisted-draft I/O lives in the storage layer (adapters/storage/draft_store).
@@ -170,24 +207,45 @@ class Pipeline:
         The crawler is injected (Scrapy / local-ingest / a fake) — the contract
         is the same RawJobBundle either way (proves the seam is real). This is the
         SINGLE owner of the Stage-1 sequence (create -> crawl -> map status ->
-        set_hashes -> set_state); both shells call it, so the mapping and the
-        never-park-at-NEW default live in exactly one place. The raw
+        persist (state + hashes) atomically); both shells call it, so the mapping
+        and the never-park-at-NEW default live in exactly one place. The raw
         ``crawl_status`` is returned alongside the record so a shell can report it
-        without re-deriving the mapping."""
+        without re-deriving the mapping.
+
+        Re-crawl semantics: a fresh crawl is only legal for a brand-new job (no
+        record yet) or one created-but-not-yet-crawled (state NEW). Re-crawling an
+        ALREADY-crawled job has no legal state-machine edge (NEW is the only
+        predecessor of the crawl outcomes; the table has no re-crawl edge and the
+        operator has not asked for one), so we refuse EARLY with an actionable
+        error — before spawning the crawler / writing any bytes — rather than
+        crawling and then having persist_crawl_result reject the transition."""
         if self.crawler is None:
             raise InputValidationError("no crawler injected for Stage 1")
         existing = self.store.get_job(spec.job_id)
         if existing is None:
             self.store.create_job(spec.job_id, created_at=ts)
+        elif existing.state is not JobState.NEW:
+            # An existing already-crawled job: refuse before any crawl/mutation.
+            # Mirrors ingest.py's create_only clobber guard (same intent — never
+            # overwrite an existing bundle in place). The recovery is to delete or
+            # supersede the job first, then crawl into a fresh id.
+            raise InputValidationError(
+                f"job {spec.job_id} already exists at {existing.state.value}; "
+                "re-crawl is not supported (delete or supersede it first, or use "
+                "a new --job-id)"
+            )
         bundle: RawJobBundle = self.crawler.crawl(spec)
         target = _CRAWL_STATUS_TO_STATE.get(bundle.job_status, JobState.CRAWL_FAILED)
-        self.store.set_hashes(
+        # Persist the state transition AND the source hashes in ONE transaction so
+        # a crash can never leave (state, hashes) torn (NEW-with-hashes or
+        # CRAWLED-without-hashes).
+        record = self.store.persist_crawl_result(
             spec.job_id,
+            target,
             updated_at=ts,
             source_html_sha256=bundle.manifest.hashes.source_html_sha256,
             source_text_sha256=bundle.manifest.hashes.source_text_sha256,
         )
-        record = self.store.set_state(spec.job_id, target, updated_at=ts)
         return Stage1Result(record=record, crawl_status=bundle.job_status)
 
     # --- Stage 2: process ----------------------------------------------------
@@ -228,13 +286,18 @@ class Pipeline:
         if record is None:
             raise InputValidationError(f"unknown job: {job_id}")
         # PROCESS_FAILED is a legal entry too: a failed (e.g. LLM 5xx) run is
-        # retriable (PROCESS_FAILED -> PROCESSING -> ...).
+        # retriable (PROCESS_FAILED -> PROCESSING -> ...). NEEDS_REVISION is a
+        # legal entry as well (U8): the operator re-runs a revised job in place
+        # (NEEDS_REVISION -> PROCESSING -> target — the persist seam validates
+        # that canonical edge; the edge is also wired in web/lex.js). Without
+        # this the live NEEDS_REVISION -> PROCESSING edge was unreachable.
         if record.state not in (
-            JobState.CRAWLED, JobState.CRAWLED_WARN, JobState.PROCESS_FAILED
+            JobState.CRAWLED, JobState.CRAWLED_WARN, JobState.PROCESS_FAILED,
+            JobState.NEEDS_REVISION,
         ):
             raise InputValidationError(
-                f"process requires CRAWLED/CRAWLED_WARN/PROCESS_FAILED; {job_id} "
-                f"is {record.state.value}"
+                f"process requires CRAWLED/CRAWLED_WARN/PROCESS_FAILED/"
+                f"NEEDS_REVISION; {job_id} is {record.state.value}"
             )
 
         # Mark the job mid-Stage-2 (transient PROCESSING) so a crash is
@@ -581,6 +644,67 @@ class Pipeline:
             packet=packet,
             notes=proc.notes,
         )
+
+    # --- crash reconciliation: the .processing marker's consumer (U7) --------
+
+    def reconcile(
+        self, *, ts: str, max_attempts: int = DEFAULT_MAX_INTERRUPT_ATTEMPTS
+    ) -> list[InterruptedJob]:
+        """Find jobs a crash left mid-Stage-2 and surface them for the operator.
+
+        This is the marker's real consumer (it had none): something must read
+        ``is_processing()`` at a worklist lifecycle boundary. Both shells call it
+        from their worklist entry point (CLI ``list`` / GUI ``list_jobs``), so a
+        stale ``.processing`` marker becomes visible the moment the operator looks
+        at the worklist.
+
+        We **flag, never auto-transition**: a hard crash (the only thing that leaves
+        a stale marker — ``process()`` clears it in ``finally``) is NOT a transient
+        ``ExternalServiceError``, so silently re-driving it risks a deterministic
+        retry->crash->retry loop. The job keeps its resting state and marker; the
+        operator re-processes deliberately. Each pass over a still-interrupted job
+        bumps a per-job-dir crash counter; once it exceeds ``max_attempts`` the job
+        is flagged ``exhausted`` (a deterministic crash that needs a human, not
+        another retry).
+
+        A marker found on a TERMINAL job (a crash between COMMIT and
+        ``clear_processing``) is only CLEARED — reconciliation never reopens a
+        terminal job (that would be the content-laundering path the freeze model
+        forbids)."""
+        interrupted: list[InterruptedJob] = []
+        for rec in self.store.list_all():
+            if not self.store.is_processing(rec.job_id):
+                continue
+            if rec.state in RECONCILABLE_STATES:
+                attempts = self.store.bump_interrupt_count(rec.job_id)
+                self.audit.append(
+                    ts=ts,
+                    stage="reconcile",
+                    event=EVENT_INTERRUPTED_DETECTED,
+                    job_id=rec.job_id,
+                    actor="system",
+                    extra={"attempts": attempts, "state": rec.state.value},
+                )
+                interrupted.append(
+                    InterruptedJob(
+                        job_id=rec.job_id,
+                        state=rec.state,
+                        attempts=attempts,
+                        exhausted=attempts > max_attempts,
+                    )
+                )
+            elif rec.state in _MARKER_ONLY_CLEAR_STATES:
+                # Crash between COMMIT and clear_processing: the resting state is
+                # already correct; just drop the stale marker (never reopen).
+                # BLOCKED/DUPLICATE are included explicitly: U8 moved them OUT of
+                # TERMINAL_STATES (they now carry an operator-only recovery edge),
+                # but a stale marker on them is still a crash leftover to clear,
+                # NOT a reopen — reconciliation must never auto-recover them.
+                self.store.clear_processing(rec.job_id)
+            # Any other state with a marker (e.g. a persisted PROCESSING is
+            # impossible — it is transient) is left untouched: we neither flag nor
+            # clear, since it is not a recognised crash-interruption shape.
+        return interrupted
 
 
 # --- pull-style worklist + batch summary (flow G5/G7) -----------------------

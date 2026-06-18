@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 
 from lcp.runtime_hardening import (
     minimal_env,
@@ -65,12 +66,50 @@ def test_minimal_env_excludes_secrets(monkeypatch):
     monkeypatch.setenv("PATH", "/usr/bin")
     env = minimal_env()
     assert "LCP_LLM_API_KEY" not in env
-    assert env.get("PATH") == "/usr/bin"
 
 
 def test_minimal_env_extra_merged():
     env = minimal_env({"FOO": "bar"})
     assert env["FOO"] == "bar"
+
+
+def test_minimal_env_path_is_pinned_not_forwarded(monkeypatch):
+    # U18: the child's PATH must be a vetted minimal set, NOT the operator's
+    # PATH wholesale — otherwise an attacker-influenced PATH entry could plant a
+    # malicious `ffmpeg`/`python` for the media/crawler subprocess to resolve.
+    poisoned = ":".join([
+        "relative/bin",            # non-absolute -> must be stripped
+        ".",                       # cwd -> must be stripped
+        "/tmp",                    # world-writable -> must be stripped
+        "/opt/evil tools/bin",     # not in the vetted allowlist -> dropped
+    ])
+    monkeypatch.setenv("PATH", poisoned)
+    env = minimal_env()
+    entries = env["PATH"].split(os.pathsep)
+    venv_bin = os.path.dirname(sys.executable)
+    # No relative / cwd entries survive; and no world-writable SYSTEM dir survives.
+    # The interpreter's own bin dir is exempt from the world-writable check — it is
+    # trusted unconditionally (we run from it), and a hardened CI runner's tool-cache
+    # bin is legitimately world-writable.
+    for e in entries:
+        assert e, "empty PATH entry leaked"
+        assert os.path.isabs(e), f"non-absolute PATH entry leaked: {e!r}"
+        st = os.stat(e)  # every surviving entry must exist
+        if e != venv_bin:
+            assert not (st.st_mode & 0o002), f"world-writable system PATH entry leaked: {e!r}"
+    # A core system bin and the running interpreter's bin dir are reachable, so the
+    # child can still find python/ffmpeg.
+    assert venv_bin in entries
+    assert any(e in entries for e in ("/usr/bin", "/bin")), entries
+
+
+def test_minimal_env_path_present_even_with_empty_parent_path(monkeypatch):
+    # Even if the parent PATH is empty/garbage, the child still gets a usable
+    # vetted PATH (the venv bin + system bins) rather than nothing.
+    monkeypatch.setenv("PATH", "")
+    env = minimal_env()
+    entries = env["PATH"].split(os.pathsep)
+    assert os.path.dirname(sys.executable) in entries
 
 
 def test_umask_sets_restrictive(tmp_path):

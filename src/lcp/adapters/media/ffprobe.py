@@ -16,6 +16,7 @@ made by :mod:`lcp.core.rules.asset_rules`, not here.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import shutil
@@ -229,7 +230,11 @@ def detect_black_segments(
     result = _run(argv, timeout)
     intervals: list[tuple[float, float]] = []
     for m in _BLACK_RE.finditer(result.stderr or ""):
-        intervals.append((float(m.group("start")), float(m.group("end"))))
+        start = _safe_interval_float(m.group("start"))
+        end = _safe_interval_float(m.group("end"))
+        if start is None or end is None:
+            continue  # malformed detector line -> skip, never crash the gate
+        intervals.append((start, end))
     return intervals
 
 
@@ -270,11 +275,18 @@ def detect_silence(
     for line in stderr.splitlines():
         ms = _SILENCE_START_RE.search(line)
         if ms:
-            pending_start = float(ms.group("start"))
+            # A new silence_start before the previous one was closed means the
+            # earlier segment never got an end (overlapping/dropped marker). Keep
+            # it as open-ended (start, None) rather than overwriting + dropping it.
+            if pending_start is not None:
+                intervals.append((pending_start, None))
+            pending_start = _safe_interval_float(ms.group("start"))
             continue
         me = _SILENCE_END_RE.search(line)
         if me and pending_start is not None:
-            intervals.append((pending_start, float(me.group("end"))))
+            end = _safe_interval_float(me.group("end"))
+            if end is not None:
+                intervals.append((pending_start, end))
             pending_start = None
     if pending_start is not None:
         intervals.append((pending_start, None))
@@ -282,19 +294,50 @@ def detect_silence(
 
 
 def _to_float(value: object) -> float | None:
+    """Coerce an untrusted probe field to a POSITIVE FINITE float, else None.
+
+    Container metadata is attacker-shapeable: a hostile/corrupt file can declare
+    ``bit_rate``/``duration`` as ``"nan"``, ``inf``, or a negative number. Returning
+    those would let ``nan < min_bitrate`` evaluate False and silently PASS a video
+    whose bitrate is unmeasurable. Reject non-finite and non-positive -> None so the
+    pure rules treat the metric as unknown (fail closed)."""
     if value is None:
         return None
     try:
         f = float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
-    return f if f > 0 else (f if f != 0 else None)
+    if not math.isfinite(f) or f <= 0:
+        return None
+    return f
 
 
 def _to_int(value: object) -> int | None:
+    """Coerce an untrusted probe field to an int, tolerating a float-ENCODED int
+    (e.g. ``"1920.0"``), else None. ``int("1920.0")`` raises, so a perfectly valid
+    width reported with a trailing ``.0`` would otherwise read as 'unknown'. Reject
+    non-finite (NaN/inf) rather than letting ``int(inf)`` raise ``OverflowError``."""
     if not isinstance(value, (str, int, float)):
         return None
     try:
-        return int(value)
+        f = float(value)
     except (TypeError, ValueError):
         return None
+    if not math.isfinite(f):
+        return None
+    return int(f)
+
+
+def _safe_interval_float(raw: str) -> float | None:
+    """Parse a blackdetect/silencedetect timestamp, tolerating a malformed match.
+
+    The regexes accept ``[\\d.]+``, which also matches pathological strings like
+    ``1.2.3`` (a quirky ffmpeg build / crafted file); ``float("1.2.3")`` raises and
+    would crash the media gate. Return None for a non-finite or unparseable value so
+    the caller skips just that interval. (Timestamps may legitimately be 0, so unlike
+    ``_to_float`` this does NOT reject non-positive — only negative/NaN/inf.)"""
+    try:
+        f = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) and f >= 0 else None

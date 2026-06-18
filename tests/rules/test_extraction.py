@@ -4,6 +4,8 @@ The second-order SSRF check is injected, so these prove the extraction logic
 (title/body fallback, classify, de-dupe, reject-partition) AND that an unsafe
 media URL is dropped to rejected_media_urls via the injected callback."""
 
+import urllib.parse
+
 from lcp.core.models import AssetKind
 from lcp.core.rules.extraction import classify_media_url, extract_content
 
@@ -33,6 +35,15 @@ class _FakeResponse:
 
     def urljoin(self, u):
         return u if u.startswith("http") else "https://ex.com/" + u.lstrip("/")
+
+
+class _RealUrljoinResponse(_FakeResponse):
+    """Uses the REAL stdlib urljoin so a malformed bracketed-IPv6 host raises
+    ValueError exactly as in production. The default _FakeResponse.urljoin is a
+    passthrough that hides this crash class entirely (the bug U1 fixes)."""
+
+    def urljoin(self, u):
+        return urllib.parse.urljoin(self.url, u)
 
 
 def _always_safe(_u):
@@ -97,3 +108,55 @@ def test_links_to_media_are_classified_and_accepted():
     out = extract_content(resp, is_media_url_safe=_always_safe)
     assert out["video_urls"] == ["https://ex.com/clip.mp4"]
     assert out["image_urls"] == []
+
+
+def test_malformed_img_url_does_not_abort_extraction():
+    """U1 (P0): a single malformed bracketed-IPv6 <img src> must not raise out
+    of extract_content and discard the whole page. Uses the REAL urljoin."""
+    resp = _RealUrljoinResponse(
+        {
+            "title::text": ["Real Title"],
+            "p::text": ["real body"],
+            "img::attr(src)": [
+                "http://[::bad::]/x.jpg",  # malformed host -> real urljoin raises
+                "https://ex.com/ok.jpg",
+            ],
+        }
+    )
+    out = extract_content(resp, is_media_url_safe=_always_safe)
+    # The page's real content survives; the bad URL is dropped, not fatal.
+    assert out["title"] == "Real Title"
+    assert out["body"] == "real body"
+    assert "https://ex.com/ok.jpg" in out["image_urls"]
+    assert all("bad" not in u for u in out["image_urls"])
+    # The malformed src is recorded as a rejected (failed) media URL.
+    assert any("[::bad::]" in u for u in out["rejected_media_urls"])
+
+
+def test_malformed_video_url_does_not_abort_extraction():
+    resp = _RealUrljoinResponse(
+        {
+            "title::text": ["T"],
+            "p::text": ["b"],
+            "video::attr(src), video source::attr(src)": [
+                "http://[1:2:3]/z.mp4",
+                "https://ex.com/ok.mp4",
+            ],
+        }
+    )
+    out = extract_content(resp, is_media_url_safe=_always_safe)
+    assert out["video_urls"] == ["https://ex.com/ok.mp4"]
+    assert out["body"] == "b"
+
+
+def test_malformed_link_href_is_skipped_not_fatal():
+    resp = _RealUrljoinResponse(
+        {
+            "title::text": ["T"],
+            "p::text": ["b"],
+            "a::attr(href)": ["http://[:::]/y.mp4", "https://ex.com/clip.mp4"],
+        }
+    )
+    out = extract_content(resp, is_media_url_safe=_always_safe)
+    # The valid media link is still classified; the malformed one is skipped.
+    assert out["video_urls"] == ["https://ex.com/clip.mp4"]

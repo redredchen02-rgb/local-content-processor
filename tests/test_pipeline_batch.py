@@ -18,6 +18,7 @@ from lcp.adapters.processor._persist import persist_gate_state
 from lcp.adapters.storage.audit_log import AuditLog
 from lcp.adapters.storage.job_store import JobStore
 from lcp.core.config import Config
+from lcp.core.errors import InputValidationError
 from lcp.core.models import SourceType
 from lcp.core.rules.risk_rules import RiskInput
 from lcp.core.state import JobState
@@ -91,6 +92,62 @@ def test_stage1_with_fake_crawler_reaches_crawled(store, audit):
     rec = p.stage1(_spec(store, "j1"), ts=TS).record
     assert rec.state is JobState.CRAWLED
     assert (store.job_dir("j1") / "raw" / "source.txt").exists()
+
+
+# --- U9: Stage-1 persists (state, hashes) atomically; re-crawl refuses early --
+
+
+def test_stage1_persists_state_and_hashes_atomically(store, audit):
+    """A successful Stage 1 lands the CRAWLED state AND the source hashes
+    together (one transaction) — assert both are present on the persisted row."""
+    p = _pipeline(store, audit)
+    p.stage1(_spec(store, "j1"), ts=TS)
+    got = store.get_job("j1")
+    assert got.state is JobState.CRAWLED
+    # FakeCrawler hands source_text (not html), so source_text_sha256 is set and
+    # source_html_sha256 stays None — the state and that hash landed together.
+    assert got.source_text_sha256 == sha256_text(CLEAN_SOURCE)
+    assert got.source_html_sha256 is None
+
+
+def test_stage1_recrawl_refused_before_mutation(store, audit):
+    """Re-crawling an existing CRAWLED job refuses with a clear
+    InputValidationError BEFORE any hash mutation — the persisted (state, hashes)
+    from the first crawl is untouched (no partial write)."""
+    p = _pipeline(store, audit)
+    p.stage1(_spec(store, "j1"), ts=TS)  # first crawl -> CRAWLED + hashes
+    before = store.get_job("j1")
+    assert before.state is JobState.CRAWLED
+
+    # A second crawl into the SAME job id must refuse; use a DIFFERENT source so a
+    # silent clobber would be detectable in the hash.
+    p2 = _pipeline(store, audit, source="完全不同的內容，不應該被寫入。")
+    with pytest.raises(InputValidationError):
+        p2.stage1(_spec(store, "j1"), ts="2026-06-17T00:00:00Z")
+
+    after = store.get_job("j1")
+    assert after.state is JobState.CRAWLED  # unchanged
+    assert after.source_text_sha256 == sha256_text(CLEAN_SOURCE)  # not clobbered
+    assert after.updated_at == before.updated_at  # no mutation at all
+
+
+def test_stage1_recrawl_refused_for_crawled_warn(store, audit):
+    """The refusal covers CRAWLED_WARN too (any already-crawled non-NEW state)."""
+    p = _pipeline(store, audit)
+    store.create_job("jw", created_at=TS)
+    store.set_state("jw", JobState.CRAWLED_WARN, updated_at=TS)
+    with pytest.raises(InputValidationError):
+        p.stage1(_spec(store, "jw"), ts=TS)
+
+
+def test_stage1_brand_new_job_creates_and_persists(store, audit):
+    """Edge: a brand-new job id (no record yet) still creates + persists normally
+    — the re-crawl refusal must not block the legitimate fresh-job path."""
+    p = _pipeline(store, audit)
+    assert store.get_job("fresh") is None
+    rec = p.stage1(_spec(store, "fresh"), ts=TS).record
+    assert rec.state is JobState.CRAWLED
+    assert store.get_job("fresh").source_text_sha256 == sha256_text(CLEAN_SOURCE)
 
 
 # --- dry_run: LLM not called, no external mutation, result flagged ------------
@@ -251,6 +308,104 @@ def test_list_jobs_unknown_state_raises(store, audit):
 
 def test_resolve_state_aliases():
     assert pl.resolve_state("pending") is JobState.REVIEW_PENDING
+
+
+# --- U7: .processing crash-marker reconciliation -----------------------------
+
+
+def _crashed_mid_stage2(store, job_id, state=JobState.CRAWLED):
+    """Simulate a hard crash mid-Stage-2: a resting state + a stale .processing
+    marker (process() normally clears it in `finally`; a crash never reaches it)."""
+    store.create_job(job_id, created_at=TS)
+    store.set_state(job_id, state, updated_at=TS)
+    store.mark_processing(job_id)  # left behind by the crash
+
+
+def test_reconcile_detects_interrupted_crawled_job(store, audit):
+    """A crash mid-Stage-2 (marker set, job at CRAWLED) is surfaced as interrupted
+    so the operator can explicitly re-process it (not silently auto-transitioned)."""
+    p = _pipeline(store, audit)
+    _crashed_mid_stage2(store, "j1")
+
+    interrupted = p.reconcile(ts=TS)
+
+    assert [i.job_id for i in interrupted] == ["j1"]
+    found = interrupted[0]
+    assert found.state is JobState.CRAWLED
+    assert found.attempts == 1
+    assert found.exhausted is False
+    # Flagged, NOT auto-transitioned: the job stays at its resting state and the
+    # marker stays so a re-process is the operator's deliberate action.
+    assert store.get_job("j1").state is JobState.CRAWLED
+
+
+def test_reconcile_ignores_healthy_job_without_marker(store, audit):
+    """A healthy CRAWLED job with no marker is untouched (not flagged, no counter)."""
+    p = _pipeline(store, audit)
+    store.create_job("j1", created_at=TS)
+    store.set_state("j1", JobState.CRAWLED, updated_at=TS)
+
+    assert p.reconcile(ts=TS) == []
+    assert store.read_interrupt_count("j1") == 0
+
+
+def test_reconcile_clears_stale_marker_at_terminal_state(store, audit):
+    """A crash BETWEEN commit and clear_processing can leave a marker on a terminal
+    job (e.g. BLOCKED). Reconciliation must only CLEAR it — never reopen a terminal
+    job, never flag it as interrupted (it already came to rest correctly)."""
+    p = _pipeline(store, audit)
+    store.create_job("j1", created_at=TS)
+    store.set_state("j1", JobState.CRAWLED, updated_at=TS)
+    persist_gate_state(store, "j1", JobState.BLOCKED, updated_at=TS)
+    store.mark_processing("j1")  # stale marker from a crash after COMMIT
+
+    interrupted = p.reconcile(ts=TS)
+
+    assert interrupted == []  # terminal job is never surfaced as recoverable
+    assert store.get_job("j1").state is JobState.BLOCKED  # never reopened
+    assert not store.is_processing("j1")  # marker cleared
+
+
+def test_reconcile_loop_guard_surfaces_after_n_attempts(store, audit):
+    """A DETERMINISTIC crash (same input always crashes) must surface to a human
+    after N interruptions instead of looping forever. Each reconcile pass over a
+    still-interrupted job bumps the crash counter; once it exceeds the cap the job
+    is flagged `exhausted` so the operator stops auto-retrying it."""
+    p = _pipeline(store, audit)
+    _crashed_mid_stage2(store, "j1")
+
+    # Three crash-and-reconcile cycles at the default cap of 3.
+    r1 = p.reconcile(ts=TS, max_attempts=3)
+    assert r1[0].attempts == 1 and r1[0].exhausted is False
+    r2 = p.reconcile(ts=TS, max_attempts=3)
+    assert r2[0].attempts == 2 and r2[0].exhausted is False
+    r3 = p.reconcile(ts=TS, max_attempts=3)
+    assert r3[0].attempts == 3 and r3[0].exhausted is False
+    r4 = p.reconcile(ts=TS, max_attempts=3)
+    assert r4[0].attempts == 4 and r4[0].exhausted is True
+
+
+def test_reconcile_via_cli_list_seam(store, audit, tmp_path):
+    """Drive reconciliation through the real worklist seam (the CLI `list` command),
+    not just the Pipeline leaf — the marker consumer must be reachable end-to-end."""
+    from click.testing import CliRunner
+
+    from lcp import cli
+
+    _crashed_mid_stage2(store, "j1")
+    base = str(store.base_dir)
+
+    runner = CliRunner()
+    res = runner.invoke(
+        cli.cli,
+        ["--output-dir", base, "--json", "list"],
+    )
+    assert res.exit_code == 0, res.output
+    import json
+
+    payload = json.loads(res.output)
+    rows = {r["job_id"]: r for r in payload["jobs"]}
+    assert rows["j1"]["interrupted"] is True
     assert pl.resolve_state("published") is JobState.PUBLISHED_RECORDED
     assert pl.resolve_state("blocked") is JobState.BLOCKED
 
@@ -330,6 +485,41 @@ def test_process_truncated_draft_short_circuits_needs_revision(store, audit, mon
     assert "LINT_GATE" not in events
     # No leftover .processing marker.
     assert not store.is_processing("jt")
+
+
+def test_reprocess_needs_revision_job_via_widened_entry_guard(store, audit):
+    """U8: a NEEDS_REVISION job can be re-run in place (NEEDS_REVISION ->
+    PROCESSING -> target). The state-machine edge was already live + wired in
+    web/lex.js, but pipeline.process's entry guard used to reject NEEDS_REVISION,
+    so the edge was unreachable. Widening the guard makes the re-run work."""
+    from lcp.adapters.llm.client import ChatResult
+
+    _clean_index(store)
+    # First pass: a truncated draft parks the job at NEEDS_REVISION.
+    truncated = ChatResult(
+        text="partial...", finish_reason="length", model="fake-model",
+        needs_revision=True, revision_reason="truncated:length", executed=True,
+    )
+    p1 = pl.Pipeline(
+        Config(), store, audit,
+        crawler=FakeCrawler(), llm_client=_FakeChatClient(result=truncated),
+    )
+    p1.stage1(_spec(store, "jrev"), ts=TS)
+    res1 = p1.process("jrev", ts=TS, title="台北華山美食市集週末熱鬧登場")
+    assert res1.final_state is JobState.NEEDS_REVISION
+    assert store.get_job("jrev").state is JobState.NEEDS_REVISION
+
+    # Re-process the same NEEDS_REVISION job (a dry run avoids needing a healthy
+    # LLM) — the widened entry guard must ACCEPT NEEDS_REVISION, not raise.
+    p2 = _pipeline(store, audit, dry_run=True)
+    res2 = p2.process("jrev", ts=TS, title="台北華山美食市集週末熱鬧登場")
+    # It actually entered Stage 2 (a legal resting state was reached), not the
+    # entry-guard refusal — and never left a .processing marker.
+    assert res2.final_state in (
+        JobState.PROCESSED, JobState.NEEDS_HUMAN_REVIEW, JobState.NEEDS_REVISION,
+        JobState.BLOCKED, JobState.DUPLICATE,
+    )
+    assert not store.is_processing("jrev")
 
 
 # --- LLM 5xx mid-process -> PROCESS_FAILED (retriable), marker cleared --------

@@ -207,6 +207,50 @@ def test_approve_blocked_refused(tmp_path):
     assert store.get_job("jb").state is JobState.BLOCKED
 
 
+def test_gui_blocked_recovery_requires_override(tmp_path):
+    """U8 GUI parity: a BLOCKED supersede via the bridge is REFUSED without the
+    override gesture (the plain supersedeRow path), and SUCCEEDS with it (the
+    dedicated redline dialog passes redline_override=True)."""
+    base = str(tmp_path)
+    from lcp.adapters.processor._persist import persist_gate_state
+    from lcp.adapters.storage.job_store import JobStore
+
+    store = JobStore(base_dir=base)
+    ts = "2026-06-16T00:00:00Z"
+    store.create_job("jb", created_at=ts)
+    store.set_state("jb", JobState.CRAWLED, updated_at=ts)
+    persist_gate_state(store, "jb", JobState.BLOCKED, updated_at=ts)
+
+    api = _api(tmp_path, base)
+    # plain supersede (no override) -> refused, state unchanged.
+    refused = api.supersede("jb")
+    assert "error" in refused
+    assert store.get_job("jb").state is JobState.BLOCKED
+    # dedicated redline dialog passes redline_override=True -> recovered.
+    ok = api.supersede("jb", None, True)
+    assert ok["state"] == JobState.SUPERSEDED.value
+    assert store.get_job("jb").state is JobState.SUPERSEDED
+
+
+def test_gui_duplicate_recovery_is_single_step(tmp_path):
+    """U8 GUI parity: a false-terminal DUPLICATE recovers via the ordinary
+    single-step supersede (no override needed)."""
+    base = str(tmp_path)
+    from lcp.adapters.processor._persist import persist_gate_state
+    from lcp.adapters.storage.job_store import JobStore
+
+    store = JobStore(base_dir=base)
+    ts = "2026-06-16T00:00:00Z"
+    store.create_job("jd", created_at=ts)
+    store.set_state("jd", JobState.CRAWLED, updated_at=ts)
+    persist_gate_state(store, "jd", JobState.DUPLICATE, updated_at=ts)
+
+    api = _api(tmp_path, base)
+    ok = api.supersede("jd")
+    assert ok["state"] == JobState.SUPERSEDED.value
+    assert store.get_job("jd").state is JobState.SUPERSEDED
+
+
 def test_api_approve_rejects_body_tampered_after_freeze(tmp_path):
     """P1 regression: Api.approve (no draft= arg) must load the persisted draft
     and re-verify the frozen body hash. Overwriting draft.json after freeze ->
@@ -322,6 +366,27 @@ def test_list_jobs_bad_state_returns_error(tmp_path):
     api = _api(tmp_path, base)
     res = api.list_jobs(state="not-a-real-state")
     assert "error" in res and res["exit_code"] == 2
+
+
+def test_list_jobs_surfaces_interrupted_job(tmp_path):
+    """CLI/GUI parity (U7): a crash-interrupted job (.processing marker on a
+    CRAWLED job) is flagged ``interrupted`` through the GUI worklist, just like the
+    CLI `list` command — the marker's consumer exists on BOTH shells."""
+    from lcp.adapters.storage.job_store import JobStore
+    from lcp.core.state import JobState
+
+    base = str(tmp_path)
+    s = JobStore(base_dir=base)
+    s.create_job("crashed", created_at="2026-06-18T00:00:00Z")
+    s.set_state("crashed", JobState.CRAWLED, updated_at="2026-06-18T00:00:00Z")
+    s.mark_processing("crashed")  # stale marker a hard crash left behind
+
+    api = _api(tmp_path, base)
+    res = api.list_jobs()
+    row = next(r for r in res["jobs"] if r["job_id"] == "crashed")
+    assert row["interrupted"] is True
+    assert row["interrupt_attempts"] == 1
+    assert row["interrupt_exhausted"] is False
 
 
 # --- reviewers / disclaimer -------------------------------------------------
@@ -594,6 +659,169 @@ def test_saved_source_plaintext_never_in_audit(tmp_path):
     if audit.exists():
         text = audit.read_text(encoding="utf-8")
         assert "leak.example" not in text
+
+
+# --- Unit 16: uniform GUI bridge safety -------------------------------------
+
+
+def _write_validation_report(base, job_id, payload):
+    """Write a processed/validation_report.json for cover_report to read."""
+    from lcp.adapters.storage.job_store import JobStore
+
+    store = JobStore(base_dir=base)
+    proc = store.job_dir(job_id) / "processed"
+    proc.mkdir(parents=True, exist_ok=True)
+    (proc / "validation_report.json").write_text(payload, encoding="utf-8")
+
+
+def test_cover_report_happy_path_unchanged(tmp_path):
+    """U16: a well-formed report still returns the advisory dict, escaped."""
+    base = str(tmp_path)
+    import json
+
+    _write_validation_report(
+        base,
+        "jc",
+        json.dumps(
+            {
+                "cover": "cover.jpg",
+                "cover_preview": "preview.jpg",
+                "cover_advisories": {
+                    "geometry": ["<b>too small</b>"],
+                    "aesthetic": ["low contrast"],
+                },
+            }
+        ),
+    )
+    api = _api(tmp_path, base)
+    res = api.cover_report("jc")
+    assert res["has_report"] is True
+    assert res["cover"] == "cover.jpg"
+    assert res["cover_preview"] == "preview.jpg"
+    # advisory strings are escaped (attacker-shapeable upstream).
+    assert "<b>" not in res["geometry"][0]
+    assert "&lt;b&gt;" in res["geometry"][0]
+    assert res["aesthetic"] == ["low contrast"]
+
+
+def test_cover_report_no_report_returns_has_report_false(tmp_path):
+    """U16: missing report -> {has_report: False}, not an error."""
+    base = str(tmp_path)
+    api = _api(tmp_path, base)
+    res = api.cover_report("absent")
+    assert res == {"job_id": "absent", "has_report": False}
+
+
+def test_cover_report_malformed_json_treated_as_no_report(tmp_path):
+    """U16: a malformed (non-JSON) report is a ValueError -> 'no advisory',
+    never a raw exception across the bridge."""
+    base = str(tmp_path)
+    _write_validation_report(base, "jbad", "{ this is not json")
+    api = _api(tmp_path, base)
+    res = api.cover_report("jbad")  # must NOT raise
+    assert res == {"job_id": "jbad", "has_report": False}
+
+
+def test_cover_report_out_of_band_fault_returns_internal_error(tmp_path, monkeypatch):
+    """U16 (the fix): an OUT-OF-BAND exception type (not LcpError/OSError/ValueError)
+    must return the 'internal error' dict, not propagate a raw exception. Before
+    the fix, cover_report's narrow `except (LcpError, OSError, ValueError)` let
+    such a type escape across the bridge."""
+    from lcp.gui import Api
+
+    def _boom(self):
+        raise RuntimeError("path/secret in here")
+
+    monkeypatch.setattr(Api, "_ctx", _boom)
+    base = str(tmp_path)
+    api = _api(tmp_path, base)
+    res = api.cover_report("j")
+    assert res == {"error": "internal error", "exit_code": 5}
+
+
+def test_cover_report_lcp_error_maps_to_error_dict(tmp_path, monkeypatch):
+    """U16: an LcpError still maps to the structured error dict (with its exit
+    code), NOT collapsed into the generic 'internal error' — @bridge_safe handles
+    it after the inner re-raise."""
+    from lcp.core.errors import InputValidationError
+    from lcp.gui import Api
+
+    def _boom(self):
+        raise InputValidationError("bad input")
+
+    monkeypatch.setattr(Api, "_ctx", _boom)
+    base = str(tmp_path)
+    api = _api(tmp_path, base)
+    res = api.cover_report("j")
+    assert "error" in res
+    assert res["exit_code"] == 2  # InputValidationError, not the generic 5
+
+
+# --- Introspection: every public Api method is bridge-safe under a fault -----
+
+
+def test_every_public_api_method_returns_dict_under_injected_fault(tmp_path, monkeypatch):
+    """U16 invariant guard: under an injected fault at the I/O seam, EVERY public
+    Api method returns a bridge-safe dict instead of raising — so a future method
+    that forgets the @bridge_safe net regresses THIS test, not a webview-stack
+    leak in production.
+
+    The injected fault is an LcpError — the exact contract @bridge_safe is built to
+    catch and the dominant real failure mode (every adapter raises LcpError on bad
+    input). A method that drops the decorator (or replaces it with a too-narrow
+    hand-rolled catch like the old cover_report) lets the LcpError escape and fails
+    here. The complementary out-of-band-TYPE case is covered for cover_report by
+    test_cover_report_out_of_band_fault_returns_internal_error.
+
+    The fault is injected at `_ctx` (the per-call I/O seam every data method goes
+    through) AND at `_settings_path` (the seam save_settings touches). The no-_ctx,
+    no-collaborator methods (disclaimer; the async variants, which delegate to
+    _run_bg and return a 'running' dict) cannot be made to raise, so the invariant
+    for them reduces to "returns a dict" — still asserted below."""
+    import inspect
+
+    from lcp.core.errors import InputValidationError
+    from lcp.gui import Api
+
+    base = str(tmp_path)
+    api = _api(tmp_path, base)
+
+    def _ctx_boom(self):
+        raise InputValidationError("path/stack/secret must not cross the bridge")
+
+    monkeypatch.setattr(Api, "_ctx", _ctx_boom)
+    # save_settings reads _settings_path; make it fail-closed too.
+    monkeypatch.setattr(
+        Api, "_settings_path",
+        lambda self: (_ for _ in ()).throw(InputValidationError("boom")),
+    )
+
+    # Dummy args by name — enough to reach each method body. Background variants
+    # delegate to _run_bg (always returns a 'running' dict) so they need no fault.
+    dummy = {
+        "job_id": "j", "url": "https://e.example/x", "directory": str(tmp_path),
+        "title": "t", "reviewer": "alice", "reason": "r", "new_job_id": None,
+        "attested": True, "state": None, "label": "l", "source_ref": "https://e.example/y",
+        "source_id": "sid", "base_url": "", "model": "", "api_key": "",
+        "dry_run": False, "watermark": None, "template": None, "ai_copy": False,
+        "relint": False, "redline_override": False,
+    }
+
+    public = [
+        name for name, m in inspect.getmembers(Api, predicate=inspect.isfunction)
+        if not name.startswith("_")
+    ]
+    # Sanity: the introspection actually found the surface we expect to guard.
+    assert {"cover_report", "disclaimer", "dashboard_stats", "process"} <= set(public)
+
+    for name in public:
+        method = getattr(api, name)
+        sig = inspect.signature(method)
+        kwargs = {p: dummy[p] for p in sig.parameters if p in dummy}
+        missing = [p for p in sig.parameters if p not in dummy]
+        assert not missing, f"{name} has un-dummied params {missing}; extend the map"
+        result = method(**kwargs)  # MUST NOT raise
+        assert isinstance(result, dict), f"{name} returned {type(result)}, not a dict"
 
 
 def test_module_imports_without_pywebview_window():

@@ -108,6 +108,23 @@ validate time and an internal IP at connect time.
   per-resolved-IP `is_global` reject (rejects any internal A/AAAA record at
   validate time), and no redirect following.
 
+## Audit-log durability residual (honest gap, U18)
+
+`audit_log.append()` fsyncs both the line's file fd **and** the parent
+directory fd (POSIX), so a crash cannot lose a freshly-appended (otherwise
+fsynced) tail line — a lost tail would make `verify_chain()` falsely report
+tampering on a merely-truncated log (the chain backbone of
+no-publish-without-a-human).
+
+**Residual (accepted, not fixed):** the parent-dir fsync is **POSIX-only** — on
+a non-POSIX host (e.g. Windows, where opening a directory fd is unsupported) the
+dir-fsync silently no-ops, so on those platforms a hard power loss can still
+truncate the tail and read as tampering. Accepted because the project's target
+is POSIX (macOS/Linux, R44) and the local single-operator threat model does not
+include defending an audit log against an OS-level power loss on an unsupported
+platform; `verify_chain()` reporting "broken" on a truncated log is fail-loud,
+not silent acceptance.
+
 ## Sign-off (to be completed by PM/legal)
 
 - [ ] Confirmed in writing: no named statutory erasure obligation for MVP.

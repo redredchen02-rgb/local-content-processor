@@ -47,9 +47,17 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import urlsplit
 
-from ...core.errors import InputValidationError
+from ...core.errors import ExternalServiceError, InputValidationError
 
 ALLOWED_SCHEMES = frozenset({"http", "https"})
+
+# getaddrinfo has no per-call timeout arg, so the default resolver bounds it via
+# socket.setdefaulttimeout (save/restore). Without this a slow/dead DNS server
+# for an allowlisted domain blocks the calling thread (crawl_runner.preflight,
+# the parent process) indefinitely — a denial-of-service the SSRF preflight
+# would otherwise sit on forever (plan R10). 5s matches the crawler's network
+# posture; a timeout is a retriable external failure, not bad input.
+DNS_RESOLVE_TIMEOUT_SECONDS = 5.0
 
 # A resolver maps a hostname to a list of literal IP strings (A + AAAA).
 Resolver = Callable[[str], list[str]]
@@ -73,12 +81,29 @@ class ValidatedTarget:
     port: int | None
 
 
-def default_resolver(host: str) -> list[str]:
-    """Real A+AAAA resolution via getaddrinfo. Returns deduped IP strings."""
+def default_resolver(
+    host: str, *, timeout: float = DNS_RESOLVE_TIMEOUT_SECONDS
+) -> list[str]:
+    """Real A+AAAA resolution via getaddrinfo, bounded by `timeout` seconds.
+
+    getaddrinfo takes no per-call timeout, so we set the process-wide socket
+    default timeout for the duration of the call and restore it after (so the
+    crawler bound never leaks onto unrelated sockets). A timeout maps to a
+    retriable ExternalServiceError (the DNS server is slow/dead — a transient
+    external fault, exit 4); any other DNS failure (NXDOMAIN, etc.) stays an
+    InputValidationError (the host is genuinely unresolvable — exit 2)."""
+    prev_timeout = socket.getdefaulttimeout()
     try:
+        socket.setdefaulttimeout(timeout)
         infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+    except (socket.timeout, TimeoutError) as e:
+        raise ExternalServiceError(
+            f"DNS resolution timed out for {host!r} after {timeout}s"
+        ) from e
     except OSError as e:
         raise InputValidationError(f"DNS resolution failed for {host!r}: {e}") from e
+    finally:
+        socket.setdefaulttimeout(prev_timeout)
     ips: list[str] = []
     for info in infos:
         # info[4][0] is the address (str at runtime; typeshed widens to str|int).

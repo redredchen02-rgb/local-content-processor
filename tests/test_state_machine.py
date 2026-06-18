@@ -71,6 +71,33 @@ def test_every_non_terminal_state_has_exit_edge():
 def test_terminal_states_have_no_exits():
     for st in TERMINAL_STATES:
         assert allowed_transitions(st) == frozenset()
+    # SUPERSEDED stays terminal: recovery never reopens a job in place (U8).
+    assert JobState.SUPERSEDED in TERMINAL_STATES
+
+
+def test_blocked_duplicate_are_operator_recoverable_to_superseded():
+    # U8: BLOCKED/DUPLICATE are no longer terminal — they carry a single
+    # operator-only recovery edge to SUPERSEDED.
+    assert JobState.BLOCKED not in TERMINAL_STATES
+    assert JobState.DUPLICATE not in TERMINAL_STATES
+    assert is_legal_transition(JobState.BLOCKED, JobState.SUPERSEDED)
+    assert is_legal_transition(JobState.DUPLICATE, JobState.SUPERSEDED)
+
+
+def test_recovery_edge_is_not_a_laundering_path():
+    # Anti-laundering (U8): the EXACT successor set of BLOCKED/DUPLICATE must be
+    # {SUPERSEDED} — no edge to PROCESSING/CRAWLED or anywhere else — and
+    # SUPERSEDED must stay a dead-end {}. A future stray "reopen" edge to ANY
+    # other state fails this, which is the whole point (it would turn the
+    # recovery edge into a content-laundering bypass of the gate chain).
+    assert allowed_transitions(JobState.BLOCKED) == frozenset({JobState.SUPERSEDED})
+    assert allowed_transitions(JobState.DUPLICATE) == frozenset({JobState.SUPERSEDED})
+    assert allowed_transitions(JobState.SUPERSEDED) == frozenset()
+    # The only way back into review is a brand-new job re-entering at NEW.
+    assert not is_legal_transition(JobState.BLOCKED, JobState.PROCESSING)
+    assert not is_legal_transition(JobState.BLOCKED, JobState.CRAWLED)
+    assert not is_legal_transition(JobState.DUPLICATE, JobState.PROCESSING)
+    assert not is_legal_transition(JobState.DUPLICATE, JobState.CRAWLED)
 
 
 def test_processing_is_transient():
@@ -78,7 +105,8 @@ def test_processing_is_transient():
 
 
 def test_side_branches_have_exits():
-    # BLOCKED / DUPLICATE are terminal but NEEDS_* must exit.
+    # NEEDS_* must exit; BLOCKED/DUPLICATE now exit only via the operator
+    # recovery edge to SUPERSEDED (asserted in the U8 tests above).
     assert allowed_transitions(JobState.NEEDS_HUMAN_REVIEW)
     assert allowed_transitions(JobState.NEEDS_REVISION)
     # crawl/process failures retry back into the pipeline

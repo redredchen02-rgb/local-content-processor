@@ -16,8 +16,10 @@ so it cannot inherit secrets like LCP_LLM_API_KEY (plan R40/R44).
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
@@ -41,6 +43,19 @@ def _host_of(url: str) -> str:
     if not host:
         raise InputValidationError(f"URL has no host: {url!r}")
     return host
+
+
+def _clear_raw(job_dir: Path) -> None:
+    """Remove the job's raw/ dir after a crawl that failed to land a valid bundle.
+
+    A SIGKILL'd (TimeoutExpired) or non-zero-exit child can leave orphaned PARTIAL
+    downloads behind. Clearing raw/ means a retry starts clean and the child's
+    `write_manifest(create_only=True)` clobber-guard does not trip on those orphans
+    (plan R10/U12). We deliberately clear only raw/ (the simple per-job approach
+    from the plan's Open Questions), not the whole bundle dir — the manifest is the
+    create_only-guarded artifact and a failed run never wrote a valid one. Best-effort:
+    a stuck file must not mask the original ExternalServiceError, so swallow errors."""
+    shutil.rmtree(job_dir / "raw", ignore_errors=True)
 
 
 class CrawlRunner:
@@ -128,13 +143,30 @@ class CrawlRunner:
                 text=True,
             )
         except subprocess.TimeoutExpired as e:
+            # SIGKILL leaves no valid bundle; clear partial downloads so a retry is
+            # clean and create_only does not trip on orphans (U12).
+            _clear_raw(spec.job_dir)
             raise ExternalServiceError(f"crawl subprocess timed out: {e}") from e
 
-        manifest = read_manifest(spec.job_dir)
+        # Surface a child failure BEFORE trusting the manifest (U6): a non-zero exit
+        # (or a child that crashed outside the LcpError path) is a retriable failure
+        # regardless of manifest presence — otherwise a stale/partial manifest from a
+        # PRIOR run would be mistaken for this run's success.
+        rc = getattr(proc, "returncode", None)
+        if rc != 0:
+            _clear_raw(spec.job_dir)  # U12: orphaned partial downloads -> clean retry
+            raise ExternalServiceError(f"crawl subprocess failed (rc={rc})")
+
+        try:
+            manifest = read_manifest(spec.job_dir)
+        except ExternalServiceError:
+            # U6 maps a corrupt/truncated manifest to ExternalServiceError; that is
+            # still "no valid bundle," so clear raw/ before re-raising (U12).
+            _clear_raw(spec.job_dir)
+            raise
         if manifest is None:
-            raise ExternalServiceError(
-                f"crawl subprocess produced no manifest (rc={getattr(proc,'returncode',None)})"
-            )
+            _clear_raw(spec.job_dir)  # U12: no valid bundle -> clean retry
+            raise ExternalServiceError(f"crawl subprocess produced no manifest (rc={rc})")
 
         if self.audit is not None:
             self.audit.append(

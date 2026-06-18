@@ -20,7 +20,9 @@ from lcp.adapters.publisher.signoff import (
     EVENT_SIGNOFF_APPROVE,
     EVENT_SIGNOFF_REJECT,
 )
+from lcp.adapters.processor.risk_checker import run_risk_gate
 from lcp.adapters.storage.audit_log import (
+    EVENT_REDLINE_OVERRIDE,
     EVENT_SIGNOFF_INVALIDATED,
     EVENT_SUPERSEDED,
     AuditLog,
@@ -213,6 +215,53 @@ def test_unchanged_body_passes_hash_binding(config, store, audit):
     assert rec.new_state is JobState.APPROVED
 
 
+# --- U3: editing the TITLE or COVER after freeze is detectable ----------------
+
+
+def test_title_edit_after_freeze_blocks_approval(config, store, audit):
+    """U3: editing ONLY the title after freeze (body unchanged) must be detected.
+    Previously only the body hash was re-verified, so a title swap slipped through
+    and the audit falsely attested the original (reviewer-approved) title."""
+    original = _draft()
+    _review_pending_job(store, audit, "jt", draft=original)
+    # Same body, DIFFERENT title -> passes the body check, must fail the title check.
+    tampered = _draft(title="完全不同的標題，已被竄改")
+    with pytest.raises(InputValidationError):
+        signoff.approve(
+            "jt", REVIEWER, config=config, store=store, audit=audit, ts=TS,
+            draft=tampered,
+        )
+    assert store.get_job("jt").state is JobState.REVIEW_PENDING
+
+
+def test_cover_edit_after_freeze_blocks_approval(config, store, audit):
+    """U3: swapping the frozen review-dir cover after freeze must be detected."""
+    job_id = "jc"
+    cover_src = store.job_dir(job_id) / "processed" / "cover" / "cover.jpg"
+    cover_src.parent.mkdir(parents=True, exist_ok=True)
+    cover_src.write_bytes(b"original-cover-bytes")
+    _review_pending_job(store, audit, job_id)  # freezes the cover sha
+    # Swap the review-dir cover the freeze bound to.
+    review_cover = store.job_dir(job_id) / "review" / "cover.jpg"
+    review_cover.write_bytes(b"tampered-cover-bytes-which-differ")
+    with pytest.raises(InputValidationError):
+        signoff.approve(job_id, REVIEWER, config=config, store=store, audit=audit, ts=TS)
+    assert store.get_job(job_id).state is JobState.REVIEW_PENDING
+
+
+def test_unchanged_cover_passes(config, store, audit):
+    """A job with an untouched frozen cover still approves cleanly."""
+    job_id = "jcc"
+    cover_src = store.job_dir(job_id) / "processed" / "cover" / "cover.jpg"
+    cover_src.parent.mkdir(parents=True, exist_ok=True)
+    cover_src.write_bytes(b"stable-cover-bytes")
+    _review_pending_job(store, audit, job_id)
+    rec = signoff.approve(
+        job_id, REVIEWER, config=config, store=store, audit=audit, ts=TS,
+    )
+    assert rec.new_state is JobState.APPROVED
+
+
 # --- State machine: no path to APPROVED from blocked/duplicate/needs-review ---
 
 
@@ -272,6 +321,97 @@ def test_cannot_supersede_terminal_published(config, store, audit):
     )
     with pytest.raises(InputValidationError):
         signoff.supersede("pub", store=store, audit=audit, ts=TS)
+
+
+# --- U8: operator recovery of a false-terminal BLOCKED / DUPLICATE -----------
+
+
+def _blocked_via_risk_gate(store, audit, job_id):
+    """Drive a job to a REAL BLOCKED via the risk gate, so a genuine RISK_GATE
+    audit event (with flag_categories) exists for the override to recover."""
+    from lcp.core.rules.risk_rules import RiskInput
+
+    store.create_job(job_id, created_at=TS)
+    store.set_state(job_id, JobState.CRAWLED, updated_at=TS)
+    store.mark_processing(job_id)
+    outcome = run_risk_gate(
+        job_id=job_id,
+        # '未成年' is a hard MINOR redline keyword -> terminal BLOCKED.
+        content=RiskInput(title="某新聞", body="涉及未成年的私密內容"),
+        store=store,
+        audit=audit,
+        ts=TS,
+    )
+    assert outcome.job_state is JobState.BLOCKED
+    assert store.get_job(job_id).state is JobState.BLOCKED
+
+
+def _duplicate_job(store, job_id):
+    store.create_job(job_id, created_at=TS)
+    store.set_state(job_id, JobState.CRAWLED, updated_at=TS)
+    persist_gate_state(store, job_id, JobState.DUPLICATE, updated_at=TS)
+
+
+def test_blocked_recovery_requires_redline_override(config, store, audit):
+    # A BLOCKED supersede WITHOUT the second confirmation is refused (the
+    # ordinary abandon path may not be reused for a redline state).
+    _blocked_via_risk_gate(store, audit, "jb")
+    with pytest.raises(InputValidationError):
+        signoff.supersede("jb", store=store, audit=audit, ts=TS, actor="alice")
+    assert store.get_job("jb").state is JobState.BLOCKED
+
+
+def test_blocked_recovery_with_override_emits_redline_override_event(config, store, audit):
+    _blocked_via_risk_gate(store, audit, "jb")
+    new_state = signoff.supersede(
+        "jb", store=store, audit=audit, ts=TS, actor="alice",
+        redline_override=True, new_job_id="jb2",
+    )
+    assert new_state is JobState.SUPERSEDED
+    assert store.get_job("jb").state is JobState.SUPERSEDED
+
+    events = [l["event"] for l in audit._read_lines()]
+    # Distinct event TYPE (not the ordinary SUPERSEDED), and NO false
+    # "void the old sign-off" (a BLOCKED job was never signed off).
+    assert EVENT_REDLINE_OVERRIDE in events
+    assert EVENT_SUPERSEDED not in events
+    assert EVENT_SIGNOFF_INVALIDATED not in events
+
+    override = [l for l in audit._read_lines() if l["event"] == EVENT_REDLINE_OVERRIDE][-1]
+    # Real actor recorded (not the "human" literal default).
+    assert override["actor"] == "alice"
+    # blocking_reasons sourced from the prior RISK_GATE event, as enum CODES only.
+    assert override["extra"]["blocking_reasons"] == ["minor"]
+    assert override["extra"]["new_job_id"] == "jb2"
+
+
+def test_duplicate_recovery_is_ordinary_single_step(config, store, audit):
+    # DUPLICATE is not a redline state -> ordinary single-step confirm, no
+    # override flag needed, ordinary SUPERSEDED event, and NO SIGNOFF_INVALIDATED
+    # (it was never signed off).
+    _duplicate_job(store, "jd")
+    new_state = signoff.supersede(
+        "jd", store=store, audit=audit, ts=TS, actor="alice", new_job_id="jd2",
+    )
+    assert new_state is JobState.SUPERSEDED
+    events = [l["event"] for l in audit._read_lines()]
+    assert EVENT_SUPERSEDED in events
+    assert EVENT_REDLINE_OVERRIDE not in events
+    assert EVENT_SIGNOFF_INVALIDATED not in events
+
+
+def test_blocked_supersede_refuses_without_supersedable_extension(monkeypatch, config, store, audit):
+    # Regression guard: the state-table edge alone is NOT enough — `supersede`
+    # independently gates on _SUPERSEDABLE. If BLOCKED were dropped from the
+    # frozenset, even a correct override gesture must still refuse.
+    _blocked_via_risk_gate(store, audit, "jb")
+    narrowed = signoff._SUPERSEDABLE - {JobState.BLOCKED, JobState.DUPLICATE}
+    monkeypatch.setattr(signoff, "_SUPERSEDABLE", narrowed)
+    with pytest.raises(InputValidationError):
+        signoff.supersede(
+            "jb", store=store, audit=audit, ts=TS, actor="alice",
+            redline_override=True,
+        )
 
 
 # --- NEEDS_HUMAN_REVIEW is not a dead-end (resolve / reject) -----------------

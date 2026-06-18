@@ -12,7 +12,17 @@ makes silent edits detectable, nothing more.
 PII rule: events MUST NOT contain raw identifiers (titles, source URLs,
 authors, free-text). Only the job_id, stage/event codes, an actor name, and
 OPTIONAL high-entropy artifact sha256 hashes are allowed. append() rejects
-common raw-identifier keys defensively."""
+common raw-identifier keys defensively.
+
+PLATFORM SUPPORT: POSIX only. append() serializes concurrent writers with an
+OS-level fcntl.flock(LOCK_EX) held across read-tail + write — without it two
+threads/processes read the same tail and commit a duplicate seq, corrupting the
+chain (the GUI runs gates in background threads). On a non-POSIX host (e.g.
+Windows) `fcntl` is unavailable; rather than silently append lock-free and risk
+SILENT chain corruption, append() FAILS LOUD with a DependencyError on first
+use. The audit chain is the no-publish-without-a-human backbone — refusing is
+safer than an unguarded write. Windows support would require a different lock
+primitive (e.g. msvcrt.locking) and is intentionally out of scope here."""
 
 from __future__ import annotations
 
@@ -26,9 +36,12 @@ from typing import Any
 try:
     import fcntl  # POSIX-only: used for an exclusive append lock.
 except ImportError:  # pragma: no cover - non-POSIX (e.g. Windows)
+    # No lock primitive available. append() detects this and FAILS LOUD rather
+    # than appending lock-free (which would risk silent hash-chain corruption
+    # under concurrency); see the module docstring's PLATFORM SUPPORT note.
     fcntl = None  # type: ignore[assignment]
 
-from ...core.errors import InputValidationError
+from ...core.errors import DependencyError, InputValidationError
 
 GENESIS_HASH = "0" * 64
 
@@ -37,6 +50,17 @@ GENESIS_HASH = "0" * 64
 EVENT_ERASURE = "ERASURE"
 EVENT_SIGNOFF_INVALIDATED = "SIGNOFF_INVALIDATED"
 EVENT_SUPERSEDED = "SUPERSEDED"
+# An operator recovered a terminal-redline BLOCKED job to SUPERSEDED (U8). This
+# is a SEPARATE event TYPE from EVENT_SUPERSEDED (not merely a tagged extra) so a
+# redline override is distinguishable by type in the audit. It carries the
+# original blocking RiskCategory CODES only (never the free-text flag reason) so
+# the audit stays PII-free. A heavier action than the ordinary abandon: it
+# requires the operator's explicit second confirmation (CLI --redline-override /
+# a dedicated GUI dialog).
+EVENT_REDLINE_OVERRIDE = "REDLINE_OVERRIDE"
+# A crash left a .processing marker on a non-terminal job; reconciliation surfaced
+# it for explicit operator re-process (U7). PII-free: job_id + a crash-attempt count.
+EVENT_INTERRUPTED_DETECTED = "INTERRUPTED_DETECTED"
 
 # Keys that would smuggle PII into the audit. Rejected by append().
 _PROHIBITED_KEYS = frozenset(
@@ -44,6 +68,32 @@ _PROHIBITED_KEYS = frozenset(
      "review_message", "name", "email", "phone"}
 )
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _fsync_dir(directory: Path) -> None:
+    """fsync a DIRECTORY fd so a freshly-appended/created file is durable.
+
+    fsync on the file fd alone persists its DATA, but on POSIX the directory
+    ENTRY (and, for the audit log, the fact that the new tail line is part of
+    the file the directory points at) is only guaranteed durable once the parent
+    directory itself is fsynced. Without this, a crash can lose a freshly
+    appended (and otherwise fsynced) tail line — and a truncated audit log is
+    INDISTINGUISHABLE from a tampered one: verify_chain() would falsely report
+    tampering on a merely-truncated tail. Since the audit chain is the backbone
+    of the no-publish-without-a-human guarantee, we fsync the dir too.
+
+    Best-effort: opening a directory fd is POSIX-only (fails on Windows / some
+    filesystems); a failure here must not break appends."""
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return  # not a POSIX dir fd we can fsync (e.g. Windows); accept residual
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
 
 
 def _canonical(obj: dict[str, Any]) -> str:
@@ -164,6 +214,18 @@ class AuditLog:
                 "artifact_sha256 must be a lowercase hex sha256 digest"
             )
 
+        # Fail loud on a non-POSIX host: without fcntl the LOCK_EX serialization
+        # below is a NO-OP, so concurrent appends could silently corrupt the
+        # hash chain. The audit log is the tamper-evidence backbone — refuse
+        # rather than write unguarded (see module docstring PLATFORM SUPPORT).
+        # Checked before any file/dir creation so a refusal leaves no partial
+        # state behind.
+        if fcntl is None:
+            raise DependencyError(
+                "audit log requires POSIX fcntl for safe concurrent appends; "
+                "this platform lacks it (the hash-chain lock would be a no-op)"
+            )
+
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
         # Serialize concurrent appends with an OS-level exclusive lock held
@@ -196,6 +258,11 @@ class AuditLog:
                 f.write(_canonical(record) + "\n")
                 f.flush()
                 os.fsync(f.fileno())
+                # Persist the parent dir too: a file-only fsync can still lose
+                # the tail line on a crash, and a truncated log reads as tampered
+                # (see _fsync_dir). Done under the lock so the durability order
+                # matches the commit order.
+                _fsync_dir(self.path.parent)
             finally:
                 if fcntl is not None:
                     fcntl.flock(f.fileno(), fcntl.LOCK_UN)

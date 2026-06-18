@@ -43,12 +43,17 @@ def test_satisfies_grounding_strategy_protocol():
     [
         ("YES", True),
         ("yes", True),
-        ("Yes, the source supports it", True),
+        (" YES ", True),  # surrounding whitespace tolerated
         ("NO", False),
         ("no", False),
         ("Not supported", False),
         ("", False),       # empty completion text -> not grounded
-        ("maybe", False),  # anything not starting YES -> fail closed
+        ("maybe", False),  # anything that is not exactly YES -> fail closed
+        # Exact-match guard (Unit 15): a prefix-YES that is NOT the bare word must
+        # fail closed. startswith("YES") used to read these as grounded.
+        ("YESNO", False),
+        ("YESSS", False),
+        ("Yes, the source supports it", False),  # multi-word, prompt demanded one
     ],
 )
 def test_verdict_parsing(text, expected):

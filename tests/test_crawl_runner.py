@@ -268,6 +268,70 @@ def test_runner_no_manifest_raises_external_service_error(tmp_path):
         runner.crawl_url(spec, ts=TS)
 
 
+def test_runner_nonzero_rc_with_stale_manifest_raises(tmp_path):
+    """U6 (REL-1): a child that exits NON-ZERO must be a retriable failure even if
+    a (stale, from a prior run) manifest is present — the runner must check
+    proc.returncode, not just manifest presence, or it reports a stale manifest as
+    this run's success."""
+    job_dir = tmp_path / "j6"
+    # A leftover manifest from a previous run sits on disk.
+    from lcp.adapters.crawler.bundle import build_manifest
+
+    stale = build_manifest(
+        job_id="j6", source_type=SourceType.URL, source_domain="example.com",
+        fetched_at=TS, assets=[], source_html="<html>old</html>", source_text="old",
+        crawl_status=STATUS_CRAWLED,
+    )
+    write_manifest(job_dir, stale, create_only=True)
+
+    def fake_run(cmd, **kwargs):
+        class P:
+            returncode = 2  # child crashed this run
+        return P()
+
+    runner = CrawlRunner(_registry(), resolver=_good_resolver, subprocess_runner=fake_run)
+    spec = SourceSpec(
+        job_id="j6", source_type=SourceType.URL,
+        job_dir=job_dir, url="https://example.com/x",
+    )
+    with pytest.raises(ExternalServiceError):
+        runner.crawl_url(spec, ts=TS)
+
+
+def test_read_manifest_corrupt_raises_external_service_error(tmp_path):
+    """U6 (REL-2): a truncated/garbage manifest (e.g. a SIGKILL mid-write) must map
+    to a retriable failure, not crash the run with a raw pydantic ValidationError."""
+    job_dir = tmp_path / "jc"
+    job_dir.mkdir(parents=True, exist_ok=True)
+    (job_dir / "manifest.json").write_text('{"job_id": "jc", "asse', encoding="utf-8")
+    with pytest.raises(ExternalServiceError):
+        read_manifest(job_dir)
+
+
+def test_scrapy_main_unexpected_error_returns_nonzero(tmp_path, monkeypatch):
+    """U6 (REL-1, child side): a non-LcpError crash inside the spider must become a
+    clean non-zero exit + JSON error line, not an escaping traceback the parent
+    silently ignores."""
+    monkeypatch.setenv("LCP_ALLOW_LOOPBACK_FOR_TESTS", "1")  # skip real DNS preflight
+
+    def boom(*a, **k):
+        raise RuntimeError("reactor exploded")
+
+    monkeypatch.setattr(scrapy_impl, "_run_spider", boom)
+    rc = scrapy_impl.main(
+        [
+            "--url", "http://127.0.0.1/x",
+            "--job-id", "jboom",
+            "--job-dir", str(tmp_path / "jboom"),
+            "--allow-domain", "127.0.0.1",
+            "--timeout", "5",
+            "--source-domain", "127.0.0.1",
+            "--fetched-at", TS,
+        ]
+    )
+    assert rc != 0
+
+
 # --------------------------------------------------------------------------
 # Real per-asset/manifest output path via extract_content + write_bundle
 # (fabricated Scrapy Response — no network)
@@ -335,6 +399,51 @@ def test_partial_asset_failure_crawled_warn(tmp_path):
     assert len(failed) == 1 and failed[0].source_url == "https://example.com/missing.jpg"
 
 
+def test_scrapy_reports_asset_truncation_at_max_assets(tmp_path):
+    # Unit 15 (parity with the ingest path): when more media URLs are declared
+    # than max_assets, the Scrapy path used to silently truncate. It must now
+    # REPORT the truncation the way ingest does (truncated_at_max_assets flag in
+    # a sibling crawl_report.json), so the operator sees assets were dropped.
+    d = tmp_path / "jtrunc"
+    d.mkdir(parents=True, exist_ok=True)
+    spec = SourceSpec(
+        job_id="jtrunc", source_type=SourceType.URL, job_dir=d,
+        url="https://example.com/a", max_assets=2,
+    )
+    out = {
+        "title": "T", "body": "B",
+        "image_urls": [f"https://93.184.216.34/img{i}.jpg" for i in range(5)],
+        "video_urls": [], "source_html": "<html></html>",
+        "metadata": {"url": "https://example.com/a"},
+        "downloaded_images": [], "downloaded_files": [],
+    }
+    scrapy_impl.write_bundle_from_extraction(
+        spec, out, source_domain="example.com", fetched_at=TS
+    )
+    report = json.loads((d / "raw" / "crawl_report.json").read_text("utf-8"))
+    assert report["truncated_at_max_assets"] is True
+    assert report["declared_assets"] == 5
+    assert report["max_assets"] == 2
+
+
+def test_scrapy_report_no_truncation_when_under_cap(tmp_path):
+    # Below the cap: the report records no truncation (guards against a flag that
+    # is always True).
+    out = {
+        "title": "T", "body": "B",
+        "image_urls": ["https://93.184.216.34/only.jpg"], "video_urls": [],
+        "source_html": "<html></html>", "metadata": {"url": "https://example.com/a"},
+        "downloaded_images": [], "downloaded_files": [],
+    }
+    scrapy_impl.write_bundle_from_extraction(
+        _spec(tmp_path, "junder"), out, source_domain="example.com", fetched_at=TS
+    )
+    report = json.loads(
+        (tmp_path / "junder" / "raw" / "crawl_report.json").read_text("utf-8")
+    )
+    assert report["truncated_at_max_assets"] is False
+
+
 def test_scraped_media_urls_validated_for_ssrf(tmp_path, monkeypatch):
     """P1 regression (second-order SSRF): media URLs scraped from untrusted HTML
     must each pass net_guard before being queued for download. An <img>/<a>
@@ -385,3 +494,201 @@ def test_robots_disallow_recorded_not_bypassed():
     assert settings["ROBOTSTXT_OBEY"] is True
     assert settings["REDIRECT_ENABLED"] is False  # redirects not blindly followed
     assert settings["AUTOTHROTTLE_ENABLED"] is True
+
+
+# --------------------------------------------------------------------------
+# U12: pipeline-output path containment (defense-in-depth, SECURITY)
+# --------------------------------------------------------------------------
+
+def test_relative_to_does_not_collapse_dotdot(tmp_path):
+    """U12 regression guard: documents WHY safe_join is required. Path.relative_to
+    does NOT resolve `..`, so a traversal path passes a naive relative_to/startswith
+    containment check — exactly the gap the old line-298 code had. safe_join
+    (resolve() + is_relative_to) is the only correct containment primitive here."""
+    store = tmp_path / "raw" / "images"
+    store.mkdir(parents=True)
+    escaping = store / "../../../../etc/passwd"
+    # relative_to happily returns a value for an escaping path (no `..` collapse),
+    # i.e. it would NOT have caught the traversal.
+    rel = escaping.relative_to(store)
+    assert ".." in rel.as_posix()
+    # safe_join, by contrast, rejects it.
+    with pytest.raises(InputValidationError):
+        net_guard.safe_join(store, "../../../../etc/passwd")
+
+
+def test_pipeline_output_traversal_path_marked_failed_no_oob_access(tmp_path, monkeypatch):
+    """U12: a downloaded-file `path` that escapes the store (e.g. a future malicious
+    pipeline swap) must be routed through safe_join BEFORE read_bytes/chmod, marked
+    FAILED, and must touch NO file outside the job dir."""
+    # An out-of-tree secret the traversal path resolves to.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    secret = outside / "passwd"
+    secret.write_bytes(b"root:x:0:0:")
+    secret_mode_before = os.stat(secret).st_mode
+
+    # Fail loudly if anything reads or chmods outside the job dir.
+    real_read = Path.read_bytes
+    real_chmod = os.chmod
+
+    def guarded_read(self):
+        assert tmp_path / "outside" not in self.parents, f"OOB read: {self}"
+        return real_read(self)
+
+    def guarded_chmod(path, mode, *a, **k):
+        p = Path(path).resolve()
+        assert outside.resolve() not in p.parents, f"OOB chmod: {p}"
+        return real_chmod(path, mode, *a, **k)
+
+    monkeypatch.setattr(Path, "read_bytes", guarded_read)
+    monkeypatch.setattr(os, "chmod", guarded_chmod)
+
+    spec = _spec(tmp_path, "jtrav")
+    out = {
+        "title": "Good Title", "body": "Good body text",
+        "image_urls": ["https://example.com/evil.jpg"], "video_urls": [],
+        "source_html": "<html></html>", "metadata": {"url": "https://example.com/a"},
+        # the relative path the (hypothetically malicious) pipeline reported escapes
+        # the images store via `..` and points at the out-of-tree secret.
+        "downloaded_images": [
+            {"url": "https://example.com/evil.jpg",
+             "path": "../../../outside/passwd", "checksum": "x"}
+        ],
+        "downloaded_files": [],
+    }
+    bundle = scrapy_impl.write_bundle_from_extraction(
+        spec, out, source_domain="example.com", fetched_at=TS,
+    )
+    # The asset is FAILED (rejected by containment), not OK.
+    failed = [a for a in bundle.manifest.assets if a.state is AssetState.FAILED]
+    assert len(failed) == 1
+    assert failed[0].source_url == "https://example.com/evil.jpg"
+    # The out-of-tree secret was neither read nor chmod'd.
+    assert os.stat(secret).st_mode == secret_mode_before
+
+
+def test_pipeline_output_normal_relative_path_resolves_and_reads(tmp_path):
+    """U12 happy path: a normal sha1-style relative path under the store resolves,
+    is read, chmod'd 0600, and recorded OK — unchanged behavior."""
+    spec = _spec(tmp_path, "jok")
+    images_store = spec.job_dir / "raw" / "images"
+    images_store.mkdir(parents=True)
+    # sha1-style nested path Scrapy's ImagesPipeline produces (full/<sha1>.jpg).
+    rel = "full/da39a3ee5e6b4b0d3255bfef95601890afd80709.jpg"
+    disk = images_store / rel
+    disk.parent.mkdir(parents=True, exist_ok=True)
+    disk.write_bytes(_real_jpeg())
+
+    out = {
+        "title": "Good Title", "body": "Good body text",
+        "image_urls": ["https://example.com/a.jpg"], "video_urls": [],
+        "source_html": "<html></html>", "metadata": {"url": "https://example.com/a"},
+        "downloaded_images": [
+            {"url": "https://example.com/a.jpg", "path": rel, "checksum": "x"}
+        ],
+        "downloaded_files": [],
+    }
+    bundle = scrapy_impl.write_bundle_from_extraction(
+        spec, out, source_domain="example.com", fetched_at=TS,
+    )
+    ok = [a for a in bundle.manifest.assets if a.state is AssetState.OK]
+    assert len(ok) == 1
+    assert ok[0].sha256 and len(ok[0].sha256) == 64
+    assert ok[0].path == ("raw/images/" + rel)
+    assert os.stat(disk).st_mode & 0o077 == 0  # chmod 0600 still applied
+
+
+# --------------------------------------------------------------------------
+# U12: raw/ cleanup on a killed/failed crawl so a retry starts clean
+# --------------------------------------------------------------------------
+
+def test_timeout_clears_raw_for_clean_retry(tmp_path):
+    """U12: a SIGKILL'd (TimeoutExpired) crawl must clear the job's raw/ dir so a
+    retry does not inherit an orphaned partial download. The first run leaves a
+    partial source.txt behind; after the timeout the runner must have removed it."""
+    job_dir = tmp_path / "jto"
+
+    def fake_run_timeout(cmd, **kwargs):
+        # simulate the child writing a partial download before being SIGKILL'd
+        raw = job_dir / "raw"
+        raw.mkdir(parents=True, exist_ok=True)
+        (raw / "source.txt").write_text("partial", encoding="utf-8")
+        raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout", 1))
+
+    runner = CrawlRunner(_registry(), resolver=_good_resolver, subprocess_runner=fake_run_timeout)
+    spec = SourceSpec(
+        job_id="jto", source_type=SourceType.URL,
+        job_dir=job_dir, url="https://example.com/x",
+    )
+    with pytest.raises(ExternalServiceError):
+        runner.crawl_url(spec, ts=TS)
+    # raw/ must be clean: no orphaned partial source.txt left for the retry.
+    assert not (job_dir / "raw" / "source.txt").exists()
+
+
+def test_failed_run_no_manifest_clears_raw(tmp_path):
+    """U12: a non-zero-exit crawl that produced no valid manifest must also clear
+    raw/ (orphaned partial downloads) so create_only does not trip on retry."""
+    job_dir = tmp_path / "jnoman"
+
+    def fake_run_fail(cmd, **kwargs):
+        raw = job_dir / "raw"
+        raw.mkdir(parents=True, exist_ok=True)
+        (raw / "source.txt").write_text("partial", encoding="utf-8")
+
+        class P:
+            returncode = 1
+        return P()
+
+    runner = CrawlRunner(_registry(), resolver=_good_resolver, subprocess_runner=fake_run_fail)
+    spec = SourceSpec(
+        job_id="jnoman", source_type=SourceType.URL,
+        job_dir=job_dir, url="https://example.com/x",
+    )
+    with pytest.raises(ExternalServiceError):
+        runner.crawl_url(spec, ts=TS)
+    assert not (job_dir / "raw" / "source.txt").exists()
+
+
+def test_clean_raw_then_retry_succeeds(tmp_path):
+    """U12: after a failed crawl clears raw/, a subsequent successful crawl into the
+    same job dir produces a valid bundle (the retry is not blocked by orphans)."""
+    job_dir = tmp_path / "jretry"
+
+    # First run: fail with a leftover partial in raw/.
+    def fake_fail(cmd, **kwargs):
+        raw = job_dir / "raw"
+        raw.mkdir(parents=True, exist_ok=True)
+        (raw / "source.txt").write_text("partial", encoding="utf-8")
+
+        class P:
+            returncode = 1
+        return P()
+
+    runner = CrawlRunner(_registry(), resolver=_good_resolver, subprocess_runner=fake_fail)
+    spec = SourceSpec(
+        job_id="jretry", source_type=SourceType.URL,
+        job_dir=job_dir, url="https://example.com/x",
+    )
+    with pytest.raises(ExternalServiceError):
+        runner.crawl_url(spec, ts=TS)
+    assert not (job_dir / "raw").exists() or not any((job_dir / "raw").iterdir())
+
+    # Retry: a clean child write succeeds.
+    def fake_ok(cmd, **kwargs):
+        from lcp.adapters.crawler.bundle import build_manifest
+        m = build_manifest(
+            job_id="jretry", source_type=SourceType.URL, source_domain="example.com",
+            fetched_at=TS, assets=[], source_html="<html></html>", source_text="body",
+            crawl_status=STATUS_CRAWLED,
+        )
+        write_manifest(job_dir, m, create_only=True)
+
+        class P:
+            returncode = 0
+        return P()
+
+    runner2 = CrawlRunner(_registry(), resolver=_good_resolver, subprocess_runner=fake_ok)
+    bundle = runner2.crawl_url(spec, ts=TS)
+    assert bundle.job_status == STATUS_CRAWLED
