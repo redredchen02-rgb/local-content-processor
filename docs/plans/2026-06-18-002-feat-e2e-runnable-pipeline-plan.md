@@ -189,7 +189,7 @@ graph TB
 
 ### Phase 1 — Make the pipeline able to produce a packet (the core fix)
 
-- [ ] **Unit 1: Complete structural-copy generation — produce `tags`, `quick_facts`, `summary` (R0)**
+- [x] **Unit 1: Complete structural-copy generation — produce `tags`, `quick_facts`, `summary` (R0)** ✅ shipped (commit `3a6384f`)
 
 **Goal:** After this unit, a clean job with `--ai-copy`, a valid `--template` category, and a 25–35-char title reaches `PROCESSED` through the real gate chain — because the copywriter now fills `tags`/`quick_facts`/`summary`, grounding verifies the new narrative ones, and `image_sections` is required only when the bundle actually has images (so text-only articles pass without an invented caption).
 
@@ -222,7 +222,7 @@ graph TB
 
 ### Phase 2 — Prove + guard
 
-- [ ] **Unit 2: Durable end-to-end happy-path test through the real gates**
+- [x] **Unit 2: Durable end-to-end happy-path test through the real gates** ✅ shipped (commit `95c7d76`)
 
 **Goal:** One test drives `ingest → process → review-packet → approve → backfill` to `PUBLISHED_RECORDED`, with `process` running the real `risk → media → dedup → assemble → copywriter → lint → ground` chain to a substantive `PROCESSED` draft — never `persist_gate_state`. The standing regression guard for the masking-bug class.
 
