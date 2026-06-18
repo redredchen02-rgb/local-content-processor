@@ -86,7 +86,9 @@ def build_user_message(sanitized_source: str, delimiter: str) -> str:
 
 def _parse(text: str) -> CopyResult:
     """Parse the line-prefix protocol into structural pieces. FAQ_Q/FAQ_A are
-    paired in order; an orphan question with no answer is dropped."""
+    paired in order; a question without a following answer (including a trailing
+    one at end-of-output) is emitted with an EMPTY answer rather than dropped, so
+    the operator sees the dangling question (everything here is human-reviewed)."""
     captions: list[str] = []
     subheads: list[str] = []
     titles: list[str] = []
@@ -108,10 +110,17 @@ def _parse(text: str) -> CopyResult:
         elif kind == "title":
             titles.append(value)
         elif kind == "faq_q":
+            # A second FAQ_Q before any FAQ_A means the previous question never
+            # got answered — keep it (empty answer) instead of overwriting it.
+            if pending_q is not None:
+                faq.append(FaqItem(question=pending_q, answer=""))
             pending_q = value
         elif kind == "faq_a" and pending_q is not None:
             faq.append(FaqItem(question=pending_q, answer=value))
             pending_q = None
+    # A trailing FAQ_Q with no answer: emit it (empty answer), do not drop.
+    if pending_q is not None:
+        faq.append(FaqItem(question=pending_q, answer=""))
     return CopyResult(
         captions=captions, faq=faq, subheads=subheads, title_candidates=titles
     )

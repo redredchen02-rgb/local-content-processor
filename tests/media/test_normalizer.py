@@ -204,6 +204,19 @@ def test_cover_requires_at_least_one_source(tmp_path):
         normalizer.make_cover([], tmp_path / "cover.jpg")
 
 
+def test_cover_fails_closed_on_mid_loop_load_failure(tmp_path):
+    # Unit 15 guard: a source that fails to decode mid-compose must raise (not
+    # return a partially filled canvas). _open_guarded already raises
+    # InputValidationError and the save is never reached — lock that in.
+    good = _save_rgb(tmp_path / "good.jpg", (400, 400))
+    bad = tmp_path / "bad.jpg"
+    bad.write_bytes(b"not an image")
+    dst = tmp_path / "cover.jpg"
+    with pytest.raises(InputValidationError):
+        normalizer.make_cover([good, bad], dst)
+    assert not dst.exists()  # no partial cover written
+
+
 def test_no_decompressionbomb_warning_filter_leaks(tmp_path):
     # After a normalize call the global warnings filter must be back to normal
     # (we used catch_warnings, so DecompressionBombWarning should not be an

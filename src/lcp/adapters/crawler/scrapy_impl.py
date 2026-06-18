@@ -233,7 +233,8 @@ def write_bundle_from_extraction(
 
     # Record media URLs dropped by the SSRF guard as FAILED assets (never
     # downloaded). They count as partial-asset failures -> CRAWLED_WARN upstream.
-    for url in extracted.get("rejected_media_urls", []):
+    rejected = extracted.get("rejected_media_urls", [])
+    for url in rejected:
         if len(assets) >= spec.max_assets:
             break
         kind = classify_media_url(url) or AssetKind.IMAGE
@@ -245,6 +246,37 @@ def write_bundle_from_extraction(
                 state=AssetState.FAILED,
                 note="rejected by SSRF guard (internal/metadata target)",
             )
+        )
+
+    # Truncation report parity with the ingest path (Unit 15): both _add() above
+    # and the rejected-URL loop stop at max_assets, so a page declaring more
+    # media than the cap is silently truncated. The ingest path surfaces this in
+    # ingest_report.json; mirror it here so the operator sees assets were dropped.
+    declared_assets = (
+        len(extracted.get("image_urls", []))
+        + len(extracted.get("video_urls", []))
+        + len(rejected)
+    )
+    truncated = declared_assets > spec.max_assets
+    _write_0600(
+        raw / "crawl_report.json",
+        json.dumps(
+            {
+                "job_id": spec.job_id,
+                "declared_assets": declared_assets,
+                "max_assets": spec.max_assets,
+                "truncated_at_max_assets": truncated,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ).encode("utf-8"),
+    )
+    if truncated:
+        logger.warning(
+            "job %s declared %d assets but max_assets=%d; truncated (report written)",
+            spec.job_id,
+            declared_assets,
+            spec.max_assets,
         )
 
     status = derive_status(title=title, body=body, assets=assets)

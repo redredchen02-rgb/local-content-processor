@@ -76,3 +76,18 @@ def test_detect_silence_skips_malformed_start(monkeypatch):
     monkeypatch.setattr(ffprobe, "_run", _fake_run(stderr))
     intervals = ffprobe.detect_silence("x.mp4")
     assert intervals == [(5.0, 6.0)]
+
+
+def test_detect_silence_keeps_earlier_segment_on_repeated_start(monkeypatch):
+    # Unit 15: two silence_start arriving before any silence_end used to overwrite
+    # the first pending start, silently dropping the earlier segment. The earlier
+    # one must be retained as (start, None) — open-ended — not discarded.
+    monkeypatch.setattr(ffprobe, "_require", lambda _name: "ffmpeg")
+    stderr = (
+        "silence_start: 1.0\n"  # earlier segment — no matching end before next start
+        "silence_start: 5.0\n"
+        "silence_end: 6.0\n"  # closes the second segment
+    )
+    monkeypatch.setattr(ffprobe, "_run", _fake_run(stderr))
+    intervals = ffprobe.detect_silence("x.mp4")
+    assert intervals == [(1.0, None), (5.0, 6.0)]

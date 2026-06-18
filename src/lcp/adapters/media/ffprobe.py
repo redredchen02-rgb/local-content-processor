@@ -275,6 +275,11 @@ def detect_silence(
     for line in stderr.splitlines():
         ms = _SILENCE_START_RE.search(line)
         if ms:
+            # A new silence_start before the previous one was closed means the
+            # earlier segment never got an end (overlapping/dropped marker). Keep
+            # it as open-ended (start, None) rather than overwriting + dropping it.
+            if pending_start is not None:
+                intervals.append((pending_start, None))
             pending_start = _safe_interval_float(ms.group("start"))
             continue
         me = _SILENCE_END_RE.search(line)

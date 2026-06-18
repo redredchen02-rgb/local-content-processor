@@ -399,6 +399,51 @@ def test_partial_asset_failure_crawled_warn(tmp_path):
     assert len(failed) == 1 and failed[0].source_url == "https://example.com/missing.jpg"
 
 
+def test_scrapy_reports_asset_truncation_at_max_assets(tmp_path):
+    # Unit 15 (parity with the ingest path): when more media URLs are declared
+    # than max_assets, the Scrapy path used to silently truncate. It must now
+    # REPORT the truncation the way ingest does (truncated_at_max_assets flag in
+    # a sibling crawl_report.json), so the operator sees assets were dropped.
+    d = tmp_path / "jtrunc"
+    d.mkdir(parents=True, exist_ok=True)
+    spec = SourceSpec(
+        job_id="jtrunc", source_type=SourceType.URL, job_dir=d,
+        url="https://example.com/a", max_assets=2,
+    )
+    out = {
+        "title": "T", "body": "B",
+        "image_urls": [f"https://93.184.216.34/img{i}.jpg" for i in range(5)],
+        "video_urls": [], "source_html": "<html></html>",
+        "metadata": {"url": "https://example.com/a"},
+        "downloaded_images": [], "downloaded_files": [],
+    }
+    scrapy_impl.write_bundle_from_extraction(
+        spec, out, source_domain="example.com", fetched_at=TS
+    )
+    report = json.loads((d / "raw" / "crawl_report.json").read_text("utf-8"))
+    assert report["truncated_at_max_assets"] is True
+    assert report["declared_assets"] == 5
+    assert report["max_assets"] == 2
+
+
+def test_scrapy_report_no_truncation_when_under_cap(tmp_path):
+    # Below the cap: the report records no truncation (guards against a flag that
+    # is always True).
+    out = {
+        "title": "T", "body": "B",
+        "image_urls": ["https://93.184.216.34/only.jpg"], "video_urls": [],
+        "source_html": "<html></html>", "metadata": {"url": "https://example.com/a"},
+        "downloaded_images": [], "downloaded_files": [],
+    }
+    scrapy_impl.write_bundle_from_extraction(
+        _spec(tmp_path, "junder"), out, source_domain="example.com", fetched_at=TS
+    )
+    report = json.loads(
+        (tmp_path / "junder" / "raw" / "crawl_report.json").read_text("utf-8")
+    )
+    assert report["truncated_at_max_assets"] is False
+
+
 def test_scraped_media_urls_validated_for_ssrf(tmp_path, monkeypatch):
     """P1 regression (second-order SSRF): media URLs scraped from untrusted HTML
     must each pass net_guard before being queued for download. An <img>/<a>

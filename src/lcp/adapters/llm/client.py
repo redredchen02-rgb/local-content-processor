@@ -379,12 +379,19 @@ class LlmClient:
         text = content or ""
 
         if finish_reason != CLEAN_FINISH_REASON:
+            # Distinguish a PROVIDER CONTENT BLOCK from a cut-off completion so a
+            # reviewer can tell "the model was censored" from "the output ran out
+            # of tokens" — they call for different operator action. Both still
+            # route to NEEDS_REVISION; only the reason label differs.
+            prefix = (
+                "filtered" if finish_reason == "content_filter" else "truncated"
+            )
             return ChatResult(
                 text=text,
                 finish_reason=finish_reason,
                 model=self.model,
                 needs_revision=True,
-                revision_reason=f"truncated:{finish_reason}",
+                revision_reason=f"{prefix}:{finish_reason}",
             )
         if not text.strip():
             return ChatResult(

@@ -132,12 +132,24 @@ def test_finish_reason_length_needs_revision(with_key):
     assert res.revision_reason == "truncated:length"
 
 
-def test_finish_reason_content_filter_needs_revision(with_key):
-    stub = StubOpenAI(response=_response("blocked", "content_filter"))
-    client = LlmClient(_config(), client_factory=stub.factory)
-    res = client.chat(system="r", user="d")
-    assert res.needs_revision is True
-    assert res.revision_reason == "truncated:content_filter"
+def test_finish_reason_content_filter_distinct_from_truncation(with_key):
+    # Unit 15: content_filter is a PROVIDER BLOCK, not a cut-off completion. It
+    # must carry a distinct reviewer-visible signal from a `length` truncation so
+    # a human can tell "the model was censored" from "the output ran out of room".
+    filtered = StubOpenAI(response=_response("blocked", "content_filter"))
+    res_f = LlmClient(_config(), client_factory=filtered.factory).chat(
+        system="r", user="d"
+    )
+    assert res_f.needs_revision is True
+    assert res_f.revision_reason == "filtered:content_filter"
+
+    truncated = StubOpenAI(response=_response("cut off", "length"))
+    res_t = LlmClient(_config(), client_factory=truncated.factory).chat(
+        system="r", user="d"
+    )
+    # The two reasons are distinct strings (not both "truncated:<reason>").
+    assert res_t.revision_reason == "truncated:length"
+    assert res_f.revision_reason != res_t.revision_reason
 
 
 def test_empty_content_needs_revision(with_key):

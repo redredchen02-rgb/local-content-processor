@@ -215,6 +215,20 @@ def test_empty_content_marks_needs_revision():
     assert draft.review_reason == "empty"
 
 
+def test_source_with_no_extractable_quotes_fails_closed():
+    # Unit 15: when EVERY source line is too short (<8 chars) to extract as a
+    # verbatim quote, a clean rewrite would ship with zero grounding anchors —
+    # grounding would have nothing extractive to verify (a vacuous pass). Route
+    # to NEEDS_REVISION instead so a human checks it, never auto-pass.
+    short_source = "好的。\n是的。\n對。"  # all lines < 8 chars -> no quotes
+    client = FakeClient()  # clean "stop" completion
+    draft = assemble(short_source, client)
+    assert draft.quotes == []
+    assert draft.status == DraftStatus.NEEDS_REVISION
+    assert draft.review_reason == "no_verbatim_quotes"
+    assert draft.needs_human_review is True
+
+
 # --------------------------------------------------------------------------
 # dry-run
 # --------------------------------------------------------------------------

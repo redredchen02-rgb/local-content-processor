@@ -64,9 +64,23 @@ def test_generates_all_structural_pieces(with_key):
     assert res.subheads == ["事件起因"]
     assert res.captions == ["现场画面显示当事人离开"]
     assert res.title_candidates == ["某事件最新进展整理"]
-    assert len(res.faq) == 1  # orphan question dropped
+    # Unit 15: the trailing orphan FAQ_Q is no longer silently dropped — it is
+    # emitted with an empty answer so the operator SEES the unanswered question.
+    assert len(res.faq) == 2
     assert res.faq[0].question == "这件事什么时候发生"
+    assert res.faq[0].answer == "据报道发生在上周"
+    assert res.faq[1].question == "孤儿问题没有答案"
+    assert res.faq[1].answer == ""  # orphan -> empty answer, not dropped
     assert res.needs_human_review is True
+
+
+def test_trailing_orphan_faq_question_is_emitted_not_dropped(with_key):
+    # A FAQ_Q with no following FAQ_A at end-of-output must survive (empty answer),
+    # so a reviewer notices the dangling question instead of it vanishing.
+    out = "FAQ_Q: 谁负责调查\n"
+    client = LlmClient(_config(), client_factory=_Stub(out).factory)
+    res = copywriter.generate_structural_copy("src", client)
+    assert [(f.question, f.answer) for f in res.faq] == [("谁负责调查", "")]
 
 
 def test_dry_run_spends_nothing(monkeypatch):
