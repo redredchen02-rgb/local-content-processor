@@ -180,11 +180,8 @@ function renderInfo(container, title, detail) {
 
 const POLL_MS = 1500;
 const POLL_CAP = 120; // ~90s; the spinner must never spin forever
-// De-watermark inpaint is CPU-heavy and runs per image — a 90s cap would show a
-// false timeout. Raise it for those jobs (still bounded, just much longer).
-const POLL_CAP_INPAINT = 800; // ~20min
 function capFor(kind) {
-  return (kind === "process_dewatermark") ? POLL_CAP_INPAINT : POLL_CAP;
+  return POLL_CAP;
 }
 const pollers = {}; // jobId -> {kind, ticks, startedAt, errors, box, timer}
 
@@ -635,55 +632,6 @@ async function openJob(jobId) {
   const reviewers = await a.reviewers();
   renderActions(rec.state, rec.review_reason, reviewers);
   await renderPacket(jobId);
-  await renderDewatermark(jobId, reviewers);
-}
-
-// De-watermark attestation panel (Batch 2). Default-LOCKED: shows the locked
-// state + a submitter/reviewer/evidence form, or the already-attested state.
-// All text via textContent; honesty note from LEX.honesty. Owned/licensed only.
-async function renderDewatermark(jobId, reviewers) {
-  const a = api();
-  if (!a || !a.dewatermark_status) return;
-  const st = await a.dewatermark_status(jobId);
-  if (isError(st)) return;
-  const view = $("job-packet");
-  const box = el("div"); box.className = "dewm-panel";
-  box.appendChild(el("h3", "去水印（仅自有／授权 · 需独立复核）"));
-  const note = el("p"); note.className = "honesty";
-  setText(note, (LEX.honesty && LEX.honesty.dewatermark_attest) || "");
-  box.appendChild(note);
-
-  if (st.attested) {
-    const ok = el("p", "已具结：复核者 " + (st.reviewer || "") + "（提交人 " + (st.submitter || "") + "）");
-    ok.className = "dewm-attested";
-    box.appendChild(ok);
-    if (!st.engine_ready) box.appendChild(el("p", "注意：本机尚未安装去水印引擎，处理时会回报缺少依赖。"));
-    view.appendChild(box);
-    return;
-  }
-
-  // Not attested -> locked. Show submitter record + independent-reviewer attest.
-  const sub = textInput("提交人（你）");
-  if (st.submitter) sub.value = st.submitter;
-  const recBtn = button("记录提交人", "btn-secondary");
-  recBtn.addEventListener("click", async function () {
-    afterAction(await a.request_dewatermark(jobId, sub.value), "已记录提交人");
-  });
-  box.appendChild(labeled("提交人：", sub));
-  box.appendChild(recBtn);
-
-  const rev = reviewerSelect(reviewers || { reviewers: [] });
-  const evid = textInput("授权依据（合同号 / URL / 权属证明）");
-  const attestBtn = button("独立复核并具结", "btn-primary");
-  attestBtn.addEventListener("click", async function () {
-    if (!evid.value.trim()) { setText($("job-status"), "请先填授权依据。"); return; }
-    afterAction(await a.attest_dewatermark(jobId, rev.value, evid.value), "已具结去水印");
-  });
-  box.appendChild(labeled("独立复核者：", rev));
-  box.appendChild(labeled("授权依据：", evid));
-  box.appendChild(attestBtn);
-  if (!st.engine_ready) box.appendChild(el("p", "提示：本机尚未安装去水印引擎，具结后处理仍会回报缺少依赖。"));
-  view.appendChild(box);
 }
 
 function renderBanner(state, reason) {

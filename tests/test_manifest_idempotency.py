@@ -1,3 +1,4 @@
+import json
 import os
 
 import pytest
@@ -61,3 +62,21 @@ def test_create_only_refuses_overwrite(tmp_path):
     M.write_manifest(tmp_path, _manifest())
     with pytest.raises(InputValidationError):
         M.write_manifest(tmp_path, _manifest(note="other"), create_only=True)
+
+
+def test_read_tolerates_legacy_dewatermark_keys(tmp_path):
+    """An old manifest written before the de-watermark CUT carries now-removed
+    AssetRef keys (watermark_removed / watermark_evidence_sha256). read_manifest
+    must still load it: pydantic's default extra='ignore' drops the unknown keys.
+    Do NOT set extra='forbid' on these models or old operator manifests break."""
+    M.write_manifest(tmp_path, _manifest())
+    raw = json.loads(M.manifest_path(tmp_path).read_text(encoding="utf-8"))
+    raw["assets"][0]["watermark_removed"] = True
+    raw["assets"][0]["watermark_evidence_sha256"] = "a" * 64
+    M.manifest_path(tmp_path).write_text(json.dumps(raw), encoding="utf-8")
+
+    got = M.read_manifest(tmp_path)
+    assert got is not None
+    assert got.assets[0].path == "raw/a.jpg"
+    # The legacy provenance keys are silently dropped (not preserved post-CUT).
+    assert not hasattr(got.assets[0], "watermark_removed")

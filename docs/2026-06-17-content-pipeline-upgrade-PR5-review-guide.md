@@ -1,3 +1,5 @@
+> **【更新 2026-06-17】本指南中关于「去水印 / Batch 2 / Units 6–9」的章节已被 CUT 取代** —— 该能力已从程式码移除（见 `docs/plans/2026-06-17-003-refactor-cut-dewatermark-pipeline-plan.md`）。其余（Batch 1 文案/封面、Batch 3 导入）仍有效。
+
 # PR #5 审阅指南 — Content Pipeline Upgrade
 
 > 一句话:四项 SOP 能力(加水印 / 封面校验 / 栏目模板+AI文案 / 去水印)在**不离开现有合规框**的前提下加厚;去水印**默认锁死 + 引擎默认缺席**,合并后无任何不安全行为会上线。

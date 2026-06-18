@@ -269,13 +269,3 @@ input[type="text"], select { flex: 1; min-width: 11rem; padding: var(--sp-1); }
   padding: var(--sp-4) var(--sp-5); margin-top: var(--sp-4); box-shadow: var(--shadow-sm); }
 .cover-report h3 { font-size: var(--fs-600); font-weight: var(--fw-bold); margin: 0 0 var(--sp-3); }
 .cover-report strong { display: block; margin-top: var(--sp-2); }
-
-/* ===== De-watermark attestation panel (Unit 9) ===== */
-.dewm-panel { background: var(--paper); border: 1px solid var(--c-attention-bd);
-  border-radius: var(--radius-md); padding: var(--sp-4) var(--sp-5); margin-top: var(--sp-4);
-  box-shadow: var(--shadow-sm); }
-.dewm-panel h3 { font-size: var(--fs-600); font-weight: var(--fw-bold); margin: 0 0 var(--sp-2); }
-.dewm-panel .honesty { color: var(--c-attention-tx); background: var(--c-attention-bg);
-  border-radius: var(--radius-sm); padding: var(--sp-2) var(--sp-3); font-size: var(--fs-300); }
-.dewm-attested { color: var(--c-ready-tx, var(--ink-900)); font-weight: var(--fw-medium); }
-.dewm-panel label { display: block; margin: var(--sp-2) 0; }

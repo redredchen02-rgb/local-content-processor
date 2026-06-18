@@ -8,6 +8,8 @@ origin: docs/brainstorms/2026-06-17-content-pipeline-upgrade-requirements.md
 
 # feat: Content Pipeline Upgrade
 
+> **【CUT — 2026-06-17】Batch 2（去水印 / Units 6–9：inpaint engine + SoD 具结）已 CUT**（见 `docs/plans/2026-06-17-003-refactor-cut-dewatermark-pipeline-plan.md`）。下方相关 unit 的勾选保留为历史实作记录；该能力已从程式码移除。Batch 1（文案 / 封面）与 Batch 3（导入）不受影响。
+
 ## Overview
 
 Add four SOP-driven capabilities to `lcp` (Eatmelon), the compliance-first local content pipeline, **without leaving the existing compliance envelope**: (A) watermark — ADD an official watermark to body images + cover, and REMOVE watermarks **only on owned/licensed assets** behind a segregation-of-duties attestation; (B) AI copy — keep R16 constrained-rewrite, add per-栏目 prompt-template management + AI-generated captions/FAQ/subheads; (C) cover — keep the existing 1300×640 collage, add official watermark + an advisory safe-area check; (D) crawl/ingest — keep public-source + local material-pack import only, improve mixed-folder ingest.

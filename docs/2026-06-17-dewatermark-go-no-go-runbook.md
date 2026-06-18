@@ -1,3 +1,9 @@
+> **【已 CUT — 2026-06-17】此 run-book 描述的去水印能力已从程式码移除**（见 `docs/plans/2026-06-17-003-refactor-cut-dewatermark-pipeline-plan.md`）。以下为历史记录，保留以说明当初的 go/no-go 评测流程。
+>
+> **operator 清扫提醒**：若你先前曾在本机跑过评测或具结，机器本地 `data/jobs/*/review/` 下可能留有 `dewatermark_request.json`、`dewatermark_attestation.json`，以及 **`dewatermark_evidence.txt`（存的是**原始**授权依据，如合约号/URL，不只是哈希）** —— 这些是你自己机器上的档案，需自行清理（gitignored，程式不代为删除）。
+>
+> **稽核保留**：append-only、hash 链式的 `audit.jsonl` 会**永久保留**历史 `DEWATERMARK_REQUESTED` / `DEWATERMARK_ATTESTED` 事件（含提交人/复核人名 + evidence 哈希）。这是设计使然（防篡改，不可改写）；CUT 移除的是程式码路径，不动历史。若须清除该历史，属链下（out-of-band）操作，且会从该点断开 hash 链。
+
 # 去水印 go/no-go 评测 Run-book（operator 版）
 
 > **一句话目的**：去水印引擎要不要做、做哪个，得用**你自有/授权的真实素材**在**你的笔电**上量一遍准确度和延迟才能定。这份文档带你一步步把那次测量跑出来。
