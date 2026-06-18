@@ -10,7 +10,6 @@ guard, typed-error contract, in-flight guard, doc-root lockdown, and headers.
 import http.client
 import json
 import threading
-import time
 
 import pytest
 import yaml
@@ -138,6 +137,27 @@ def test_malformed_body_is_typed_not_500(server):
     assert "error" in body and body["exit_code"] == 2
 
 
+def test_negative_content_length_is_typed_not_hang(server):
+    # int("-1") is truthy; without the guard rfile.read(-1) would read to EOF.
+    # A forged negative Content-Length must be a typed input error, not a hang.
+    h = _api_headers(server.public_port)
+    h["Content-Length"] = "-1"
+    resp, data = _request(server.public_port, "POST", "/api/summary", headers=h, body=b"")
+    assert resp.status == 200
+    body = json.loads(data)
+    assert "error" in body and body["exit_code"] == 2
+
+
+def test_async_over_arity_typed_error_crosses_wire(server):
+    # The dispatch seam's arity guard + LcpError mapping must hold for the
+    # UN-@bridge_safe async kickoff methods too: an over-long args array to
+    # process_async returns a typed exit_code:2 on the synchronous kickoff, not a 500.
+    resp, data = _post(server.public_port, "process_async", ["j1", "t", False, None, None, False, "EXTRA"])
+    assert resp.status == 200
+    body = json.loads(data)
+    assert "error" in body and body["exit_code"] == 2
+
+
 # --- in-flight guard (sync route) + shared instance ------------------------
 
 
@@ -146,10 +166,12 @@ def test_concurrent_same_job_sync_process_runs_once(server, monkeypatch):
     # concurrent POST /api/process on one job must run it ONCE; the second sees
     # the in-flight status. Proves the seam guard AND the single shared instance.
     started = []
+    in_slow = threading.Event()  # deterministic: set when the first call is inside
     release = threading.Event()
 
     def slow(job_id, *a, **k):
         started.append(job_id)
+        in_slow.set()
         release.wait(timeout=3)
         return {"job_id": job_id, "ran": True}
 
@@ -163,11 +185,9 @@ def test_concurrent_same_job_sync_process_runs_once(server, monkeypatch):
 
     t1 = threading.Thread(target=fire, args=("a",))
     t1.start()
-    # Wait until the first call is inside slow() before firing the second.
-    for _ in range(100):
-        if started:
-            break
-        time.sleep(0.01)
+    # Deterministically wait until the first call is INSIDE slow() (holding the
+    # in-flight slot) before firing the second — no timing-based polling.
+    assert in_slow.wait(timeout=3), "first request never entered the guarded call"
     t2 = threading.Thread(target=fire, args=("b",))
     t2.start()
     t2.join(timeout=3)

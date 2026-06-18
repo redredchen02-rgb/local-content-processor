@@ -80,7 +80,7 @@ These are load-bearing, not aspirational. `docs/security/pii-inventory.md` is th
 - **Type gate is two-tier** (`pyproject [tool.mypy]`): `lcp.core.* / lcp.pipeline / lcp.adapters.*` are held to a strict bundle; only the top-level shells (`cli.py`/`gui.py`/`webserver.py`) stay non-strict (they don't match the strict globs). The strict flags are **enumerated, not `strict = true`** — a per-module `strict` would apply globally and force strict onto the shells. To tighten a shell, add it to the strict override module list.
 - **`no_implicit_reexport` is on** for strict modules — re-exports must be explicit (`from x import y as y`), as in `pipeline.py`'s draft-store re-exports.
 - Errors flow through the `core/errors.py` hierarchy (`LcpError` → `InputValidationError`, `ExternalServiceError`, `DependencyError`, …); CLI maps them to exit codes per the error contract.
-- Tests mirror the `src/` tree under `tests/` (`tests/core`, `tests/processor`, …). No `conftest.py`, no custom markers; GUI tests `importorskip("webview")`.
+- Tests mirror the `src/` tree under `tests/` (`tests/core`, `tests/processor`, …). No `conftest.py`, no custom markers. GUI/webui tests import `Api`/`webserver` directly and drive them with no socket (`tests/test_webserver_*` boot a real `127.0.0.1:0` server in-process); there is no optional GUI dependency to `importorskip` (pywebview was removed).
 - Comments explain **why**, not what (per repo style). Commit messages are English.
 
 ## Where to read more

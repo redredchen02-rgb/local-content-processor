@@ -56,6 +56,10 @@ SERVER_HOST = "127.0.0.1"
 # A stable default so the Claude-in-Chrome URL is predictable; --port overrides.
 DEFAULT_PORT = 8765
 
+# Upper bound on a request body before we read it (defence-in-depth vs a
+# slow-send / OOM on the loopback socket; real API bodies are a few KB).
+MAX_REQUEST_BODY_SIZE = 16 * 1024 * 1024
+
 # Path prefix whose requests carry the full token + CSRF chain (state-mutating
 # and data-returning API calls). Static asset GETs get the Host check only.
 API_PREFIX = "/api/"
@@ -250,8 +254,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("Pragma", "no-cache")
         self.end_headers()
-        if self.command != "HEAD":
-            self.wfile.write(body)
+        self.wfile.write(body)
 
     def _send_json(self, obj: dict[str, Any], code: int = 200) -> None:
         self._send(code, json.dumps(obj).encode("utf-8"), "application/json")
@@ -323,6 +326,11 @@ class _Handler(BaseHTTPRequestHandler):
         # Parse {"args": [...]} — a malformed body is a typed input error, not a 500.
         try:
             length = int(self.headers.get("Content-Length", 0) or 0)
+            # Reject negative (int("-1") is truthy -> rfile.read(-1) reads to EOF)
+            # and oversized bodies before reading them (slow-send / OOM defence;
+            # API bodies are tiny — job ids, urls, settings).
+            if length < 0 or length > MAX_REQUEST_BODY_SIZE:
+                raise InputValidationError("request body too large or malformed")
             raw = self.rfile.read(length) if length else b""
             payload = json.loads(raw) if raw else {}
             args = payload.get("args", []) if isinstance(payload, dict) else None
@@ -336,12 +344,13 @@ class _Handler(BaseHTTPRequestHandler):
         api = self._srv.api
         # In-flight guard for synchronous long routes (Finding 3 + Finding A): one
         # Stage-1/Stage-2 pass per job_id at a time. Async variants self-guard in
-        # _run_bg. job_id is args[0] by convention for these methods.
-        job_id = args[0] if (name in _INFLIGHT_GUARDED and args) else None
+        # _run_bg. job_id is args[0] by convention for these methods; coerce to str
+        # so the registry key is stable (a JSON int 123 must not bypass a str "123").
+        job_id = str(args[0]) if (name in _INFLIGHT_GUARDED and args) else None
         if job_id is not None:
             with self._srv.inflight_lock:
                 if job_id in self._srv.inflight:
-                    self._send_json({"job_id": str(job_id), "status": "running"})
+                    self._send_json({"job_id": job_id, "status": "running"})
                     return
                 self._srv.inflight.add(job_id)
         try:

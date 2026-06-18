@@ -145,6 +145,13 @@ def test_api_no_secfetch_no_origin_denied():
     assert _authz("/api/approve", h) is not None
 
 
+def test_api_secfetch_none_denied():
+    # Sec-Fetch-Site: none means a top-level navigation — fine for a static GET,
+    # but never for a state-changing /api call (a typed-URL/bookmark POST is not a
+    # same-origin app request). Must be denied.
+    assert _authz("/api/approve", _api_headers(**{"Sec-Fetch-Site": "none"})) is not None
+
+
 # --- helper surfaces --------------------------------------------------------
 
 
