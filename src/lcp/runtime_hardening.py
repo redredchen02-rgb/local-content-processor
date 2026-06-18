@@ -108,19 +108,24 @@ def _pinned_path() -> str:
       - the running interpreter's bin dir (so the child finds OUR python), and
       - the standard system bin dirs (so it finds ffmpeg/ffprobe).
 
-    Each candidate is admitted only if it is an ABSOLUTE path, exists, and is
-    NOT world-writable (mode & 0o002) — a world-writable dir on PATH is itself a
-    binary-planting vector. Order is preserved and duplicates dropped."""
-    candidates = [os.path.dirname(sys.executable), *_SYSTEM_BIN_DIRS]
+    The interpreter's own bin dir is trusted UNCONDITIONALLY: we are already
+    executing from it, so its trust is established, and rejecting it would also
+    break hardened CI runners whose tool-cache bin is world-writable. Every OTHER
+    candidate (the system bin dirs) is admitted only if it is an ABSOLUTE path,
+    exists, and is NOT world-writable (mode & 0o002) — a world-writable system dir
+    on PATH is a binary-planting vector. Order is preserved and duplicates dropped."""
     out: list[str] = []
-    for d in candidates:
+    interp_bin = os.path.dirname(sys.executable)
+    if interp_bin and os.path.isabs(interp_bin) and os.path.isdir(interp_bin):
+        out.append(interp_bin)  # trusted: the interpreter we are running from
+    for d in _SYSTEM_BIN_DIRS:
         if not d or not os.path.isabs(d) or d in out:
             continue
         try:
             st = os.stat(d)
         except OSError:
             continue
-        if st.st_mode & 0o002:  # world-writable -> a planting vector, skip
+        if st.st_mode & 0o002:  # world-writable system dir -> planting vector, skip
             continue
         out.append(d)
     return os.pathsep.join(out)

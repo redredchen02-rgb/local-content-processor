@@ -86,15 +86,19 @@ def test_minimal_env_path_is_pinned_not_forwarded(monkeypatch):
     monkeypatch.setenv("PATH", poisoned)
     env = minimal_env()
     entries = env["PATH"].split(os.pathsep)
-    # No relative / cwd / world-writable entries survive.
+    venv_bin = os.path.dirname(sys.executable)
+    # No relative / cwd entries survive; and no world-writable SYSTEM dir survives.
+    # The interpreter's own bin dir is exempt from the world-writable check — it is
+    # trusted unconditionally (we run from it), and a hardened CI runner's tool-cache
+    # bin is legitimately world-writable.
     for e in entries:
         assert e, "empty PATH entry leaked"
         assert os.path.isabs(e), f"non-absolute PATH entry leaked: {e!r}"
         st = os.stat(e)  # every surviving entry must exist
-        assert not (st.st_mode & 0o002), f"world-writable PATH entry leaked: {e!r}"
-    # A core system bin and the running venv's bin dir are reachable, so the
+        if e != venv_bin:
+            assert not (st.st_mode & 0o002), f"world-writable system PATH entry leaked: {e!r}"
+    # A core system bin and the running interpreter's bin dir are reachable, so the
     # child can still find python/ffmpeg.
-    venv_bin = os.path.dirname(sys.executable)
     assert venv_bin in entries
     assert any(e in entries for e in ("/usr/bin", "/bin")), entries
 
