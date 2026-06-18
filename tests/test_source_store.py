@@ -1,5 +1,7 @@
 """Unit 2 + Unit 6: saved_sources PII-exception table CRUD + erasure."""
 
+import os
+
 import pytest
 
 from lcp.adapters.storage.source_store import SourceStore
@@ -10,6 +12,19 @@ TS = "2026-06-17T00:00:00Z"
 
 def _store(tmp_path):
     return SourceStore(base_dir=tmp_path)
+
+
+def test_db_file_is_0600_independent_of_umask(tmp_path):
+    # U18: this store holds plaintext PII (source_ref/label) BY DESIGN, so the
+    # shared lcp.db must be 0600 even if the startup umask were ever skipped.
+    # A loose umask proves the explicit chmod is doing the work, not the umask.
+    old = os.umask(0o000)
+    try:
+        s = _store(tmp_path)
+    finally:
+        os.umask(old)
+    mode = os.stat(s.db_path).st_mode & 0o777
+    assert mode == 0o600, oct(mode)
 
 
 def test_add_and_list_roundtrip_preserves_plaintext(tmp_path):

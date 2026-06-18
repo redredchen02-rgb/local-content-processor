@@ -57,6 +57,32 @@ _PROHIBITED_KEYS = frozenset(
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
+def _fsync_dir(directory: Path) -> None:
+    """fsync a DIRECTORY fd so a freshly-appended/created file is durable.
+
+    fsync on the file fd alone persists its DATA, but on POSIX the directory
+    ENTRY (and, for the audit log, the fact that the new tail line is part of
+    the file the directory points at) is only guaranteed durable once the parent
+    directory itself is fsynced. Without this, a crash can lose a freshly
+    appended (and otherwise fsynced) tail line — and a truncated audit log is
+    INDISTINGUISHABLE from a tampered one: verify_chain() would falsely report
+    tampering on a merely-truncated tail. Since the audit chain is the backbone
+    of the no-publish-without-a-human guarantee, we fsync the dir too.
+
+    Best-effort: opening a directory fd is POSIX-only (fails on Windows / some
+    filesystems); a failure here must not break appends."""
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return  # not a POSIX dir fd we can fsync (e.g. Windows); accept residual
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
 def _canonical(obj: dict[str, Any]) -> str:
     """Deterministic JSON for hashing: sorted keys, no whitespace, no NaN."""
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
@@ -207,6 +233,11 @@ class AuditLog:
                 f.write(_canonical(record) + "\n")
                 f.flush()
                 os.fsync(f.fileno())
+                # Persist the parent dir too: a file-only fsync can still lose
+                # the tail line on a crash, and a truncated log reads as tampered
+                # (see _fsync_dir). Done under the lock so the durability order
+                # matches the commit order.
+                _fsync_dir(self.path.parent)
             finally:
                 if fcntl is not None:
                     fcntl.flock(f.fileno(), fcntl.LOCK_UN)

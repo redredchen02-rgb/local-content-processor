@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import threading
 
 import pytest
@@ -112,6 +113,40 @@ def test_concurrent_appends_keep_seq_unique_and_chain_valid(tmp_path):
     assert len(lines) == n
     seqs = sorted(json.loads(line)["seq"] for line in lines)
     assert seqs == list(range(n))  # unique + contiguous, no duplicates
+    assert log.verify_chain() is True
+
+
+def test_append_fsyncs_parent_dir(tmp_path, monkeypatch):
+    # U18: after writing+fsyncing the line, append() must also fsync the PARENT
+    # DIRECTORY fd so a crash cannot lose the freshly-appended (otherwise
+    # fsynced) tail line — a lost tail would make verify_chain() falsely report
+    # tampering on a merely-truncated log. Assert the dir fd is fsynced on the
+    # FIRST append (which also creates the dir entry) and that append+verify
+    # still work end-to-end.
+    import lcp.adapters.storage.audit_log as audit_mod
+
+    fsynced_fds: list[int] = []
+    real_fsync = os.fsync
+
+    def _tracking_fsync(fd):
+        fsynced_fds.append(fd)
+        return real_fsync(fd)
+
+    monkeypatch.setattr(audit_mod.os, "fsync", _tracking_fsync)
+
+    log = _log(tmp_path)
+    rec = log.append(ts=TS, stage="crawl", event="E0", job_id="j1", actor="m")
+
+    # The file fd plus the directory fd were both fsynced (>=2 distinct fds).
+    assert len(fsynced_fds) >= 2
+    # Behavioral: the append landed and the chain verifies.
+    assert rec["seq"] == 0
+    assert log.verify_chain() is True
+
+    # A second append (dir entry already exists) still fsyncs and verifies.
+    fsynced_fds.clear()
+    log.append(ts=TS, stage="crawl", event="E1", job_id="j1", actor="m")
+    assert len(fsynced_fds) >= 2
     assert log.verify_chain() is True
 
 

@@ -34,6 +34,20 @@ def test_get_missing_returns_none(tmp_path):
     assert _store(tmp_path).get_job("nope") is None
 
 
+def test_db_file_is_0600_independent_of_umask(tmp_path):
+    # U18: lcp.db must be 0600 even if apply_hardening() (the umask) were ever
+    # skipped — defense-in-depth on the store that shares lcp.db with the
+    # plaintext-PII saved_sources table. Set a LOOSE umask first so the explicit
+    # chmod, not the umask, is what produces 0600.
+    old = os.umask(0o000)
+    try:
+        s = _store(tmp_path)
+    finally:
+        os.umask(old)
+    mode = os.stat(s.db_path).st_mode & 0o777
+    assert mode == 0o600, oct(mode)
+
+
 def test_create_duplicate_rejected(tmp_path):
     s = _store(tmp_path)
     s.create_job("j1", created_at=TS)

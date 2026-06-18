@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ...core.errors import InputValidationError
+from .job_store import _chmod_db_0600
 
 DB_NAME = "lcp.db"
 _BUSY_TIMEOUT_MS = 5000
@@ -87,6 +88,7 @@ class SourceStore:
             conn.commit()
         finally:
             conn.close()
+        _chmod_db_0600(self.db_path)  # this store holds plaintext PII by design
 
     def add_source(
         self,

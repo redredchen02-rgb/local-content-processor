@@ -67,6 +67,22 @@ class JobRecord:
     review_reason: ReviewReason | None = None
 
 
+def _chmod_db_0600(db_path: Path) -> None:
+    """Force lcp.db (and its WAL/SHM sidecars) to 0600 after init.
+
+    Defense-in-depth: apply_hardening()'s 0o077 umask already yields 0600, but
+    this store SHARES lcp.db with the plaintext-PII saved_sources table, so we
+    do not want correctness to depend on an entry point remembering the umask.
+    The -wal/-shm sidecars carry the same plaintext page data, so tighten them
+    too when present. Best-effort: a chmod failure must not break the store."""
+    for p in (db_path, Path(f"{db_path}-wal"), Path(f"{db_path}-shm")):
+        try:
+            if p.exists():
+                os.chmod(p, 0o600)
+        except OSError:
+            pass
+
+
 def _row_to_record(row: sqlite3.Row) -> JobRecord:
     return JobRecord(
         job_id=row["job_id"],
@@ -144,6 +160,7 @@ class JobStore:
             conn.commit()
         finally:
             conn.close()
+        _chmod_db_0600(self.db_path)
 
     # --- job directory layout: data/jobs/<job_id>/{raw,processed,review}/ ---
 
