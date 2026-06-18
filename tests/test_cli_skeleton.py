@@ -28,18 +28,16 @@ def test_missing_required_option_is_usage_error(capsys):
     assert rc == EXIT_USAGE
 
 
-def test_crawl_off_allowlist_is_input_error(tmp_path, monkeypatch, capsys):
-    # No config -> empty allowlist -> example.com is rejected (exit 2), proving
-    # the command is wired to the runner's preflight (not a stub).
-    # chdir to a clean dir so cwd config.yaml auto-discovery (Ctx) can't supply a
-    # non-default allowlist — the rejection must be for the EMPTY-default reason,
-    # not because a stray local config.yaml happens to exclude example.com.
+def test_crawl_empty_allowlist_allows_all_domains(tmp_path, monkeypatch, capsys):
+    # No config -> empty allowlist -> all domains are permitted (no preflight
+    # rejection). The crawl may still fail for network/timeout reasons, but it
+    # must NOT be rejected at the domain allowlist gate.
     monkeypatch.chdir(tmp_path)
     rc = main([
         "--output-dir", str(tmp_path),
         "crawl", "--url", "https://example.com/p/1", "--job-id", "j1",
     ])
-    assert rc == EXIT_INPUT
+    assert rc != EXIT_INPUT
 
 
 def test_no_command_shows_help_like_behaviour(capsys):

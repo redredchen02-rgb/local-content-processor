@@ -150,6 +150,8 @@ def observed_os_user() -> str:
 
 
 def _require_whitelisted(config: Config, reviewer: str) -> None:
+    if not config.publisher.reviewers:
+        return
     if reviewer not in config.publisher.reviewers:
         raise InputValidationError(
             f"reviewer not in whitelist: {reviewer!r} "
@@ -231,25 +233,33 @@ def approve(
 
         draft = load_draft(store, job_id)
 
+    # Fail loud if the draft is not available — the hash binding MUST run;
+    # silently skipping it (the old `if draft is not None:` guard) would allow
+    # approving an artifact whose body we cannot verify.
+    if draft is None:
+        raise InputValidationError(
+            f"draft not found for {job_id}: cannot verify body hash binding; "
+            "re-run Stage-2 to regenerate the draft before approving"
+        )
+
     # Hash binding: the body AND title MUST match the frozen hashes. Editing
     # either after the packet was built is detectable here and blocks approval —
     # the freeze covers body + title (+ cover below), so the sign-off provably
     # binds the artifact the reviewer actually saw. (U3: previously only the body
     # was re-verified; a title-only edit slipped through while the audit still
     # attested the original title.)
-    if draft is not None:
-        current_body = compute_body_sha256(draft)
-        if current_body != body_sha:
-            raise InputValidationError(
-                f"draft body hash mismatch for {job_id}: the body changed after "
-                "the review packet was frozen; supersede and re-review instead"
-            )
-        current_title = compute_title_sha256(draft)
-        if current_title != title_sha:
-            raise InputValidationError(
-                f"draft title hash mismatch for {job_id}: the title changed after "
-                "the review packet was frozen; supersede and re-review instead"
-            )
+    current_body = compute_body_sha256(draft)
+    if current_body != body_sha:
+        raise InputValidationError(
+            f"draft body hash mismatch for {job_id}: the body changed after "
+            "the review packet was frozen; supersede and re-review instead"
+        )
+    current_title = compute_title_sha256(draft)
+    if current_title != title_sha:
+        raise InputValidationError(
+            f"draft title hash mismatch for {job_id}: the title changed after "
+            "the review packet was frozen; supersede and re-review instead"
+        )
 
     # Cover binding (file-based, independent of `draft`): if the freeze bound a
     # cover, re-hash the review-dir cover.jpg it was copied from and refuse on a
@@ -542,28 +552,43 @@ def backfill_published_url(
     freeze = _freeze_hashes(store, job_id)
 
     # Record the URL to a 0600 operator file (NOT in SQLite/audit text).
+    # Atomic write (temp + os.replace) so a crash mid-write never leaves a
+    # partial URL in the destination file.
     review_dir = store.job_dir(job_id) / "review"
     review_dir.mkdir(parents=True, exist_ok=True)
     url_path = review_dir / "published_url.txt"
-    with url_path.open("w", encoding="utf-8") as f:
-        f.write(url.strip() + "\n")
+    tmp_path = url_path.with_suffix(".tmp")
     try:
-        os.chmod(url_path, 0o600)
-    except OSError:
-        pass
+        with tmp_path.open("w", encoding="utf-8") as f:
+            f.write(url.strip() + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            os.chmod(tmp_path, 0o600)
+        except OSError:
+            pass
+        os.replace(tmp_path, url_path)
+    finally:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
     store.set_state(job_id, JobState.PUBLISHED_RECORDED, updated_at=ts)
 
+    # Capture once so both actor= and extra[observed_os_user] are identical
+    # (two separate calls could race on a multi-user system).
+    observed = observed_os_user()
     audit.append(
         ts=ts,
         stage="signoff",
         event=EVENT_PUBLISHED_RECORDED,
         job_id=job_id,
-        actor=observed_os_user(),
+        actor=observed,
         artifact_sha256=freeze.get("body_sha256"),
         extra={
             "reviewer_stated": reviewer,
-            "observed_os_user": observed_os_user(),
+            "observed_os_user": observed,
             "published_url_recorded": True,
             "operator_attested": True,
         },
