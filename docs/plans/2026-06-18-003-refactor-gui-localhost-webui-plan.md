@@ -1,7 +1,7 @@
 ---
 title: "refactor: Replace pywebview desktop GUI with a 127.0.0.1 webui service (Chrome-debuggable)"
 type: refactor
-status: active
+status: completed
 date: 2026-06-18
 deepened: 2026-06-18
 ---
@@ -338,7 +338,7 @@ U3 and U4 both depend only on U2's endpoint contract and can proceed in parallel
 
 ---
 
-- [ ] **Unit 1: Security gate chain (pure validation functions)**
+- [x] **Unit 1: Security gate chain (pure validation functions)**
 
 **Goal:** Implement the fail-closed request-authorization chain as pure functions
 that take synthetic header inputs — testable without a socket — so the highest-risk
@@ -401,7 +401,7 @@ e2e plan) — one assertion per bad header, each proving "rejected, never allowe
 
 ---
 
-- [ ] **Unit 2: `http.server` transport — binding, static serving, dispatch, token injection**
+- [x] **Unit 2: `http.server` transport — binding, static serving, dispatch, token injection**
 
 **Goal:** Stand up the `ThreadingHTTPServer` on `127.0.0.1` that runs the Unit-1
 gate, serves `web/` (doc-root locked), dispatches `/api/<method>` to a single
@@ -567,7 +567,7 @@ call — this is the JSON↔Python arg-binding seam that unit tests cannot prove
 
 ---
 
-- [ ] **Unit 3: Frontend `fetch`-proxy bridge + simplified bootstrap**
+- [x] **Unit 3: Frontend `fetch`-proxy bridge + simplified bootstrap**
 
 **Goal:** Replace the pywebview bridge in `web/app.js` with a `fetch`-based proxy
 and add the token plumbing in `index.html` — with **no change to any action call
@@ -655,7 +655,7 @@ exercising the exact endpoints the proxy calls, (c) manual Chrome verification
 
 ---
 
-- [ ] **Unit 4: CLI rewire — `gui` launches the server; remove pywebview `launch()`**
+- [x] **Unit 4: CLI rewire — `gui` launches the server; remove pywebview `launch()`**
 
 **Goal:** Point the operator entry point at the new server and delete the pywebview
 launch path, keeping `Api` and the command name (`lcp gui`) intact.
@@ -713,7 +713,7 @@ launch path, keeping `Api` and the command name (`lcp gui`) intact.
 
 ---
 
-- [ ] **Unit 5: Dependency removal + type-gate + obsolete-test cleanup**
+- [x] **Unit 5: Dependency removal + type-gate + obsolete-test cleanup**
 
 **Goal:** Remove the `pywebview` dependency and its mypy override, and retire the
 webview-specific tests, keeping the gate and full suite green.
@@ -763,7 +763,7 @@ one new guard.
 
 ---
 
-- [ ] **Unit 6: Documentation + institutional-learning entry**
+- [x] **Unit 6: Documentation + institutional-learning entry**
 
 **Goal:** Update operator/architecture docs to reflect the webui service and record
 the new localhost-HTTP threat model as a reusable learning.
