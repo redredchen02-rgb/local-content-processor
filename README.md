@@ -71,6 +71,13 @@ lcp init     # writes config.yaml (0600) + seeds an empty data/site_index.jsonl
 `site_index.jsonl` it seeds is what lets a fresh clean job pass the dedup gate
 (an absent index makes the gate fail-loud and park every job for human review).
 
+Subsequent commands **auto-load `./config.yaml` from the current directory** — so
+`lcp init` → edit → `lcp run` just works, no `--config` needed; `--config PATH`
+overrides, and with no `config.yaml` present the built-in defaults apply. Because
+the file is read by location, run `lcp` from your own working directory (or pass
+`--config` explicitly) when in doubt — a `config.yaml` sitting in the directory you
+happen to be in is loaded as-is, including its `allow_domains` and `reviewers`.
+
 **The LLM API key is never stored in `config.yaml`.** Put it in the OS keyring
 (service `local-content-processor`, user `llm`), or set the `LCP_LLM_API_KEY`
 environment variable:
