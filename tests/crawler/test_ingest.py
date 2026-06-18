@@ -148,3 +148,34 @@ def test_symlink_escape_member_marked_failed(tmp_path):
     # and the secret is not present as an OK image asset
     ok_paths = [a.path for a in bundle.assets if a.state is AssetState.OK]
     assert all("secret" not in p for p in ok_paths)
+
+
+def test_text_name_constants_are_tuples():
+    """F1: _TEXT_NAMES and _TITLE_NAMES must be tuples, not sets.
+    Sets have undefined iteration order (varies by hash seed), so the first
+    matching file is arbitrary. Tuples give explicit, stable priority."""
+    from lcp.adapters.crawler.ingest import _TEXT_NAMES, _TITLE_NAMES  # noqa: PLC0415
+
+    assert isinstance(_TEXT_NAMES, tuple), (
+        f"_TEXT_NAMES must be a tuple for deterministic priority, got {type(_TEXT_NAMES)}"
+    )
+    assert isinstance(_TITLE_NAMES, tuple), (
+        f"_TITLE_NAMES must be a tuple for deterministic priority, got {type(_TITLE_NAMES)}"
+    )
+    # body.txt must be first (highest priority)
+    assert _TEXT_NAMES[0] == "body.txt"
+
+
+def test_text_priority_body_beats_content(tmp_path):
+    """F1: when body.txt AND content.txt coexist, body.txt wins (first in tuple)."""
+    src = tmp_path / "material"
+    src.mkdir()
+    (src / "title.txt").write_text("t", encoding="utf-8")
+    (src / "body.txt").write_text("body-wins", encoding="utf-8")
+    (src / "content.txt").write_text("content-loses", encoding="utf-8")
+
+    bundle = LocalIngestCrawler().crawl(_spec(tmp_path / "j6", src))
+    source_txt = (bundle.raw_dir / "source.txt").read_text(encoding="utf-8")
+    assert source_txt == "body-wins", (
+        f"expected body.txt to win over content.txt, got: {source_txt!r}"
+    )

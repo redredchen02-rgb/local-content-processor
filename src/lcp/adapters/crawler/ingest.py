@@ -23,8 +23,8 @@ from .bundle import build_manifest, derive_status, sha256_bytes
 # Recognised extensions -> AssetKind.
 _IMAGE_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff"}
 _VIDEO_EXT = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
-_TEXT_NAMES = {"body.txt", "content.txt", "text.txt", "source.txt"}
-_TITLE_NAMES = {"title.txt"}
+_TEXT_NAMES = ("body.txt", "content.txt", "text.txt", "source.txt")
+_TITLE_NAMES = ("title.txt",)
 
 
 def _write_0600(path: Path, data: bytes) -> None:
@@ -213,7 +213,7 @@ class LocalIngestCrawler(Crawler):
         )
 
     @staticmethod
-    def _read_named(src: Path, names: set[str]) -> str | None:
+    def _read_named(src: Path, names: tuple[str, ...]) -> str | None:
         for name in names:
             try:
                 member = net_guard.safe_join(src, name)
