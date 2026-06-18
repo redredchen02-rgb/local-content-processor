@@ -324,15 +324,26 @@ class JobStore:
         PROCESSING state, in a SINGLE connection (read + update).
 
         This owns the SQL so processor adapters never reach into a private
-        connection. Validates ``persisted_current -> PROCESSING -> target`` via
-        the canonical state machine, drops/clears the ``.processing`` marker
-        around the write, and refuses to persist a transient target."""
+        connection. Read + validate + update run under ``BEGIN IMMEDIATE``
+        (``isolation_level=None``) so the read->update is atomic — a competing
+        writer cannot land a transition between our read and our write (same race
+        closure as ``set_state``). Validates ``persisted_current -> PROCESSING ->
+        target`` via the canonical state machine, refuses a transient target, and
+        clears the ``.processing`` marker AFTER the commit.
+
+        The marker is the CALLER's to set (Pipeline.process drops it at Stage-2
+        entry — the ``.processing`` evidence the _persist seam requires); this
+        method only clears it once the resting state is committed. Marker
+        filesystem I/O therefore stays OUTSIDE the write transaction, so the WAL
+        write lock is never held across a touch()/mkdir."""
         if target in TRANSIENT_STATES:
             raise InputValidationError(
                 f"cannot persist transient state {target.value} to SQLite"
             )
         conn = self._connect()
+        conn.isolation_level = None  # manual transaction control (mirrors set_state)
         try:
+            conn.execute("BEGIN IMMEDIATE")  # take the WAL write lock before reading
             row = conn.execute(
                 "SELECT * FROM jobs WHERE job_id = ?", (job_id,)
             ).fetchone()
@@ -343,7 +354,6 @@ class JobStore:
             # mid Stage-2), and PROCESSING must legally reach the target.
             validate_transition(current.state, JobState.PROCESSING)
             validate_transition(JobState.PROCESSING, target)
-            self.mark_processing(job_id)
             conn.execute(
                 "UPDATE jobs SET state = ?, updated_at = ?, error_code = ?, "
                 "review_reason = ? WHERE job_id = ?",
@@ -355,9 +365,11 @@ class JobStore:
                     job_id,
                 ),
             )
-            conn.commit()
+            conn.execute("COMMIT")
         finally:
-            conn.close()
+            conn.close()  # rolls back if we raised before COMMIT
+        # Marker handling stays outside the DB transaction (filesystem I/O must not
+        # be held under the WAL write lock); the resting state is already committed.
         self.clear_processing(job_id)
         return JobRecord(
             job_id=job_id,
