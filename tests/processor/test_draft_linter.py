@@ -71,7 +71,9 @@ def _good_draft(**overrides) -> Draft:
         event_body="華山文創園區本週末舉辦美食市集。現場有上百個攤位提供各式小吃與飲料。",
         image_sections=[MediaSection(asset_ref="img/a.jpg", caption="攤位")],
         faq=[FaqItem(question="要錢嗎？", answer="現場有上百個攤位提供各式小吃與飲料")],
-        summary="不容錯過的週末活動。",
+        # summary is now grounded (Unit 1 / D1: copywriter summary is checked) —
+        # a verbatim source line keeps this "good" fixture passing grounding.
+        summary="主辦單位預估將吸引大量人潮前往參觀。",
         tags=["美食", "市集", "華山"],
         keywords=["美食"],
         category="美食",

@@ -121,3 +121,64 @@ def test_apply_copy_never_drops_captions_when_fewer_refs():
     assert [s.caption for s in out.image_sections] == ["c1", "c2", "c3"]
     assert out.image_sections[0].asset_ref == "images/a.jpg"
     assert out.image_sections[1].asset_ref is None
+
+
+# --- Unit 1 (B0 fix): generate the orphaned required sections -----------------
+
+_OUTPUT_FULL = (
+    "SUBHEAD: 事件起因\n"
+    "CAPTION: 现场画面显示当事人离开\n"
+    "QUICKFACT: 当事人上周离开现场\n"
+    "QUICKFACT: 警方已介入调查\n"
+    "SUMMARY: 事件仍在发展中，本站将持续跟进。\n"
+    "TAG: 社会\n"
+    "TAG: 调查\n"
+    "TAG: 现场\n"
+    "FAQ_Q: 这件事什么时候发生\n"
+    "FAQ_A: 据报道发生在上周\n"
+    "TITLE: 某事件最新进展整理\n"
+)
+
+
+def test_generates_quick_facts_summary_tags(with_key):
+    client = LlmClient(_config(), client_factory=_Stub(_OUTPUT_FULL).factory)
+    res = copywriter.generate_structural_copy("some source text", client)
+    assert res.quick_facts == ["当事人上周离开现场", "警方已介入调查"]
+    assert res.summary == "事件仍在发展中，本站将持续跟进。"
+    assert res.tags == ["社会", "调查", "现场"]
+
+
+def test_tags_trimmed_to_five_and_hype_stripped(with_key):
+    # >5 tags + a hype tag: trimmed to <=5 and the hype tag dropped during parse,
+    # so lint stays clean deterministically (plan D0 resolution).
+    out = "".join(f"TAG: 标签{i}\n" for i in range(7)) + "TAG: 震驚內幕\n"
+    client = LlmClient(_config(), client_factory=_Stub(out).factory)
+    res = copywriter.generate_structural_copy("src", client)
+    assert len(res.tags) <= 5
+    assert all("震驚" not in t for t in res.tags)
+
+
+def test_multiple_summary_lines_joined(with_key):
+    out = "SUMMARY: 第一句。\nSUMMARY: 第二句。\n"
+    client = LlmClient(_config(), client_factory=_Stub(out).factory)
+    res = copywriter.generate_structural_copy("src", client)
+    assert "第一句" in res.summary and "第二句" in res.summary
+
+
+def test_apply_copy_populates_quick_facts_summary_tags():
+    draft = Draft(title="t", intro="i", event_body="b")
+    res = copywriter.CopyResult(
+        quick_facts=["qf1", "qf2"], summary="结尾段落", tags=["a", "b", "c"],
+    )
+    out = copywriter.apply_copy_to_draft(draft, res)
+    assert out.quick_facts == ["qf1", "qf2"]
+    assert out.summary == "结尾段落"
+    assert out.tags == ["a", "b", "c"]
+    # input not mutated
+    assert draft.quick_facts == [] and draft.summary == "" and draft.tags == []
+
+
+def test_apply_copy_keeps_existing_summary_when_copy_summary_empty():
+    draft = Draft(title="t", intro="i", event_body="b", summary="原有结尾")
+    out = copywriter.apply_copy_to_draft(draft, copywriter.CopyResult(captions=["c"]))
+    assert out.summary == "原有结尾"

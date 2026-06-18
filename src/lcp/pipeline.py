@@ -543,6 +543,9 @@ class Pipeline:
             )
 
         # --- lint + grounding gate ---
+        # Derive has_images from the actual media gate result (D9): image_sections
+        # is required IFF the bundle has images. has_videos stays the caller hint.
+        has_images = bool(media_out.report.get("image_count", 0))
         lint_config = build_lint_config(self.config.content, self.config.categories)
         lint_out = run_draft_lint_gate(
             job_id=job_id,
@@ -553,6 +556,7 @@ class Pipeline:
             audit=self.audit,
             ts=ts,
             has_videos=has_videos,
+            has_images=has_images,
         )
         if lint_out.job_state is not None:
             return ProcessResult(
