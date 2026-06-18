@@ -420,6 +420,7 @@ def resolve(
         # Re-lint path: the human cleared grounding; lint must re-run clean.
         from ..storage.draft_store import _read_source_text, load_draft
         from ..processor.draft_linter import build_lint_config, relint_clears_hold
+        from ..processor.media_checker import media_presence
 
         draft = load_draft(store, job_id)
         if draft is None:
@@ -427,6 +428,12 @@ def resolve(
                 f"no processed draft for {job_id}; cannot re-lint to resolve"
             )
         lint_config = build_lint_config(config.content, config.categories)
+        # Re-lint must apply the SAME media-conditional section rules the first
+        # lint would have (D9): image_sections is required IFF the bundle has
+        # images. Recover (has_images, has_videos) from the persisted media
+        # report — without this the relint defaults both False and silently
+        # never requires image_sections for an image-bearing job (fail-open).
+        has_images, has_videos = media_presence(store, job_id)
         # The processor owns the lint PASS/refuse verdict (returns a bool);
         # signoff keeps the operator-facing refusal + the state transition. The
         # single LINT_GATE audit event (actor=reviewer) is emitted inside.
@@ -437,6 +444,8 @@ def resolve(
             lint_config=lint_config,
             audit=audit,
             ts=ts,
+            has_videos=has_videos,
+            has_images=has_images,
             actor=reviewer,
         )
         if not cleared:

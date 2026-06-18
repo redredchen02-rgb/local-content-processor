@@ -157,7 +157,11 @@ def _parse(text: str) -> CopyResult:
         subheads=subheads,
         title_candidates=titles,
         quick_facts=quick_facts,
-        summary="".join(summary_lines),
+        # Join with a newline (not ""): grounding's _sentences splits on \n, so
+        # each SUMMARY line stays a SEPARATE claim and is grounded individually —
+        # "".join would merge two lines into one claim that could pass overlap as
+        # an ungrounded synthesis (adversarial review).
+        summary="\n".join(summary_lines),
         tags=_clean_tags(raw_tags),
     )
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 import json as _json
 import sys
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -39,7 +40,7 @@ from .core.models import SourceType
 from .runtime_hardening import apply_hardening
 
 
-def _completion_advisory(state, *, dry_run: bool) -> str | None:
+def _completion_advisory(state: Any, *, dry_run: bool) -> str | None:
     """An operator-facing hint when a run did not reach a packet (Unit 5).
 
     dry-run never calls the LLM, so the copywriter sections stay empty and the

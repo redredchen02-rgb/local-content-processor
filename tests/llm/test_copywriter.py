@@ -165,6 +165,21 @@ def test_multiple_summary_lines_joined(with_key):
     assert "第一句" in res.summary and "第二句" in res.summary
 
 
+def test_summary_lines_stay_separate_claims_for_grounding(with_key):
+    # Two SUMMARY lines WITHOUT sentence terminators must not merge into one
+    # claim (adversarial review): join with a newline so grounding's sentence
+    # split keeps them separate and grounds each individually.
+    from lcp.core.rules.grounding import _split_claims
+    from lcp.core.draft import Draft
+
+    out = "SUMMARY: 當事人上週離開現場\nSUMMARY: 警方已介入調查此事\n"
+    client = LlmClient(_config(), client_factory=_Stub(out).factory)
+    res = copywriter.generate_structural_copy("src", client)
+    assert "\n" in res.summary  # not "".join — sentences stay separable
+    claims = _split_claims(Draft(summary=res.summary))
+    assert "當事人上週離開現場" in claims and "警方已介入調查此事" in claims
+
+
 def test_apply_copy_populates_quick_facts_summary_tags():
     draft = Draft(title="t", intro="i", event_body="b")
     res = copywriter.CopyResult(

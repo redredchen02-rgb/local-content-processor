@@ -47,6 +47,24 @@ class MediaGateOutcome:
     report: dict[str, Any] = field(default_factory=dict)
 
 
+def media_presence(store: JobStore, job_id: str) -> tuple[bool, bool]:
+    """``(has_images, has_videos)`` for a job, read from its persisted media
+    validation report — the SAME counts ``Pipeline.process`` derives ``has_images``
+    from to drive the conditional image/video section lint (D9).
+
+    Used by the resolve/relint path so a re-lint after a grounding hold applies
+    the same media-conditional requirements the first lint would have (otherwise
+    image_sections is silently never required on that path). Returns
+    ``(False, False)`` if the report is absent — a grounding hold always has it
+    (media runs before grounding), so that fallback is a theoretical floor."""
+    path = store.job_dir(job_id) / "processed" / _REPORT_NAME
+    try:
+        report = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return (False, False)
+    return (bool(report.get("image_count", 0)), bool(report.get("video_count", 0)))
+
+
 def _write_0600_json(path: Path, payload: dict[str, Any]) -> None:
     """Atomic 0600 write of the validation report (temp + fsync + chmod-before-
     replace), mirroring the rest of the storage layer."""
