@@ -308,6 +308,8 @@ def test_list_jobs_unknown_state_raises(store, audit):
 
 def test_resolve_state_aliases():
     assert pl.resolve_state("pending") is JobState.REVIEW_PENDING
+    assert pl.resolve_state("published") is JobState.PUBLISHED_RECORDED
+    assert pl.resolve_state("blocked") is JobState.BLOCKED
 
 
 # --- U7: .processing crash-marker reconciliation -----------------------------
@@ -406,8 +408,6 @@ def test_reconcile_via_cli_list_seam(store, audit, tmp_path):
     payload = json.loads(res.output)
     rows = {r["job_id"]: r for r in payload["jobs"]}
     assert rows["j1"]["interrupted"] is True
-    assert pl.resolve_state("published") is JobState.PUBLISHED_RECORDED
-    assert pl.resolve_state("blocked") is JobState.BLOCKED
 
 
 # --- draft persistence: process saves the exact draft, review-packet reads it -
