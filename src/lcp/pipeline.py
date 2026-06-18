@@ -212,27 +212,34 @@ class Pipeline:
         ``crawl_status`` is returned alongside the record so a shell can report it
         without re-deriving the mapping.
 
-        Re-crawl semantics: a fresh crawl is only legal for a brand-new job (no
-        record yet) or one created-but-not-yet-crawled (state NEW). Re-crawling an
-        ALREADY-crawled job has no legal state-machine edge (NEW is the only
-        predecessor of the crawl outcomes; the table has no re-crawl edge and the
-        operator has not asked for one), so we refuse EARLY with an actionable
-        error — before spawning the crawler / writing any bytes — rather than
-        crawling and then having persist_crawl_result reject the transition."""
+        Re-crawl semantics: a fresh crawl is legal for a brand-new job (no record
+        yet), one created-but-not-yet-crawled (state NEW), or a CRAWL_FAILED job
+        (bug_007). A CRAWL_FAILED crawl wrote NO bundle, so re-crawling clobbers
+        nothing, and the state machine's CRAWL_FAILED -> NEW retry edge + the GUI
+        重新抓取 affordance both expect an in-place retry: we reset it to NEW so
+        persist_crawl_result's NEW -> outcome edge is legal. Re-crawling an
+        ALREADY-crawled job (CRAWLED / CRAWLED_WARN / a processed state) WOULD
+        clobber a real bundle and has no retry edge, so we refuse EARLY with an
+        actionable error — before spawning the crawler / writing any bytes."""
         if self.crawler is None:
             raise InputValidationError("no crawler injected for Stage 1")
         existing = self.store.get_job(spec.job_id)
         if existing is None:
             self.store.create_job(spec.job_id, created_at=ts)
+        elif existing.state is JobState.CRAWL_FAILED:
+            # A failed crawl left no bundle to clobber; retry in place by resetting
+            # to NEW (CRAWL_FAILED -> NEW is the state machine's retry edge). Without
+            # this, the documented GUI 重新抓取 path dead-ended — supersede refuses
+            # CRAWL_FAILED too, so the only recovery was delete + a fresh id.
+            self.store.set_state(spec.job_id, JobState.NEW, updated_at=ts)
         elif existing.state is not JobState.NEW:
             # An existing already-crawled job: refuse before any crawl/mutation.
             # Mirrors ingest.py's create_only clobber guard (same intent — never
-            # overwrite an existing bundle in place). The recovery is to delete or
-            # supersede the job first, then crawl into a fresh id.
+            # overwrite an existing bundle in place). The recovery is to delete the
+            # job first, then crawl into a fresh id.
             raise InputValidationError(
                 f"job {spec.job_id} already exists at {existing.state.value}; "
-                "re-crawl is not supported (delete or supersede it first, or use "
-                "a new --job-id)"
+                "re-crawl is not supported (delete it first, or use a new --job-id)"
             )
         bundle: RawJobBundle = self.crawler.crawl(spec)
         target = _CRAWL_STATUS_TO_STATE.get(bundle.job_status, JobState.CRAWL_FAILED)

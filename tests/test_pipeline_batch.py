@@ -150,6 +150,23 @@ def test_stage1_brand_new_job_creates_and_persists(store, audit):
     assert store.get_job("fresh").source_text_sha256 == sha256_text(CLEAN_SOURCE)
 
 
+def test_stage1_recrawl_allowed_for_crawl_failed(store, audit):
+    """bug_007: a CRAWL_FAILED job wrote NO bundle (nothing to clobber), and the
+    state machine (CRAWL_FAILED -> NEW retry edge) + the GUI 重新抓取 affordance both
+    advertise it as retriable. stage1 must allow an in-place re-crawl — reset to NEW
+    then land the fresh outcome — NOT dead-end it the way an already-crawled job is
+    refused (supersede refuses CRAWL_FAILED too, so a refusal would trap the job)."""
+    p = _pipeline(store, audit)
+    store.create_job("jcf", created_at=TS)
+    store.set_state("jcf", JobState.CRAWL_FAILED, updated_at=TS)
+
+    rec = p.stage1(_spec(store, "jcf"), ts=TS).record
+
+    assert rec.state is JobState.CRAWLED  # re-crawl succeeded in place
+    assert (store.job_dir("jcf") / "raw" / "source.txt").exists()
+    assert store.get_job("jcf").source_text_sha256 == sha256_text(CLEAN_SOURCE)
+
+
 # --- dry_run: LLM not called, no external mutation, result flagged ------------
 
 

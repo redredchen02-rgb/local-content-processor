@@ -86,8 +86,8 @@ def cli(ctx, config_path, dry_run, as_json, verbose, quiet, output_dir):
 @click.option("--input", "input_file", default=None, help="URL list file")
 @click.option(
     "--job-id", "job_id", required=True,
-    help="New job id (re-crawling an existing job is refused; "
-    "delete/supersede it first or use a fresh id)",
+    help="New job id (a failed crawl can be retried in place; re-crawling an "
+    "already-crawled job is refused — delete it first or use a fresh id)",
 )
 @click.pass_context
 def crawl(ctx, url, input_file, job_id):
