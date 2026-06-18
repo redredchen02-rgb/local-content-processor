@@ -686,13 +686,12 @@ def test_backfill_url_file_is_atomic(config, store, audit, tmp_path, monkeypatch
 def test_approve_raises_when_draft_json_missing(config, store, audit):
     """F6: approve() with draft=None must raise if load_draft returns None
     (draft.json missing/corrupt), not silently skip the hash binding check."""
-    from lcp.adapters.storage import draft_store
-
     _review_pending_job(store, audit, "ju6")
     # Delete the draft.json to simulate a missing/corrupt draft file.
-    draft_json = store.job_dir("ju6") / "draft.json"
-    if draft_json.exists():
-        draft_json.unlink()
+    # draft.json lives at processed/draft.json inside the job dir.
+    draft_json = store.job_dir("ju6") / "processed" / "draft.json"
+    assert draft_json.exists(), f"expected draft.json at {draft_json}"
+    draft_json.unlink()
 
     with pytest.raises(InputValidationError, match="draft"):
         signoff.approve("ju6", REVIEWER, config=config, store=store, audit=audit, ts=TS)
