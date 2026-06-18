@@ -18,7 +18,7 @@ from lcp.adapters.processor._persist import persist_gate_state
 from lcp.adapters.storage.audit_log import AuditLog
 from lcp.adapters.storage.job_store import JobStore
 from lcp.core.config import Config
-from lcp.core.errors import InputValidationError
+from lcp.core.errors import DependencyError, InputValidationError
 from lcp.core.models import SourceType
 from lcp.core.rules.risk_rules import RiskInput
 from lcp.core.state import JobState
@@ -723,3 +723,112 @@ def test_dry_run_forces_injected_client_to_dry_mode(store, audit):
     assert res.dry_run is True
     if res.draft is not None:
         assert res.draft.executed is False
+
+
+# --- U1 (ADV-001): DependencyError must land job at PROCESS_FAILED ---------------
+
+
+class _DependencyErrorLlm:
+    """Fake LLM client that always raises DependencyError (e.g. missing API key)."""
+
+    model = "fake-model"
+
+    def chat(self, **kwargs: object) -> object:  # type: ignore[override]
+        raise DependencyError("API key not found in keyring")
+
+
+def test_dependency_error_from_llm_lands_process_failed(tmp_path):
+    """ADV-001: a DependencyError (missing API key / bad config) in the assemble
+    gate must NOT escape except-ExternalServiceError — the job must come to rest at
+    PROCESS_FAILED (not stuck at CRAWLED with the interrupt counter never rising)."""
+    store = JobStore(base_dir=tmp_path / "data")
+    audit = AuditLog(tmp_path / "data" / "audit.jsonl")
+    seed_clean_index = _make_seed_clean_index(store)
+    p = pl.Pipeline(
+        Config(), store, audit,
+        crawler=FakeCrawler(), llm_client=_DependencyErrorLlm(),
+    )
+    store.create_job("jd", created_at=TS)
+    store.set_state("jd", JobState.CRAWLED, updated_at=TS)
+    seed_clean_index
+
+    # Must not raise DependencyError to the caller.
+    res = p.process("jd", ts=TS, title="台北美食市集")
+
+    assert res.final_state is JobState.PROCESS_FAILED
+    assert store.get_job("jd").state is JobState.PROCESS_FAILED
+    # Marker must be cleared (process completed Python-level, not a hard crash).
+    assert not store.is_processing("jd")
+
+
+def _make_seed_clean_index(store):
+    """Seed an empty site_index so dedup never blocks."""
+    idx = store.base_dir / "site_index.jsonl"
+    idx.parent.mkdir(parents=True, exist_ok=True)
+    if not idx.exists():
+        idx.write_text("", encoding="utf-8")
+    return str(idx)
+
+
+# --- U1 (ADV-002): NEEDS_REVISION crash must surface in reconcile() --------------
+
+
+def test_reconcile_detects_interrupted_needs_revision_job(store, audit):
+    """ADV-002: a hard crash mid-Stage-2 while the job rests at NEEDS_REVISION must
+    be surfaced by reconcile() as an interrupted job — not silently dropped because
+    NEEDS_REVISION wasn't in RECONCILABLE_STATES."""
+    p = _pipeline(store, audit)
+    _crashed_mid_stage2(store, "jnr", state=JobState.NEEDS_REVISION)
+
+    interrupted = p.reconcile()
+
+    assert len(interrupted) == 1
+    found = interrupted[0]
+    assert found.job_id == "jnr"
+    assert found.state is JobState.NEEDS_REVISION
+    assert found.attempts == 0
+    # The job must NOT be auto-transitioned — operator re-processes deliberately.
+    assert store.get_job("jnr").state is JobState.NEEDS_REVISION
+
+
+# --- U2 (ADV-003): interrupt_count must survive an ExternalServiceError cycle ----
+
+
+class _ExternalServiceErrorLlm:
+    """Fake LLM that always raises ExternalServiceError (LLM 5xx)."""
+
+    model = "fake-model"
+
+    def chat(self, **kwargs: object) -> object:  # type: ignore[override]
+        from lcp.core.errors import ExternalServiceError
+        raise ExternalServiceError("LLM 5xx")
+
+
+def test_interrupt_count_preserved_after_external_service_error(tmp_path):
+    """ADV-003: crash → ExternalServiceError cycle must not reset the interrupt
+    counter. After 1 crash + 1 ExternalServiceError recovery, the counter must
+    still reflect the crash; a subsequent crash reaches max_attempts normally."""
+    store = JobStore(base_dir=tmp_path / "data")
+    audit = AuditLog(tmp_path / "data" / "audit.jsonl")
+    idx = store.base_dir / "site_index.jsonl"
+    idx.parent.mkdir(parents=True, exist_ok=True)
+    idx.write_text("", encoding="utf-8")
+    p = pl.Pipeline(
+        Config(), store, audit,
+        crawler=FakeCrawler(), llm_client=_ExternalServiceErrorLlm(),
+    )
+    store.create_job("jx", created_at=TS)
+    store.set_state("jx", JobState.CRAWLED, updated_at=TS)
+
+    # Simulate a hard crash: the stale marker is still on disk when process() is
+    # called again (that's exactly when _was_crash_entry becomes True).
+    _stale_marker(store, "jx")
+
+    # process() finds the stale marker → bumps counter (0→1), sets _was_crash_entry.
+    # The LLM then raises ExternalServiceError → _raised_service_error = True.
+    # The fix: counter must NOT be cleared (crash count must survive this cycle).
+    res = p.process("jx", ts=TS, title="台北美食市集")
+    assert res.final_state is JobState.PROCESS_FAILED
+
+    # Counter must be >= 1 (bumped by process() on crash-retry entry, not cleared).
+    assert store.read_interrupt_count("jx") >= 1
