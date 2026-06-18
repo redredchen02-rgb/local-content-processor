@@ -21,9 +21,15 @@ mismatch -> refusal). The bound hashes are written into the audit event so the
 sign-off provably covers that exact artifact.
 
 SUPERSEDE: redoing an already-signed (or pending) job is a first-class terminal
-operation. `supersede` moves a supersede-able state (REVIEW_PENDING / APPROVED /
-NEEDS_REVISION) -> SUPERSEDED, voids the old sign-off (audit SIGNOFF_INVALIDATED
-+ SUPERSEDED), and back-links the new job id.
+operation. `supersede` moves a supersede-able state -> SUPERSEDED, voids the old
+sign-off (audit SIGNOFF_INVALIDATED + SUPERSEDED) when there was one, and
+back-links the new job id. It is also the operator RECOVERY seam (U8) for a
+false-terminal job: a DUPLICATE recovers via the ordinary single-step path, while
+a BLOCKED (redline) recovery requires an explicit second confirmation
+(``redline_override=True``) and records a DISTINCT event (REDLINE_OVERRIDE,
+carrying the original blocking RiskCategory codes), never reusing the abandon
+path. SUPERSEDED stays terminal — recovery never reopens the job in place; the
+only way back into review is a brand-new job re-entering at NEW.
 
 PII: the audit stays PII-free — reviewer/OS-user NAMES are operator identifiers
 (not subject PII) and the disclaimer/url-recorded flag carry no scraped text.
@@ -39,7 +45,9 @@ from ...core.config import Config
 from ...core.draft import Draft
 from ...core.errors import InputValidationError
 from ...core.state import JobState, ReviewReason
+from ..processor.risk_checker import EVENT_RISK_GATE
 from ..storage.audit_log import (
+    EVENT_REDLINE_OVERRIDE,
     EVENT_SIGNOFF_INVALIDATED,
     EVENT_SUPERSEDED,
     AuditLog,
@@ -70,14 +78,29 @@ DISCLAIMER = (
 # purpose: an already-signed job can be re-done, voiding the old sign-off (plan).
 # NEEDS_HUMAN_REVIEW is included so a held job can be re-done instead of being
 # stuck (the state machine carries the matching edge).
+#
+# BLOCKED / DUPLICATE were added (U8) so an operator can RECOVER a false-terminal
+# job. The state-table edge alone is NOT enough — `supersede` independently
+# refuses any source state not in this frozenset, so both must be widened in
+# lockstep. (Regression guard test: dropping these two from the set must make a
+# BLOCKED supersede refuse again, even with the state edge present.)
 _SUPERSEDABLE = frozenset(
     {
         JobState.REVIEW_PENDING,
         JobState.APPROVED,
         JobState.NEEDS_REVISION,
         JobState.NEEDS_HUMAN_REVIEW,
+        JobState.BLOCKED,
+        JobState.DUPLICATE,
     }
 )
+
+# Source states that carry a REAL prior sign-off. Only these emit
+# SIGNOFF_INVALIDATED on supersede — a BLOCKED/DUPLICATE (and the held NEEDS_*
+# states) were never signed off, so emitting "void the old sign-off" for them
+# would be a FALSE audit statement (U8). The pre-existing supersede sources
+# keep their behavior; only the newly-added recovery sources are excluded.
+_NEVER_SIGNED_OFF = frozenset({JobState.BLOCKED, JobState.DUPLICATE})
 
 
 @dataclass(frozen=True)
@@ -527,6 +550,27 @@ def backfill_published_url(
     return JobState.PUBLISHED_RECORDED
 
 
+def _blocking_reason_codes(audit: AuditLog, job_id: str) -> list[str]:
+    """Original redline RiskCategory CODES for a BLOCKED job, from the audit.
+
+    The blocking reasons live transiently on ``RiskResult.flags`` and are NOT
+    persisted in the jobs table, so we recover them from the prior RISK_GATE
+    audit event (which records ``flag_categories`` — enum codes only, already
+    PII-free). Returns CODES ONLY (never the free-text flag reason, which could
+    carry a matched snippet), so the override audit stays PII-free. Degrades
+    gracefully to ``[]`` if the event or its codes are not recoverable — the
+    override is recorded either way; it never hard-fails on a missing source
+    event."""
+    codes: list[str] = []
+    for line in audit.iter_events():
+        if line.get("job_id") != job_id or line.get("event") != EVENT_RISK_GATE:
+            continue
+        cats = line.get("extra", {}).get("flag_categories")
+        if isinstance(cats, list):
+            codes = [c for c in cats if isinstance(c, str)]  # last gate wins
+    return codes
+
+
 def supersede(
     job_id: str,
     *,
@@ -535,15 +579,32 @@ def supersede(
     ts: str,
     new_job_id: str | None = None,
     actor: str = "human",
+    redline_override: bool = False,
 ) -> JobState:
-    """Supersede a supersede-able job: -> SUPERSEDED (terminal), voiding any
-    existing sign-off.
+    """Supersede a supersede-able job: -> SUPERSEDED (terminal).
 
-    Legal sources: REVIEW_PENDING / APPROVED / NEEDS_REVISION (the state machine
-    is the real gate — it raises for anything else). Writes SIGNOFF_INVALIDATED
-    (the old approval no longer stands) and SUPERSEDED (with a back-link to the
-    new job id, if given). The new job itself is created by the caller/pipeline;
-    this only records the supersession + link."""
+    Two distinct paths share this seam:
+
+    * ORDINARY ABANDON (REVIEW_PENDING / APPROVED / NEEDS_REVISION /
+      NEEDS_HUMAN_REVIEW / DUPLICATE): a single-step operator action. Writes
+      SUPERSEDED (with a back-link to the new job id, if given). SIGNOFF_INVALIDATED
+      is emitted ONLY for source states that carried a real prior sign-off
+      (REVIEW_PENDING / APPROVED) — a never-signed-off source (e.g. DUPLICATE)
+      does NOT get it, since "void the old sign-off" would be a false statement.
+
+    * REDLINE OVERRIDE (BLOCKED): recovering a terminal-redline job is a heavier,
+      separately-confirmed action. It REQUIRES ``redline_override=True`` (the
+      operator's explicit second confirmation — CLI ``--redline-override`` / a
+      dedicated GUI dialog; a BLOCKED supersede without it is refused) and emits a
+      DISTINCT event TYPE (EVENT_REDLINE_OVERRIDE, not EVENT_SUPERSEDED) carrying
+      the original blocking RiskCategory codes. No SIGNOFF_INVALIDATED (a BLOCKED
+      job was never signed off).
+
+    ``actor`` should be the OBSERVED OS user (the shells pass
+    ``observed_os_user()``); the ``"human"`` literal default is a last resort.
+    The state machine is the real source-state gate — it raises for any state
+    without a legal edge to SUPERSEDED. The new job itself is created by the
+    caller/pipeline; this only records the supersession + link."""
     record = store.get_job(job_id)
     if record is None:
         raise InputValidationError(f"unknown job: {job_id}")
@@ -553,17 +614,48 @@ def supersede(
             f"{sorted(s.value for s in _SUPERSEDABLE)} may be superseded"
         )
 
-    # Void the old sign-off first (it no longer stands).
-    audit.append(
-        ts=ts,
-        stage="signoff",
-        event=EVENT_SIGNOFF_INVALIDATED,
-        job_id=job_id,
-        actor=actor,
-        extra={"superseded_from_state": record.state.value},
-    )
+    is_redline = record.state is JobState.BLOCKED
+    # A redline override is a deliberate, separately-confirmed action: refuse a
+    # BLOCKED supersede that did not pass the second confirmation. (DUPLICATE is
+    # not a redline state, so it takes the ordinary single-step path.)
+    if is_redline and not redline_override:
+        raise InputValidationError(
+            f"recovering a BLOCKED (redline) job ({job_id}) requires an explicit "
+            "redline override (a second confirmation); the ordinary abandon path "
+            "may not be reused for a redline state"
+        )
+
+    # Void the old sign-off ONLY when there was one (never for a state that was
+    # never signed off — emitting it would be a false audit statement, U8).
+    if record.state not in _NEVER_SIGNED_OFF:
+        audit.append(
+            ts=ts,
+            stage="signoff",
+            event=EVENT_SIGNOFF_INVALIDATED,
+            job_id=job_id,
+            actor=actor,
+            extra={"superseded_from_state": record.state.value},
+        )
 
     store.set_state(job_id, JobState.SUPERSEDED, updated_at=ts)
+
+    if is_redline:
+        # Distinct event TYPE for the redline override, carrying the original
+        # blocking RiskCategory codes (PII-free) so it is auditably distinct from
+        # a routine abandon.
+        audit.append(
+            ts=ts,
+            stage="signoff",
+            event=EVENT_REDLINE_OVERRIDE,
+            job_id=job_id,
+            actor=actor,
+            extra={
+                "superseded_from_state": record.state.value,
+                "blocking_reasons": _blocking_reason_codes(audit, job_id),
+                "new_job_id": new_job_id,
+            },
+        )
+        return JobState.SUPERSEDED
 
     audit.append(
         ts=ts,

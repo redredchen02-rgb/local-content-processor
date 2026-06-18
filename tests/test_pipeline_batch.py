@@ -430,6 +430,41 @@ def test_process_truncated_draft_short_circuits_needs_revision(store, audit, mon
     assert not store.is_processing("jt")
 
 
+def test_reprocess_needs_revision_job_via_widened_entry_guard(store, audit):
+    """U8: a NEEDS_REVISION job can be re-run in place (NEEDS_REVISION ->
+    PROCESSING -> target). The state-machine edge was already live + wired in
+    web/lex.js, but pipeline.process's entry guard used to reject NEEDS_REVISION,
+    so the edge was unreachable. Widening the guard makes the re-run work."""
+    from lcp.adapters.llm.client import ChatResult
+
+    _clean_index(store)
+    # First pass: a truncated draft parks the job at NEEDS_REVISION.
+    truncated = ChatResult(
+        text="partial...", finish_reason="length", model="fake-model",
+        needs_revision=True, revision_reason="truncated:length", executed=True,
+    )
+    p1 = pl.Pipeline(
+        Config(), store, audit,
+        crawler=FakeCrawler(), llm_client=_FakeChatClient(result=truncated),
+    )
+    p1.stage1(_spec(store, "jrev"), ts=TS)
+    res1 = p1.process("jrev", ts=TS, title="台北華山美食市集週末熱鬧登場")
+    assert res1.final_state is JobState.NEEDS_REVISION
+    assert store.get_job("jrev").state is JobState.NEEDS_REVISION
+
+    # Re-process the same NEEDS_REVISION job (a dry run avoids needing a healthy
+    # LLM) — the widened entry guard must ACCEPT NEEDS_REVISION, not raise.
+    p2 = _pipeline(store, audit, dry_run=True)
+    res2 = p2.process("jrev", ts=TS, title="台北華山美食市集週末熱鬧登場")
+    # It actually entered Stage 2 (a legal resting state was reached), not the
+    # entry-guard refusal — and never left a .processing marker.
+    assert res2.final_state in (
+        JobState.PROCESSED, JobState.NEEDS_HUMAN_REVIEW, JobState.NEEDS_REVISION,
+        JobState.BLOCKED, JobState.DUPLICATE,
+    )
+    assert not store.is_processing("jrev")
+
+
 # --- LLM 5xx mid-process -> PROCESS_FAILED (retriable), marker cleared --------
 
 

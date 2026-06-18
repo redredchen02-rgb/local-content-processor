@@ -450,17 +450,29 @@ class Api:
         }
 
     @bridge_safe
-    def supersede(self, job_id: str, new_job_id: str | None = None) -> dict:
-        """Mirror `supersede`: REVIEW_PENDING/APPROVED/NEEDS_REVISION ->
-        SUPERSEDED, voiding the old sign-off and back-linking the new job."""
+    def supersede(
+        self,
+        job_id: str,
+        new_job_id: str | None = None,
+        redline_override: bool = False,
+    ) -> dict:
+        """Mirror CLI `supersede` (the recovery seam too, U8): -> SUPERSEDED.
+
+        Ordinary abandon and recovering a false-terminal DUPLICATE are
+        single-step. Recovering a BLOCKED (redline) job requires
+        ``redline_override=True`` — the dedicated GUI redline dialog passes it;
+        the plain `supersedeRow` path does not, so a BLOCKED supersede via the
+        ordinary button is refused. The actor recorded is the OBSERVED OS user."""
         c = self._ctx()
         new_state = signoff.supersede(
             job_id, store=c.store, audit=c.audit, ts=_now(), new_job_id=new_job_id,
+            actor=signoff.observed_os_user(), redline_override=bool(redline_override),
         )
         return {
             "job_id": escape_html(job_id),
             "state": new_state.value,
             "new_job_id": escape_html(new_job_id) if new_job_id else None,
+            "redline_override": bool(redline_override),
         }
 
     # --- Worklist + home counts (G7) -----------------------------------------

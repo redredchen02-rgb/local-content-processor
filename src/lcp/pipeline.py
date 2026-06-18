@@ -64,6 +64,15 @@ RECONCILABLE_STATES: frozenset[JobState] = frozenset(
     {JobState.CRAWLED, JobState.CRAWLED_WARN, JobState.PROCESS_FAILED}
 )
 
+# States where a stale .processing marker is a crash-between-COMMIT-and-clear
+# leftover that reconciliation only CLEARS (never reopens): the truly-terminal
+# states PLUS BLOCKED/DUPLICATE. The latter two are gate resting states that U8
+# moved out of TERMINAL_STATES (they gained an operator-only recovery edge), so
+# they must be named explicitly here or their crash-leftover markers would leak.
+_MARKER_ONLY_CLEAR_STATES: frozenset[JobState] = TERMINAL_STATES | frozenset(
+    {JobState.BLOCKED, JobState.DUPLICATE}
+)
+
 # Crash-attempt cap before a deterministically-crashing job is flagged exhausted
 # (surfaced to a human) instead of being treated as routinely re-processable.
 DEFAULT_MAX_INTERRUPT_ATTEMPTS = 3
@@ -256,13 +265,18 @@ class Pipeline:
         if record is None:
             raise InputValidationError(f"unknown job: {job_id}")
         # PROCESS_FAILED is a legal entry too: a failed (e.g. LLM 5xx) run is
-        # retriable (PROCESS_FAILED -> PROCESSING -> ...).
+        # retriable (PROCESS_FAILED -> PROCESSING -> ...). NEEDS_REVISION is a
+        # legal entry as well (U8): the operator re-runs a revised job in place
+        # (NEEDS_REVISION -> PROCESSING -> target — the persist seam validates
+        # that canonical edge; the edge is also wired in web/lex.js). Without
+        # this the live NEEDS_REVISION -> PROCESSING edge was unreachable.
         if record.state not in (
-            JobState.CRAWLED, JobState.CRAWLED_WARN, JobState.PROCESS_FAILED
+            JobState.CRAWLED, JobState.CRAWLED_WARN, JobState.PROCESS_FAILED,
+            JobState.NEEDS_REVISION,
         ):
             raise InputValidationError(
-                f"process requires CRAWLED/CRAWLED_WARN/PROCESS_FAILED; {job_id} "
-                f"is {record.state.value}"
+                f"process requires CRAWLED/CRAWLED_WARN/PROCESS_FAILED/"
+                f"NEEDS_REVISION; {job_id} is {record.state.value}"
             )
 
         # Mark the job mid-Stage-2 (transient PROCESSING) so a crash is
@@ -658,9 +672,13 @@ class Pipeline:
                         exhausted=attempts > max_attempts,
                     )
                 )
-            elif rec.state in TERMINAL_STATES:
+            elif rec.state in _MARKER_ONLY_CLEAR_STATES:
                 # Crash between COMMIT and clear_processing: the resting state is
                 # already correct; just drop the stale marker (never reopen).
+                # BLOCKED/DUPLICATE are included explicitly: U8 moved them OUT of
+                # TERMINAL_STATES (they now carry an operator-only recovery edge),
+                # but a stale marker on them is still a crash leftover to clear,
+                # NOT a reopen — reconciliation must never auto-recover them.
                 self.store.clear_processing(rec.job_id)
             # Any other state with a marker (e.g. a persisted PROCESSING is
             # impossible — it is transient) is left untouched: we neither flag nor

@@ -37,6 +37,14 @@ GENESIS_HASH = "0" * 64
 EVENT_ERASURE = "ERASURE"
 EVENT_SIGNOFF_INVALIDATED = "SIGNOFF_INVALIDATED"
 EVENT_SUPERSEDED = "SUPERSEDED"
+# An operator recovered a terminal-redline BLOCKED job to SUPERSEDED (U8). This
+# is a SEPARATE event TYPE from EVENT_SUPERSEDED (not merely a tagged extra) so a
+# redline override is distinguishable by type in the audit. It carries the
+# original blocking RiskCategory CODES only (never the free-text flag reason) so
+# the audit stays PII-free. A heavier action than the ordinary abandon: it
+# requires the operator's explicit second confirmation (CLI --redline-override /
+# a dedicated GUI dialog).
+EVENT_REDLINE_OVERRIDE = "REDLINE_OVERRIDE"
 # A crash left a .processing marker on a non-terminal job; reconciliation surfaced
 # it for explicit operator re-process (U7). PII-free: job_id + a crash-attempt count.
 EVENT_INTERRUPTED_DETECTED = "INTERRUPTED_DETECTED"

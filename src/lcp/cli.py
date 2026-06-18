@@ -346,17 +346,29 @@ def backfill(ctx, job_id, reviewer, url, attest):
 @click.option("--job-id", "job_id", required=True)
 @click.option("--new-job-id", "new_job_id", default=None,
               help="Back-link to the replacement job, if created")
+@click.option("--redline-override/--no-redline-override", "redline_override",
+              default=False,
+              help="REQUIRED second confirmation to recover a BLOCKED (redline) "
+                   "job. Without it a BLOCKED supersede is refused. Records a "
+                   "distinct REDLINE_OVERRIDE audit event (mirrors --attest).")
 @click.pass_context
-def supersede(ctx, job_id, new_job_id):
-    """Supersede a REVIEW_PENDING/APPROVED/NEEDS_REVISION job: -> SUPERSEDED.
+def supersede(ctx, job_id, new_job_id, redline_override):
+    """Supersede a supersede-able job: -> SUPERSEDED (also the recovery seam).
 
-    Voids the old sign-off (SIGNOFF_INVALIDATED) and back-links the new job."""
+    Ordinary abandon (REVIEW_PENDING/APPROVED/NEEDS_REVISION/NEEDS_HUMAN_REVIEW)
+    and recovering a false-terminal DUPLICATE are single-step. Recovering a
+    BLOCKED (redline) job requires --redline-override (a deliberate second
+    confirmation, never an interactive prompt — it would hang on piped stdin) and
+    records a distinct REDLINE_OVERRIDE event with the original blocking reasons.
+    The actor recorded is the OBSERVED OS user, not a literal default."""
     c = Ctx(ctx.obj)
     new_state = signoff.supersede(
         job_id, store=c.store, audit=c.audit, ts=_now(), new_job_id=new_job_id,
+        actor=signoff.observed_os_user(), redline_override=redline_override,
     )
     c.emit(
-        {"job_id": job_id, "state": new_state.value, "new_job_id": new_job_id},
+        {"job_id": job_id, "state": new_state.value, "new_job_id": new_job_id,
+         "redline_override": bool(redline_override)},
         human=f"superseded {job_id}: {new_state.value}",
     )
 

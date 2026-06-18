@@ -207,6 +207,50 @@ def test_approve_blocked_refused(tmp_path):
     assert store.get_job("jb").state is JobState.BLOCKED
 
 
+def test_gui_blocked_recovery_requires_override(tmp_path):
+    """U8 GUI parity: a BLOCKED supersede via the bridge is REFUSED without the
+    override gesture (the plain supersedeRow path), and SUCCEEDS with it (the
+    dedicated redline dialog passes redline_override=True)."""
+    base = str(tmp_path)
+    from lcp.adapters.processor._persist import persist_gate_state
+    from lcp.adapters.storage.job_store import JobStore
+
+    store = JobStore(base_dir=base)
+    ts = "2026-06-16T00:00:00Z"
+    store.create_job("jb", created_at=ts)
+    store.set_state("jb", JobState.CRAWLED, updated_at=ts)
+    persist_gate_state(store, "jb", JobState.BLOCKED, updated_at=ts)
+
+    api = _api(tmp_path, base)
+    # plain supersede (no override) -> refused, state unchanged.
+    refused = api.supersede("jb")
+    assert "error" in refused
+    assert store.get_job("jb").state is JobState.BLOCKED
+    # dedicated redline dialog passes redline_override=True -> recovered.
+    ok = api.supersede("jb", None, True)
+    assert ok["state"] == JobState.SUPERSEDED.value
+    assert store.get_job("jb").state is JobState.SUPERSEDED
+
+
+def test_gui_duplicate_recovery_is_single_step(tmp_path):
+    """U8 GUI parity: a false-terminal DUPLICATE recovers via the ordinary
+    single-step supersede (no override needed)."""
+    base = str(tmp_path)
+    from lcp.adapters.processor._persist import persist_gate_state
+    from lcp.adapters.storage.job_store import JobStore
+
+    store = JobStore(base_dir=base)
+    ts = "2026-06-16T00:00:00Z"
+    store.create_job("jd", created_at=ts)
+    store.set_state("jd", JobState.CRAWLED, updated_at=ts)
+    persist_gate_state(store, "jd", JobState.DUPLICATE, updated_at=ts)
+
+    api = _api(tmp_path, base)
+    ok = api.supersede("jd")
+    assert ok["state"] == JobState.SUPERSEDED.value
+    assert store.get_job("jd").state is JobState.SUPERSEDED
+
+
 def test_api_approve_rejects_body_tampered_after_freeze(tmp_path):
     """P1 regression: Api.approve (no draft= arg) must load the persisted draft
     and re-verify the frozen body hash. Overwriting draft.json after freeze ->

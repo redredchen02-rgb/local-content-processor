@@ -770,9 +770,33 @@ function supersedeRow() {
       body.appendChild(labeled("新 job id：", inp));
     },
     "确定作废",
+    // Ordinary single-step abandon — never carries the redline override.
     async function () { const a = api(); if (!a) return; afterAction(await a.supersede(currentJobId, inp.value || null), "已作废"); }
   );
   row.appendChild(el("span", "作废："));
+  row.appendChild(tray);
+  return row;
+}
+
+// A DEDICATED dialog for recovering a false-terminal BLOCKED (redline) job —
+// deliberately NOT the plain supersedeRow path. It passes redline_override=true
+// (the operator's second confirmation, U8); the backend refuses a BLOCKED
+// supersede that lacks it. A correctly-blocked job can also be abandoned here on
+// the single-trusted-operator threat model — the override is the gate, and it is
+// audited as a distinct REDLINE_OVERRIDE event.
+function supersedeRedlineRow() {
+  const row = el("div"); row.className = "action-row";
+  const inp = textInput("接手的新 job id（可留空）");
+  const tray = confirmTray("红线作废（误判覆写）", "btn-danger",
+    function (body) {
+      body.appendChild(el("p", "此工作命中红线。仅在你确认是误判时才作废——这是一次会留痕的「红线覆写」，无法复原。"));
+      body.appendChild(el("p", "作废后须另开全新工作，重新跑完整风险／查重／校验链；不会就地恢复。"));
+      body.appendChild(labeled("新 job id：", inp));
+    },
+    "我确认误判，红线覆写作废",
+    async function () { const a = api(); if (!a) return; afterAction(await a.supersede(currentJobId, inp.value || null, true), "已红线覆写作废"); }
+  );
+  row.appendChild(el("span", "红线作废："));
   row.appendChild(tray);
   return row;
 }
@@ -864,6 +888,10 @@ function buildActionRow(act, reviewers, reason) {
 
   if (act.method === "supersede") {
     return supersedeRow();
+  }
+
+  if (act.method === "supersedeRedline") {
+    return supersedeRedlineRow();
   }
 
   if (act.method === "backfill") {

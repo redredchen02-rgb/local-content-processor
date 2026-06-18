@@ -101,17 +101,34 @@ def test_state_actions_domain_equals_jobstate():
 
 
 def test_terminal_states_have_zero_actions():
-    """fail-closed: blocked/duplicate and the other terminals expose NO buttons
-    (no 'approve anyway')."""
+    """fail-closed: the truly-terminal states expose NO buttons (no
+    'approve anyway')."""
     sa = _state_actions()
     for st in (
-        JobState.BLOCKED,
-        JobState.DUPLICATE,
         JobState.REJECTED,
         JobState.SUPERSEDED,
         JobState.PUBLISHED_RECORDED,
     ):
         assert sa[st.value] == [], f"{st.value} must have no actions"
+
+
+def test_blocked_duplicate_expose_only_recovery_actions():
+    """U8: BLOCKED/DUPLICATE now expose a single OPERATOR-RECOVERY action that
+    routes only to SUPERSEDED — never an 'approve anyway' / process / reopen
+    button. BLOCKED uses the dedicated redline-override gesture (distinct from the
+    plain single-step supersede); DUPLICATE uses the ordinary supersede."""
+    sa = _state_actions()
+    blocked_methods = [a["method"] for a in sa[JobState.BLOCKED.value]]
+    dup_methods = [a["method"] for a in sa[JobState.DUPLICATE.value]]
+    # Exactly the recovery action, nothing that could reopen the job.
+    assert blocked_methods == ["supersedeRedline"]
+    assert dup_methods == ["supersede"]
+    # Anti-laundering at the UI layer too: no path back into the pipeline.
+    for methods in (blocked_methods, dup_methods):
+        assert "process" not in methods
+        assert "approve" not in methods
+    # The blocked dialog must NOT reuse the plain single-step supersede.
+    assert "supersede" not in blocked_methods
 
 
 def test_needs_revision_has_no_reject_action():

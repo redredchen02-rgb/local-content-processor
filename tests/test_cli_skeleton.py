@@ -184,6 +184,41 @@ def test_cli_resolve_drives_nhr_to_processed(tmp_path):
     assert store.get_job("jn").state is JobState.PROCESSED
 
 
+def test_cli_blocked_recovery_requires_redline_override(tmp_path):
+    """U8 CLI parity: a BLOCKED supersede WITHOUT --redline-override is refused
+    (exit 2); WITH it the job recovers to SUPERSEDED. A DUPLICATE needs only the
+    ordinary supersede (no flag)."""
+    from lcp.adapters.processor._persist import persist_gate_state
+    from lcp.adapters.storage.job_store import JobStore
+    from lcp.core.state import JobState
+
+    base = str(tmp_path)
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {"storage": {"base_dir": base}, "publisher": {"reviewers": ["alice"]}}
+        ),
+        encoding="utf-8",
+    )
+    ts = "2026-06-16T00:00:00Z"
+    store = JobStore(base_dir=base)
+    for jid, st in (("jb", JobState.BLOCKED), ("jd", JobState.DUPLICATE)):
+        store.create_job(jid, created_at=ts)
+        store.set_state(jid, JobState.CRAWLED, updated_at=ts)
+        persist_gate_state(store, jid, st, updated_at=ts)
+
+    # BLOCKED without the override flag -> refused (exit 2), state unchanged.
+    assert main(["--config", str(cfg), "supersede", "--job-id", "jb"]) == EXIT_INPUT
+    assert store.get_job("jb").state is JobState.BLOCKED
+    # BLOCKED with --redline-override -> recovered.
+    assert main(["--config", str(cfg), "supersede", "--job-id", "jb",
+                 "--redline-override"]) == EXIT_OK
+    assert store.get_job("jb").state is JobState.SUPERSEDED
+    # DUPLICATE needs only the ordinary single-step supersede.
+    assert main(["--config", str(cfg), "supersede", "--job-id", "jd"]) == EXIT_OK
+    assert store.get_job("jd").state is JobState.SUPERSEDED
+
+
 def test_review_packet_without_draft_is_usage_error(tmp_path):
     base = str(tmp_path)
     from lcp.adapters.storage.job_store import JobStore
