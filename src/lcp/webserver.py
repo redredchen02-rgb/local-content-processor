@@ -223,8 +223,17 @@ class _Server(ThreadingHTTPServer):
         # The ACTUAL bound port (0 -> ephemeral) drives the Host allowlist.
         self.public_port: int = self.server_address[1]
         self.routes: frozenset[str] = public_routes(type(api))
-        self.inflight: set[str] = set()
-        self.inflight_lock = threading.Lock()
+        # inflight registry is owned by Api so _run_bg (async) and the sync
+        # handler share the same set. Expose via properties so all existing
+        # server.inflight / server.inflight_lock references need no changes.
+
+    @property
+    def inflight(self) -> set[str]:
+        return self.api.inflight  # type: ignore[no-any-return]
+
+    @property
+    def inflight_lock(self) -> threading.Lock:
+        return self.api.inflight_lock  # type: ignore[no-any-return]
 
 
 def build_server(api: Any, *, token: str, port: int) -> _Server:
