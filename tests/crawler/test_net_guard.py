@@ -238,6 +238,50 @@ def test_default_resolver_restores_default_timeout(monkeypatch):
     assert seen["values"][-1] is sentinel
 
 
+def test_default_resolver_serializes_concurrent_callers(monkeypatch):
+    """bug_004: setdefaulttimeout() is PROCESS-GLOBAL, so two GUI background-thread
+    crawls racing the get/set/restore window would either defeat the DoS bound for
+    one caller or leak it process-wide. The bound section must be serialized (a
+    module lock), so concurrent callers never overlap inside getaddrinfo and every
+    call observes the bound — never None."""
+    import threading
+    import time
+
+    counter_lock = threading.Lock()
+    inside = 0
+    max_inside = 0
+    observed: list[float | None] = []
+
+    def fake_getaddrinfo(host, *args, **kwargs):
+        nonlocal inside, max_inside
+        with counter_lock:
+            inside += 1
+            max_inside = max(max_inside, inside)
+        observed.append(socket.getdefaulttimeout())  # must be the bound, not None
+        time.sleep(0.05)  # widen the window so an unguarded section would overlap
+        with counter_lock:
+            inside -= 1
+        return [(0, 0, 0, "", ("93.184.216.34", 0))]
+
+    monkeypatch.setattr(net_guard.socket, "getaddrinfo", fake_getaddrinfo)
+
+    threads = [
+        threading.Thread(target=net_guard.default_resolver, args=("example.com",))
+        for _ in range(4)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # Serialized: never two callers inside the bounded section at once.
+    assert max_inside == 1
+    # Every call ran with the bound applied (no caller saw an un-set/None default).
+    assert observed and all(v == net_guard.DNS_RESOLVE_TIMEOUT_SECONDS for v in observed)
+    # And the process-wide default is restored after all callers finish.
+    assert socket.getdefaulttimeout() is None
+
+
 def test_default_resolver_non_timeout_oserror_stays_input_error(monkeypatch):
     """A non-timeout DNS failure (e.g. NXDOMAIN) stays an InputValidationError —
     only a true timeout is reclassified as a retriable external failure."""
