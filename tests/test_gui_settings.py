@@ -14,7 +14,7 @@ import yaml
 import lcp.adapters.storage.config_io as config_io
 import lcp.core.config as config
 from lcp.core.errors import InputValidationError
-from lcp.gui import Api, _gui_debug_enabled
+from lcp.gui import Api
 
 SECRET = "sk-test-DO-NOT-PERSIST-0123456789abcdef"
 BASE = "https://la-sealion.example.com/v1"
@@ -295,24 +295,7 @@ def test_index_html_settings_panel_has_no_inline_handlers():
     assert "onclick" not in html
 
 
-# --- Web Inspector opt-in: ships OFF by default (U17) -------------------------
-
-
-def test_gui_debug_disabled_by_default(monkeypatch):
-    # Production GUI must ship with DevTools off; the Inspector exposes the full
-    # pywebview bridge (window.pywebview.api.approve(...)), so it is opt-in only.
-    monkeypatch.delenv("LCP_GUI_DEBUG", raising=False)
-    assert _gui_debug_enabled() is False
-
-
-@pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on"])
-def test_gui_debug_enabled_for_truthy_values(monkeypatch, value):
-    monkeypatch.setenv("LCP_GUI_DEBUG", value)
-    assert _gui_debug_enabled() is True
-
-
-@pytest.mark.parametrize("value", ["", "0", "false", "no", "off"])
-def test_gui_debug_stays_disabled_for_falsy_values(monkeypatch, value):
-    # A misremembered LCP_GUI_DEBUG=0 must NOT silently enable the Inspector.
-    monkeypatch.setenv("LCP_GUI_DEBUG", value)
-    assert _gui_debug_enabled() is False
+# NOTE: the LCP_GUI_DEBUG / pywebview Web Inspector opt-in (old U17) was retired
+# when the GUI moved to the browser webui — DevTools is intentionally always
+# available in Chrome (that is the point). The real XSS defence remains the R41
+# output escaping + strict CSP, asserted elsewhere.
