@@ -29,6 +29,11 @@ from ...core.errors import InputValidationError
 from ...core.state import JobState, ReviewReason, TRANSIENT_STATES, validate_transition
 from .audit_log import EVENT_ERASURE, AuditLog
 
+try:
+    import fcntl as _fcntl  # POSIX only; used for bump_interrupt_count serialization
+except ImportError:
+    _fcntl = None  # type: ignore[assignment]
+
 DB_NAME = "lcp.db"
 PROCESSING_MARKER = ".processing"
 # Per-job-dir crash-attempt counter (U7). A FILE, never a jobs-table column: the
@@ -528,24 +533,39 @@ class JobStore:
     def bump_interrupt_count(self, job_id: str) -> int:
         """Increment and persist the crash-attempt count; return the new value.
 
-        Atomic write (temp-in-same-dir + fsync + 0600 + os.replace) so a crash
-        mid-bump can never leave a half-written count that a later read would
-        mistake for a different value — it reads back as 0 (fail-safe) at worst."""
-        new = self.read_interrupt_count(job_id) + 1
+        Serialized with an OS-level exclusive flock on a per-job lock file so
+        concurrent threads or processes cannot interleave their read-modify-write
+        and silently lose an increment. Atomic temp+replace write so a crash
+        mid-bump leaves the counter readable (fail-safe to 0)."""
         d = self.job_dir(job_id)
         d.mkdir(parents=True, exist_ok=True)
         path = d / INTERRUPT_COUNT_MARKER
-        tmp = path.with_name(f".{INTERRUPT_COUNT_MARKER}.tmp.{os.getpid()}")
-        try:
-            with tmp.open("w", encoding="utf-8") as f:
-                f.write(str(new))
-                f.flush()
-                os.fsync(f.fileno())
-            os.chmod(tmp, 0o600)  # PII-at-rest discipline (no group/other access)
-            os.replace(tmp, path)  # atomic
-        finally:
-            if tmp.exists():
-                tmp.unlink()
+        lock_path = path.with_name(f"{INTERRUPT_COUNT_MARKER}.lock")
+        # Use a unique tmp name (pid + thread id) to avoid concurrent threads in
+        # the same process overwriting each other's temp file.
+        import threading
+
+        tmp = path.with_name(
+            f".{INTERRUPT_COUNT_MARKER}.tmp.{os.getpid()}.{threading.get_ident()}"
+        )
+        with lock_path.open("a", encoding="utf-8") as lf:
+            if _fcntl is not None:
+                _fcntl.flock(lf.fileno(), _fcntl.LOCK_EX)
+            try:
+                new = self.read_interrupt_count(job_id) + 1
+                try:
+                    with tmp.open("w", encoding="utf-8") as f:
+                        f.write(str(new))
+                        f.flush()
+                        os.fsync(f.fileno())
+                    os.chmod(tmp, 0o600)
+                    os.replace(tmp, path)
+                finally:
+                    if tmp.exists():
+                        tmp.unlink()
+            finally:
+                if _fcntl is not None:
+                    _fcntl.flock(lf.fileno(), _fcntl.LOCK_UN)
         return new
 
     def clear_interrupt_count(self, job_id: str) -> None:
