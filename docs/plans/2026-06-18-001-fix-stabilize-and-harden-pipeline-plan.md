@@ -1,7 +1,7 @@
 ---
 title: "fix: Stabilize and harden the lcp pipeline (review-driven bug fixes + hardening)"
 type: fix
-status: active
+status: completed
 date: 2026-06-18
 deepened: 2026-06-18
 ---
@@ -340,7 +340,7 @@ crawl/ingest ─▶ risk ─▶ media ─▶ dedup ─▶ assemble(LLM) ─▶ l
 
 ### Phase 1 — Fail-closed & correctness integrity (P0/P1)
 
-- [ ] **Unit 1: Harden URL extraction against malformed URLs (P0)**
+- [x] **Unit 1: Harden URL extraction against malformed URLs (P0)**
 
 **Goal:** A malformed media/link URL on an allowlisted page is dropped, not allowed to abort the
 whole page's extraction.
@@ -377,7 +377,7 @@ its valid content; no `ValueError` escapes `extract_content`.
 
 ---
 
-- [ ] **Unit 2: Make the dedup gate fail closed on a malformed site index (P1)**
+- [x] **Unit 2: Make the dedup gate fail closed on a malformed site index (P1)**
 
 **Goal:** A malformed or partial `site_index.jsonl` line parks the job for a human (or fails with an
 actionable input error), never crashes the run to exit 5.
@@ -420,7 +420,7 @@ and the job is never left at `CRAWLED` with an "internal error."
 
 ---
 
-- [ ] **Unit 3: Re-verify the frozen title (and cover) hash on approve (P1)**
+- [x] **Unit 3: Re-verify the frozen title (and cover) hash on approve (P1)**
 
 **Goal:** Approval refuses if the draft's title (or cover) changed after freeze; the audit can never
 attest a title/cover the reviewer did not sign off on.
@@ -465,7 +465,7 @@ body-tamper test still passes.
 
 ---
 
-- [ ] **Unit 4: Stop false-terminal classifications at the matching layer (P1)**
+- [x] **Unit 4: Stop false-terminal classifications at the matching layer (P1)**
 
 **Goal:** Innocuous content is no longer driven into `BLOCKED`/`DUPLICATE` by substring or
 empty-title false positives.
@@ -529,7 +529,7 @@ pairs with distinct bodies are not duplicates; existing true-positive tests stay
 
 ---
 
-- [ ] **Unit 5: Fail closed on untrusted ffprobe numerics (P1)**
+- [x] **Unit 5: Fail closed on untrusted ffprobe numerics (P1)**
 
 **Goal:** NaN/inf/negative/float-encoded probe fields route fail-closed (needs-revision / unknown),
 never silently pass a spec gate.
@@ -570,7 +570,7 @@ outcome; no `ValueError` escapes the media gate.
 
 ---
 
-- [ ] **Unit 6: Surface crawler subprocess failures as retriable (P1)**
+- [x] **Unit 6: Surface crawler subprocess failures as retriable (P1)**
 
 **Goal:** A Scrapy subprocess that exits non-zero, crashes outside `LcpError`, or leaves a
 stale/partial/corrupt manifest is reported as a retriable `PROCESS_FAILED`/`ExternalServiceError`,
@@ -618,7 +618,7 @@ green.
 
 ### Phase 2 — Crash-safety & state-machine coherence (P1/P2)
 
-- [ ] **Unit 7: Give the `.processing` marker a real consumer + align the contract (P1)**
+- [x] **Unit 7: Give the `.processing` marker a real consumer + align the contract (P1)**
 
 **Goal:** An interrupted job (marker present at a non-PROCESSING resting state) is detectable and
 recoverable at startup; the seam contract matches the code.
@@ -690,7 +690,7 @@ reopened); docs and code agree.
 
 ---
 
-- [ ] **Unit 8: Operator recovery edges + reachable NEEDS_REVISION edge (P1/P2)**
+- [x] **Unit 8: Operator recovery edges + reachable NEEDS_REVISION edge (P1/P2)**
 
 **Goal:** A false-terminal `BLOCKED`/`DUPLICATE` job can be recovered by an operator; the
 `NEEDS_REVISION → PROCESSING` edge (which exists but is unreachable through the entry guard) becomes
@@ -797,7 +797,7 @@ reopen edge exists; `NEEDS_REVISION` re-run works; CLI/GUI parity holds.
 
 ---
 
-- [ ] **Unit 9: Atomic Stage-1 persistence + defined re-crawl semantics (P2)**
+- [x] **Unit 9: Atomic Stage-1 persistence + defined re-crawl semantics (P2)**
 
 **Goal:** A crawled job's `(state, hashes)` lands in one transaction; re-crawling an existing
 non-terminal job refuses before mutating anything.
@@ -839,7 +839,7 @@ partial mutation; CLI help matches behavior.
 
 ---
 
-- [ ] **Unit 10: Atomic delete/erasure + uniform write-lock discipline (P2)**
+- [x] **Unit 10: Atomic delete/erasure + uniform write-lock discipline (P2)**
 
 **Goal:** `delete_job` reports truthfully and orders its writes to fail safe; all `jobs` writers use
 the same `BEGIN IMMEDIATE` discipline.
@@ -880,7 +880,7 @@ are uniformly `BEGIN IMMEDIATE`.
 
 ### Phase 3 — Robustness & reliability hardening (P2)
 
-- [ ] **Unit 11: DNS resolver timeout in the SSRF preflight (P2)**
+- [x] **Unit 11: DNS resolver timeout in the SSRF preflight (P2)**
 
 **Goal:** A slow/dead DNS server cannot hang the crawler preflight (parent process) indefinitely.
 
@@ -911,7 +911,7 @@ green.
 
 ---
 
-- [ ] **Unit 12: Scrapy subprocess cleanup + pipeline-output path containment (P2)**
+- [x] **Unit 12: Scrapy subprocess cleanup + pipeline-output path containment (P2)**
 
 **Goal:** A timed-out/killed crawl leaves a clean `raw/` dir for retry, and a downloaded file's
 mapped path can never escape the job dir.
@@ -951,7 +951,7 @@ starts clean.
 
 ---
 
-- [ ] **Unit 13: Bound in-process media CPU/time on the Pillow path (P2)**
+- [x] **Unit 13: Bound in-process media CPU/time on the Pillow path (P2)**
 
 **Goal:** A legal-size-but-expensive cover image (just under the 50MP bomb cap) cannot stall the
 media gate unboundedly.
@@ -984,7 +984,7 @@ normal inputs.
 
 ---
 
-- [ ] **Unit 14: LLM per-process cooldown after repeated failures (P2)**
+- [x] **Unit 14: LLM per-process cooldown after repeated failures (P2)**
 
 **Goal:** A sustained-5xx provider is not re-hammered on every job re-run.
 
@@ -1018,7 +1018,7 @@ tests green.
 
 ---
 
-- [ ] **Unit 15: Close residual LLM/media correctness nits (P2)**
+- [x] **Unit 15: Close residual LLM/media correctness nits (P2)**
 
 **Goal:** Tighten a cluster of small, independent logic bugs surfaced by the review.
 
@@ -1065,7 +1065,7 @@ tests green.
 
 ### Phase 4 — GUI / runtime hardening & process (P2 + compounding)
 
-- [ ] **Unit 16: Uniform GUI bridge safety (P2)**
+- [x] **Unit 16: Uniform GUI bridge safety (P2)**
 
 **Goal:** Every `Api` bridge method returns a bridge-safe dict; no raw exception (with a path/stack)
 can cross to the webview.
@@ -1097,7 +1097,7 @@ catch-broad-return-error shape.
 
 ---
 
-- [ ] **Unit 17: Gate the GUI Web Inspector behind an explicit opt-in (P2)**
+- [x] **Unit 17: Gate the GUI Web Inspector behind an explicit opt-in (P2)**
 
 **Goal:** Production GUI ships with DevTools **off**; a developer enables it deliberately.
 
@@ -1126,7 +1126,7 @@ logic is covered by a test, not just the untested `launch`.
 
 ---
 
-- [ ] **Unit 18: Runtime defense-in-depth — PATH pin, db chmod, audit fsync (P2)**
+- [x] **Unit 18: Runtime defense-in-depth — PATH pin, db chmod, audit fsync (P2)**
 
 **Goal:** Close three independent hardening gaps so guarantees hold even if a future entry point
 forgets a step.
@@ -1176,7 +1176,7 @@ already yields `0600`, so it is pure belt-and-suspenders; drop it first.
 
 ---
 
-- [ ] **Unit 19: Cross-platform audit-log locking guard (P2)**
+- [x] **Unit 19: Cross-platform audit-log locking guard (P2)**
 
 **Goal:** The hash-chained audit log does not silently lose its concurrency guarantee on a non-POSIX
 host.
@@ -1206,7 +1206,7 @@ way) rather than silently proceeding lock-free. Document the platform support ex
 
 ---
 
-- [ ] **Unit 20: Establish `docs/solutions/` + regression tripwires (process)**
+- [x] **Unit 20: Establish `docs/solutions/` + regression tripwires (process)**
 
 **Goal:** Stop re-deriving the same gotchas, and make the de-watermark cut + PII-free invariant
 impossible to silently regress.
