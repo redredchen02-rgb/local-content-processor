@@ -509,17 +509,17 @@ def test_app_js_has_no_innerhtml_and_no_wildcard_host():
     assert "0.0.0.0" not in src
 
 
-def test_gui_does_not_import_webview_at_module_level():
-    """`import webview` must appear ONLY inside launch() (lazy), never at the top
-    level — otherwise the module would be unimportable headless."""
-    src = GUI_PY.read_text(encoding="utf-8")
-    for line in src.splitlines():
-        stripped = line.strip()
-        # A top-level import has no leading indentation.
-        if stripped.startswith(("import webview", "from webview")):
-            assert line.startswith((" ", "\t")), (
-                "import webview must be indented (inside launch), not top-level"
-            )
+def test_no_webview_import_anywhere_in_src():
+    """pywebview is gone — no module under src/lcp may import it. The browser
+    webui (lcp.webserver) replaced the desktop window."""
+    src_root = Path(__file__).resolve().parents[1] / "src" / "lcp"
+    offenders = []
+    for py in src_root.rglob("*.py"):
+        for line in py.read_text(encoding="utf-8").splitlines():
+            s = line.strip()
+            if s.startswith(("import webview", "from webview")):
+                offenders.append(f"{py.name}: {s}")
+    assert not offenders, f"webview import(s) must not exist: {offenders}"
 
 
 def test_server_host_is_loopback_only():
