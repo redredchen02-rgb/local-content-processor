@@ -65,7 +65,17 @@ class Ctx:
     """Resolved per-invocation context: config + adapters, built once from flags."""
 
     def __init__(self, obj: dict):
-        self.config = load_config(obj.get("config_path"))
+        # Auto-discover ./config.yaml when no --config was given, so `lcp init`
+        # (which writes config.yaml in cwd) is honoured by a plain `lcp run` —
+        # reading where init writes. EXISTS-GATED on purpose: a bare
+        # `or "config.yaml"` would make load_config raise "not found" on a fresh/CI
+        # dir; only substitute when the file is actually present, else fall through
+        # to defaults. An explicit --config is passed unchanged (and still raises if
+        # missing). (The GUI does its own cwd resolution in webserver._make_api.)
+        config_path = obj.get("config_path")
+        if not config_path and Path("config.yaml").exists():
+            config_path = "config.yaml"
+        self.config = load_config(config_path)
         base_dir = obj.get("output_dir") or self.config.storage.base_dir
         self.store = JobStore(base_dir=base_dir)
         # Audit lives at the storage root (an EXTERNAL log survives per-job

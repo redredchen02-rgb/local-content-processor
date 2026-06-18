@@ -28,9 +28,13 @@ def test_missing_required_option_is_usage_error(capsys):
     assert rc == EXIT_USAGE
 
 
-def test_crawl_off_allowlist_is_input_error(tmp_path, capsys):
+def test_crawl_off_allowlist_is_input_error(tmp_path, monkeypatch, capsys):
     # No config -> empty allowlist -> example.com is rejected (exit 2), proving
     # the command is wired to the runner's preflight (not a stub).
+    # chdir to a clean dir so cwd config.yaml auto-discovery (Ctx) can't supply a
+    # non-default allowlist — the rejection must be for the EMPTY-default reason,
+    # not because a stray local config.yaml happens to exclude example.com.
+    monkeypatch.chdir(tmp_path)
     rc = main([
         "--output-dir", str(tmp_path),
         "crawl", "--url", "https://example.com/p/1", "--job-id", "j1",
@@ -219,11 +223,14 @@ def test_cli_blocked_recovery_requires_redline_override(tmp_path):
     assert store.get_job("jd").state is JobState.SUPERSEDED
 
 
-def test_review_packet_without_draft_is_usage_error(tmp_path):
+def test_review_packet_without_draft_is_usage_error(tmp_path, monkeypatch):
     base = str(tmp_path)
     from lcp.adapters.storage.job_store import JobStore
     from lcp.core.state import JobState
 
+    # chdir to a clean dir: with cwd config.yaml auto-discovery, this no---config
+    # command must stay independent of a stray local config.yaml.
+    monkeypatch.chdir(tmp_path)
     store = JobStore(base_dir=base)
     store.create_job("j2", created_at="2026-06-16T00:00:00Z")
     store.set_state("j2", JobState.CRAWLED, updated_at="2026-06-16T00:00:00Z")
