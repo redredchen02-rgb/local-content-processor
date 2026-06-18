@@ -40,6 +40,16 @@ from lcp.core.rules.asset_rules import Decision
 SAFE_MAX_IMAGE_PIXELS = 50_000_000
 Image.MAX_IMAGE_PIXELS = SAFE_MAX_IMAGE_PIXELS
 
+# Working-pixel cap for the in-process Pillow *analysis* path (cover checks).
+# The 50 MP bomb cap bounds memory, not CPU: a legal ~50 MP image still forces
+# multiple full-frame convolutions (FIND_EDGES) + entropy with no wall-clock
+# budget (the ffmpeg path has one; this path does not). Covers compose to
+# 1300x640 (~0.83 MP), so 4 MP is far above any legitimate cover yet ~12x
+# cheaper than the bomb cap — a defensive downscale that bounds worst-case CPU
+# on pathological-but-legal inputs while leaving normal covers untouched (and
+# their advisory verdict therefore unchanged).
+COVER_ANALYSIS_MAX_PIXELS = 4_000_000
+
 # 3x3 discrete Laplacian (edge-detection) kernel for blur measurement.
 _LAPLACIAN_KERNEL = ImageFilter.Kernel(
     size=(3, 3),
@@ -151,6 +161,26 @@ def _open_guarded(path: str | Path) -> Image.Image:
         ) from e
     except (OSError, ValueError, SyntaxError) as e:
         raise InputValidationError(f"cannot decode image {p.name}: {e}") from e
+
+
+def downscale_to_working_pixels(
+    img: Image.Image, *, max_pixels: int = COVER_ANALYSIS_MAX_PIXELS
+) -> Image.Image:
+    """Shrink ``img`` in place to at most ``max_pixels`` total pixels.
+
+    Bounds CPU for the in-process analysis path: the 50 MP bomb cap limits
+    memory but not the cost of full-frame convolutions/entropy. ``thumbnail``
+    only ever shrinks, so an image already within budget is returned unchanged
+    (no resampling) — keeping normal-size covers byte-for-byte identical and
+    their advisory verdict unchanged. Aspect ratio is preserved.
+    """
+    w, h = img.size
+    if w * h <= max_pixels or w == 0 or h == 0:
+        return img
+    scale = (max_pixels / (w * h)) ** 0.5
+    target = (max(1, int(w * scale)), max(1, int(h * scale)))
+    img.thumbnail(target, Image.Resampling.LANCZOS)
+    return img
 
 
 def normalize_image(

@@ -154,6 +154,28 @@ def test_corrupt_file_reported_as_validation_error(tmp_path):
         normalizer.normalize_image(bad, tmp_path / "out.jpg")
 
 
+# --- working-pixel cap for the analysis path (Unit 13) ------------------------
+
+
+def test_downscale_leaves_within_budget_image_untouched():
+    # A normal cover (1300x640 ~= 0.83 MP) is well under the 4 MP working cap,
+    # so thumbnail() must not resample it -> verdict-preserving no-op.
+    img = Image.new("RGB", (1300, 640), (120, 120, 120))
+    out = normalizer.downscale_to_working_pixels(img)
+    assert out is img
+    assert out.size == (1300, 640)
+
+
+def test_downscale_bounds_oversize_image_to_working_cap():
+    # An image far above the working cap is shrunk to <= the cap, aspect kept.
+    cap = 1_000_000
+    img = Image.new("RGB", (4000, 2000))  # 8 MP > 1 MP cap
+    out = normalizer.downscale_to_working_pixels(img, max_pixels=cap)
+    w, h = out.size
+    assert w * h <= cap
+    assert abs((w / h) - 2.0) < 0.05  # aspect ratio preserved
+
+
 # --- cover composition --------------------------------------------------------
 
 
