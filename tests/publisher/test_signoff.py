@@ -67,11 +67,16 @@ def _draft(**overrides) -> Draft:
 
 
 def _review_pending_job(store, audit, job_id="j1", draft=None):
+    from lcp.pipeline import save_draft as _save_draft
+
     store.create_job(job_id, created_at=TS)
     store.set_state(job_id, JobState.CRAWLED, updated_at=TS)
     persist_gate_state(store, job_id, JobState.PROCESSED, updated_at=TS)
+    d = draft or _draft()
+    # Write draft.json so approve(draft=None) can load and verify the hash.
+    _save_draft(store, job_id, d)
     return build_review_packet(
-        job_id=job_id, draft=draft or _draft(), store=store, audit=audit,
+        job_id=job_id, draft=d, store=store, audit=audit,
         submitted_at=TS,
     )
 
@@ -610,3 +615,83 @@ def test_audit_chain_verifies_after_full_loop(config, store, audit):
     assert pub["extra"]["operator_attested"] is True
     # URL itself is NOT in the audit (PII-free); only the recorded flag.
     assert "x.example" not in __import__("json").dumps(pub, ensure_ascii=False)
+
+
+# --- U5: backfill atomic write + single observed_os_user --------------------
+
+
+def test_backfill_observed_os_user_called_once(config, store, audit, monkeypatch):
+    """F3: observed_os_user() must be called ONCE and the same value used for
+    actor= and extra[observed_os_user]. Two calls can race and produce different
+    values, or accumulate two syscalls unnecessarily."""
+    calls = []
+
+    def _fake_os_user():
+        calls.append("call")
+        return "test-operator"
+
+    monkeypatch.setattr(signoff, "observed_os_user", _fake_os_user)
+    _review_pending_job(store, audit, "ju5")
+    signoff.approve("ju5", REVIEWER, config=config, store=store, audit=audit, ts=TS)
+    signoff.backfill_published_url(
+        "ju5", "https://x.example/1", config=config, store=store, audit=audit,
+        ts=TS, attested=True, reviewer=REVIEWER,
+    )
+    # Count calls made BY backfill_published_url specifically (approve also calls it).
+    # After approve, the count should be N; after backfill it should be N+1 (once).
+    backfill_start = len([c for c in calls[:] if True])
+    # Reset counter for isolation
+    calls.clear()
+    _review_pending_job(store, audit, "ju5b")
+    signoff.approve("ju5b", REVIEWER, config=config, store=store, audit=audit, ts=TS)
+    calls.clear()
+    signoff.backfill_published_url(
+        "ju5b", "https://x.example/2", config=config, store=store, audit=audit,
+        ts=TS, attested=True, reviewer=REVIEWER,
+    )
+    assert len(calls) == 1, (
+        f"observed_os_user() called {len(calls)} times in backfill; expected 1"
+    )
+
+
+def test_backfill_url_file_is_atomic(config, store, audit, tmp_path, monkeypatch):
+    """F2: published_url.txt must be written atomically (temp + rename) so a
+    crash mid-write never leaves a partial URL in the file."""
+    import os
+
+    writes = []
+    real_replace = os.replace
+
+    def tracking_replace(src, dst):
+        writes.append((src, dst))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", tracking_replace)
+    _review_pending_job(store, audit, "ju5c")
+    signoff.approve("ju5c", REVIEWER, config=config, store=store, audit=audit, ts=TS)
+    signoff.backfill_published_url(
+        "ju5c", "https://x.example/3", config=config, store=store, audit=audit,
+        ts=TS, attested=True, reviewer=REVIEWER,
+    )
+    # An atomic write uses os.replace(tmp, dst); a non-atomic open('w') uses none.
+    url_writes = [
+        (s, d) for s, d in writes if "published_url" in str(d)
+    ]
+    assert url_writes, "backfill did not use os.replace() for published_url.txt — not atomic"
+
+
+# --- U6: approve fail-loud when draft.json is missing -----------------------
+
+
+def test_approve_raises_when_draft_json_missing(config, store, audit):
+    """F6: approve() with draft=None must raise if load_draft returns None
+    (draft.json missing/corrupt), not silently skip the hash binding check."""
+    _review_pending_job(store, audit, "ju6")
+    # Delete the draft.json to simulate a missing/corrupt draft file.
+    # draft.json lives at processed/draft.json inside the job dir.
+    draft_json = store.job_dir("ju6") / "processed" / "draft.json"
+    assert draft_json.exists(), f"expected draft.json at {draft_json}"
+    draft_json.unlink()
+
+    with pytest.raises(InputValidationError, match="draft"):
+        signoff.approve("ju6", REVIEWER, config=config, store=store, audit=audit, ts=TS)

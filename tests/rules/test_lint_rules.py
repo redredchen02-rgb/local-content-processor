@@ -278,3 +278,27 @@ def test_lint_module_imports_no_url_libraries():
     src = open(mod.__file__, encoding="utf-8").read()
     for forbidden in ("import urllib", "import requests", "import socket", "import httpx"):
         assert forbidden not in src, f"{forbidden!r} must not appear in lint_rules"
+
+
+def test_copied_too_much_denominator_uses_source_set():
+    """CORE-1: _copied_too_much must use len(source_set) as denominator, NOT
+    len(long_source). When source_paragraphs has duplicates, long_source >
+    source_set, so using long_source as denominator yields a ratio too low,
+    causing a copied-paragraph to appear below the threshold and slip through."""
+    from lcp.core.rules.lint_rules import _copied_too_much
+
+    # 3 copies of the same long paragraph in source, body has that paragraph.
+    # unique set size = 1, long_source size = 3.
+    # Correct ratio: 1/1 = 1.0 (100% copied)
+    # Buggy ratio:   1/3 ≈ 0.33 (would fall below a 50% threshold)
+    long_para = "這是一段超過閾值的文字，長度遠超過最小字元限制，應被計入複製統計中。"
+    count, ratio = _copied_too_much(
+        body_paragraphs=[long_para],
+        source_paragraphs=[long_para, long_para, long_para],  # 3 duplicates
+        min_copy_chars=10,
+    )
+    assert count == 1
+    assert ratio == 1.0, (
+        f"expected ratio 1.0 (1 of 1 unique paragraphs copied), got {ratio:.3f}; "
+        "denominator must be len(source_set), not len(long_source)"
+    )

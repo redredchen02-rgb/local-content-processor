@@ -166,3 +166,25 @@ def test_malformed_link_href_is_skipped_not_fatal():
     out = extract_content(resp, is_media_url_safe=_always_safe)
     # The valid media link is still classified; the malformed one is skipped.
     assert out["video_urls"] == ["https://ex.com/clip.mp4"]
+
+
+def test_same_url_appearing_as_both_img_and_video_is_deduped():
+    """CORE-2: _accept must check ALL lists, not just the same-kind list.
+    A URL that first appears as an image must not be re-added as a video."""
+    shared_url = "https://ex.com/ambiguous.mp4"
+    resp = _FakeResponse(
+        {
+            "title::text": ["T"],
+            "p::text": ["body"],
+            "img::attr(src)": [shared_url],
+            "video::attr(src), video source::attr(src)": [shared_url],
+            "a::attr(href)": [],
+        }
+    )
+    out = extract_content(resp, is_media_url_safe=_always_safe)
+    # The URL appeared as img first, so it should be in image_urls only.
+    total = len(out["image_urls"]) + len(out["video_urls"])
+    assert total == 1, (
+        f"URL appeared in both image_urls and video_urls: "
+        f"images={out['image_urls']}, videos={out['video_urls']}"
+    )

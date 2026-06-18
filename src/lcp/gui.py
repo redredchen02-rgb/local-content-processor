@@ -152,6 +152,11 @@ class Api:
         # Background job status, keyed by job_id (in-memory, polled by the GUI).
         self._status: dict[str, dict] = {}
         self._status_lock = threading.Lock()
+        # Shared inflight registry — owned here so _run_bg (async) and the
+        # webserver sync handler (via server.api.inflight) share the same set
+        # and prevent two Stage-1/Stage-2 passes from racing the same job.
+        self.inflight: set[str] = set()
+        self.inflight_lock = threading.Lock()
 
     def _ctx(self) -> _Ctx:
         return _Ctx(self._config_path, self._base_dir)
@@ -271,16 +276,17 @@ class Api:
         """Run a long task (crawl/process) in a background thread; the GUI polls
         :meth:`job_status` for completion. Returns immediately with 'running'.
 
-        DUPLICATE-WORKER GUARD: a browser-served webui (unlike the old single
-        pywebview window) can fire two ``*_async`` POSTs for the same job at once.
-        If one is already ``running``, return its in-flight status instead of
-        spawning a second daemon worker — two workers would race the caller-owned
-        ``.processing`` marker / ``.interrupt_count``. Checked under the same
-        ``_status_lock`` that guards every other ``_status`` access."""
+        DUPLICATE-WORKER GUARD: acquires the shared ``inflight`` slot (same
+        registry the webserver sync handler uses) so an async *_async and a
+        concurrent sync call on the same job cannot both run Stage-1/Stage-2 at
+        once and race the caller-owned ``.processing`` marker."""
+        with self.inflight_lock:
+            if job_id in self.inflight:
+                with self._status_lock:
+                    existing = self._status.get(job_id)
+                return existing or {"job_id": escape_html(job_id), "status": "running"}
+            self.inflight.add(job_id)
         with self._status_lock:
-            existing = self._status.get(job_id)
-            if existing is not None and existing.get("status") == "running":
-                return existing
             self._status[job_id] = {"job_id": escape_html(job_id), "status": "running"}
 
         def _worker():
@@ -292,6 +298,8 @@ class Api:
                 # itself would (no raw exception text crosses the bridge).
                 result = {"error": "internal error", "exit_code": EXIT_INTERNAL}
             done = "error" if "error" in result else "done"
+            with self.inflight_lock:
+                self.inflight.discard(job_id)
             with self._status_lock:
                 self._status[job_id] = {
                     "job_id": escape_html(job_id),

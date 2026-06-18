@@ -48,7 +48,7 @@ from .adapters.storage.audit_log import EVENT_INTERRUPTED_DETECTED, AuditLog
 from .adapters.storage.job_store import JobRecord, JobStore
 from .core.config import Config
 from .core.draft import Draft, DraftStatus
-from .core.errors import ExternalServiceError, InputValidationError, LcpError
+from .core.errors import DependencyError, ExternalServiceError, InputValidationError, LcpError
 from .core.models import SourceType
 from .core.rules.risk_rules import RiskInput
 from .core.state import JobState, TERMINAL_STATES, TRANSIENT_STATES
@@ -62,7 +62,7 @@ TARGET_REVIEW = "review"
 # one of these is a crash-interruption to surface to the operator (U7). Markers
 # on any other (e.g. terminal) state are stale leftovers and are only cleared.
 RECONCILABLE_STATES: frozenset[JobState] = frozenset(
-    {JobState.CRAWLED, JobState.CRAWLED_WARN, JobState.PROCESS_FAILED}
+    {JobState.CRAWLED, JobState.CRAWLED_WARN, JobState.PROCESS_FAILED, JobState.NEEDS_REVISION}
 )
 
 # States where a stale .processing marker is a crash-between-COMMIT-and-clear
@@ -335,7 +335,9 @@ class Pipeline:
         # passive worklist view (reconcile() is a pure read; see bug_001). A
         # deterministically-crashing job thus surfaces to a human after N real
         # retries, not after N glances at the worklist.
+        _was_crash_entry = False
         if self.store.is_processing(job_id):
+            _was_crash_entry = True
             attempts = self.store.bump_interrupt_count(job_id)
             self.audit.append(
                 ts=ts,
@@ -351,6 +353,7 @@ class Pipeline:
         # The marker is cleared in `finally`; the gates' persist_gate_state also
         # clears it when they park the job (clear is idempotent).
         self.store.mark_processing(job_id)
+        _raised_service_error = False
         try:
             return self._process_inner(
                 job_id,
@@ -364,11 +367,13 @@ class Pipeline:
                 template=template,
                 ai_copy=ai_copy,
             )
-        except ExternalServiceError:
-            # An LLM/network failure mid-process must not leave the job at
-            # CRAWLED. Persist PROCESS_FAILED (retriable: PROCESS_FAILED ->
-            # PROCESSING) so a re-run picks it up. persist_gate_state re-marks +
-            # clears its own marker.
+        except (ExternalServiceError, DependencyError):
+            # An LLM/network failure or missing dependency (e.g. API key not
+            # configured) mid-process must not leave the job at CRAWLED.
+            # Persist PROCESS_FAILED (retriable: PROCESS_FAILED -> PROCESSING)
+            # so the operator can see the failure and re-run after fixing config.
+            # persist_gate_state re-marks + clears its own marker.
+            _raised_service_error = True
             from .adapters.processor._persist import persist_gate_state
 
             persist_gate_state(
@@ -385,10 +390,13 @@ class Pipeline:
             )
         finally:
             # Any Python-level completion (return OR raise) means this run did NOT
-            # die hard, so the crash loop-guard resets — only a true process death
-            # leaves both marker and counter for reconcile() to surface as a crash.
+            # die hard, so the crash loop-guard clears — UNLESS this was a crash
+            # recovery that ended in a service error: in that case, keep the counter
+            # so that crash→ExternalServiceError→crash sequences reach max_attempts
+            # and surface the deterministically-failing job to a human.
             self.store.clear_processing(job_id)
-            self.store.clear_interrupt_count(job_id)
+            if not (_was_crash_entry and _raised_service_error):
+                self.store.clear_interrupt_count(job_id)
 
     def _process_inner(
         self,

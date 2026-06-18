@@ -60,7 +60,10 @@ class SourceRegistry:
         return [_normalize(e.domain) for e in self._entries]
 
     def is_allowed(self, host: str) -> bool:
-        """Pure predicate: True iff `host` is (a subdomain of) an allowed domain."""
+        """Pure predicate: True iff `host` is (a subdomain of) an allowed domain.
+        Empty allowlist means all domains are permitted."""
+        if not self._entries:
+            return True
         return any(_host_matches(host, e.domain) for e in self._entries)
 
     def entry_for(self, host: str) -> SourceEntry | None:

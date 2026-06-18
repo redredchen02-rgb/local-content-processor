@@ -72,8 +72,15 @@ def extract_content(
 
     def _accept(full: str, kind: AssetKind) -> None:
         target = image_urls if kind is AssetKind.IMAGE else video_urls
-        if full in target or full in rejected_media_urls:
-            return  # de-dupe
+        # De-dupe across ALL lists (not just same-kind): a URL that already
+        # appears as image, video, rejected, or malformed must not be re-added.
+        if (
+            full in image_urls
+            or full in video_urls
+            or full in rejected_media_urls
+            or full in malformed_media_urls
+        ):
+            return
         if not is_media_url_safe(full):
             rejected_media_urls.append(full)  # second-order SSRF -> drop
             return

@@ -201,6 +201,47 @@ def test_concurrent_same_job_sync_process_runs_once(server, monkeypatch):
     assert len(running) == 1 and len(ran) == 1, (results, statuses)
 
 
+def test_async_process_blocks_concurrent_sync_process(server, monkeypatch):
+    """SEC-002: process_async holding the inflight slot must block a concurrent
+    sync process() on the same job — both paths must share the same registry."""
+    started = []
+    in_slow = threading.Event()
+    release = threading.Event()
+
+    def slow(job_id, *a, **k):
+        started.append(job_id)
+        in_slow.set()
+        release.wait(timeout=3)
+        return {"job_id": job_id, "ran": True}
+
+    monkeypatch.setattr(server.api, "process", slow)
+
+    results = {}
+
+    def fire_async():
+        _, data = _post(server.public_port, "process_async", ["j2", "", False, None, None, False])
+        results["async"] = json.loads(data)
+
+    def fire_sync():
+        _, data = _post(server.public_port, "process", ["j2"])
+        results["sync"] = json.loads(data)
+
+    t1 = threading.Thread(target=fire_async)
+    t1.start()
+    # Wait until the async background thread is inside slow() (slot occupied).
+    assert in_slow.wait(timeout=3), "async worker never entered the guarded call"
+    t2 = threading.Thread(target=fire_sync)
+    t2.start()
+    t2.join(timeout=3)
+    release.set()
+    t1.join(timeout=3)
+
+    assert len(started) == 1, "the guarded job ran more than once"
+    assert results.get("sync", {}).get("status") == "running", (
+        "sync process() should have seen the inflight guard, got: " + repr(results)
+    )
+
+
 # --- security gate, fail-closed, over the real socket ----------------------
 
 
