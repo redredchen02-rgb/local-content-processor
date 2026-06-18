@@ -18,6 +18,7 @@ from lcp.adapters.processor._persist import persist_gate_state
 from lcp.adapters.storage.audit_log import AuditLog
 from lcp.adapters.storage.job_store import JobStore
 from lcp.core.config import Config
+from lcp.core.errors import InputValidationError
 from lcp.core.models import SourceType
 from lcp.core.rules.risk_rules import RiskInput
 from lcp.core.state import JobState
@@ -91,6 +92,62 @@ def test_stage1_with_fake_crawler_reaches_crawled(store, audit):
     rec = p.stage1(_spec(store, "j1"), ts=TS).record
     assert rec.state is JobState.CRAWLED
     assert (store.job_dir("j1") / "raw" / "source.txt").exists()
+
+
+# --- U9: Stage-1 persists (state, hashes) atomically; re-crawl refuses early --
+
+
+def test_stage1_persists_state_and_hashes_atomically(store, audit):
+    """A successful Stage 1 lands the CRAWLED state AND the source hashes
+    together (one transaction) — assert both are present on the persisted row."""
+    p = _pipeline(store, audit)
+    p.stage1(_spec(store, "j1"), ts=TS)
+    got = store.get_job("j1")
+    assert got.state is JobState.CRAWLED
+    # FakeCrawler hands source_text (not html), so source_text_sha256 is set and
+    # source_html_sha256 stays None — the state and that hash landed together.
+    assert got.source_text_sha256 == sha256_text(CLEAN_SOURCE)
+    assert got.source_html_sha256 is None
+
+
+def test_stage1_recrawl_refused_before_mutation(store, audit):
+    """Re-crawling an existing CRAWLED job refuses with a clear
+    InputValidationError BEFORE any hash mutation — the persisted (state, hashes)
+    from the first crawl is untouched (no partial write)."""
+    p = _pipeline(store, audit)
+    p.stage1(_spec(store, "j1"), ts=TS)  # first crawl -> CRAWLED + hashes
+    before = store.get_job("j1")
+    assert before.state is JobState.CRAWLED
+
+    # A second crawl into the SAME job id must refuse; use a DIFFERENT source so a
+    # silent clobber would be detectable in the hash.
+    p2 = _pipeline(store, audit, source="完全不同的內容，不應該被寫入。")
+    with pytest.raises(InputValidationError):
+        p2.stage1(_spec(store, "j1"), ts="2026-06-17T00:00:00Z")
+
+    after = store.get_job("j1")
+    assert after.state is JobState.CRAWLED  # unchanged
+    assert after.source_text_sha256 == sha256_text(CLEAN_SOURCE)  # not clobbered
+    assert after.updated_at == before.updated_at  # no mutation at all
+
+
+def test_stage1_recrawl_refused_for_crawled_warn(store, audit):
+    """The refusal covers CRAWLED_WARN too (any already-crawled non-NEW state)."""
+    p = _pipeline(store, audit)
+    store.create_job("jw", created_at=TS)
+    store.set_state("jw", JobState.CRAWLED_WARN, updated_at=TS)
+    with pytest.raises(InputValidationError):
+        p.stage1(_spec(store, "jw"), ts=TS)
+
+
+def test_stage1_brand_new_job_creates_and_persists(store, audit):
+    """Edge: a brand-new job id (no record yet) still creates + persists normally
+    — the re-crawl refusal must not block the legitimate fresh-job path."""
+    p = _pipeline(store, audit)
+    assert store.get_job("fresh") is None
+    rec = p.stage1(_spec(store, "fresh"), ts=TS).record
+    assert rec.state is JobState.CRAWLED
+    assert store.get_job("fresh").source_text_sha256 == sha256_text(CLEAN_SOURCE)
 
 
 # --- dry_run: LLM not called, no external mutation, result flagged ------------

@@ -257,25 +257,82 @@ class JobStore:
             review_reason=review_reason,
         )
 
-    def set_hashes(
+    def persist_crawl_result(
         self,
         job_id: str,
+        target: JobState,
         *,
         updated_at: str,
         source_html_sha256: str | None = None,
         source_text_sha256: str | None = None,
-    ) -> None:
-        conn = self._connect()
-        try:
-            conn.execute(
-                "UPDATE jobs SET source_html_sha256 = COALESCE(?, source_html_sha256), "
-                "source_text_sha256 = COALESCE(?, source_text_sha256), updated_at = ? "
-                "WHERE job_id = ?",
-                (source_html_sha256, source_text_sha256, updated_at, job_id),
+    ) -> JobRecord:
+        """Land a Stage-1 outcome — the state transition AND the source hashes —
+        in ONE transaction.
+
+        Stage 1 used to write the hashes then the state transition as two SEPARATE
+        committed transactions: a crash between them left a job at NEW WITH hashes
+        or at CRAWLED WITHOUT hashes (a torn write), and the hash write mutated the
+        row even when the subsequent state validation would reject the transition
+        (partial mutation on an illegal re-crawl). Folding both writes under one
+        ``BEGIN IMMEDIATE`` makes ``(state, hashes)`` atomic: either both land or
+        neither does.
+
+        Read + validate + update run under ``BEGIN IMMEDIATE``
+        (``isolation_level=None``) so the write lock is held across the whole
+        read->validate->update, mirroring ``set_state``. Validates ``current ->
+        target`` via the canonical state machine (so an illegal predecessor refuses
+        BEFORE any mutation — there is no longer a half-written hash to clean up),
+        and refuses a transient target. Hashes use COALESCE so a None leaves the
+        existing value intact."""
+        if target in TRANSIENT_STATES:
+            raise InputValidationError(
+                f"cannot persist transient state {target.value} to SQLite"
             )
-            conn.commit()
+        conn = self._connect()
+        conn.isolation_level = None  # manual transaction control (mirrors set_state)
+        try:
+            conn.execute("BEGIN IMMEDIATE")  # take the WAL write lock before reading
+            row = conn.execute(
+                "SELECT * FROM jobs WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            if row is None:
+                raise InputValidationError(f"unknown job: {job_id}")
+            current = _row_to_record(row)
+            validate_transition(current.state, target)  # raises if illegal
+            conn.execute(
+                "UPDATE jobs SET state = ?, updated_at = ?, "
+                "source_html_sha256 = COALESCE(?, source_html_sha256), "
+                "source_text_sha256 = COALESCE(?, source_text_sha256) "
+                "WHERE job_id = ?",
+                (
+                    target.value,
+                    updated_at,
+                    source_html_sha256,
+                    source_text_sha256,
+                    job_id,
+                ),
+            )
+            conn.execute("COMMIT")
         finally:
-            conn.close()
+            conn.close()  # rolls back if we raised before COMMIT
+        return JobRecord(
+            job_id=job_id,
+            state=target,
+            created_at=current.created_at,
+            updated_at=updated_at,
+            source_html_sha256=(
+                source_html_sha256
+                if source_html_sha256 is not None
+                else current.source_html_sha256
+            ),
+            source_text_sha256=(
+                source_text_sha256
+                if source_text_sha256 is not None
+                else current.source_text_sha256
+            ),
+            error_code=current.error_code,
+            review_reason=current.review_reason,
+        )
 
     def list_by_state(self, state: JobState) -> list[JobRecord]:
         conn = self._connect()

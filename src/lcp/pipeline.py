@@ -207,24 +207,45 @@ class Pipeline:
         The crawler is injected (Scrapy / local-ingest / a fake) — the contract
         is the same RawJobBundle either way (proves the seam is real). This is the
         SINGLE owner of the Stage-1 sequence (create -> crawl -> map status ->
-        set_hashes -> set_state); both shells call it, so the mapping and the
-        never-park-at-NEW default live in exactly one place. The raw
+        persist (state + hashes) atomically); both shells call it, so the mapping
+        and the never-park-at-NEW default live in exactly one place. The raw
         ``crawl_status`` is returned alongside the record so a shell can report it
-        without re-deriving the mapping."""
+        without re-deriving the mapping.
+
+        Re-crawl semantics: a fresh crawl is only legal for a brand-new job (no
+        record yet) or one created-but-not-yet-crawled (state NEW). Re-crawling an
+        ALREADY-crawled job has no legal state-machine edge (NEW is the only
+        predecessor of the crawl outcomes; the table has no re-crawl edge and the
+        operator has not asked for one), so we refuse EARLY with an actionable
+        error — before spawning the crawler / writing any bytes — rather than
+        crawling and then having persist_crawl_result reject the transition."""
         if self.crawler is None:
             raise InputValidationError("no crawler injected for Stage 1")
         existing = self.store.get_job(spec.job_id)
         if existing is None:
             self.store.create_job(spec.job_id, created_at=ts)
+        elif existing.state is not JobState.NEW:
+            # An existing already-crawled job: refuse before any crawl/mutation.
+            # Mirrors ingest.py's create_only clobber guard (same intent — never
+            # overwrite an existing bundle in place). The recovery is to delete or
+            # supersede the job first, then crawl into a fresh id.
+            raise InputValidationError(
+                f"job {spec.job_id} already exists at {existing.state.value}; "
+                "re-crawl is not supported (delete or supersede it first, or use "
+                "a new --job-id)"
+            )
         bundle: RawJobBundle = self.crawler.crawl(spec)
         target = _CRAWL_STATUS_TO_STATE.get(bundle.job_status, JobState.CRAWL_FAILED)
-        self.store.set_hashes(
+        # Persist the state transition AND the source hashes in ONE transaction so
+        # a crash can never leave (state, hashes) torn (NEW-with-hashes or
+        # CRAWLED-without-hashes).
+        record = self.store.persist_crawl_result(
             spec.job_id,
+            target,
             updated_at=ts,
             source_html_sha256=bundle.manifest.hashes.source_html_sha256,
             source_text_sha256=bundle.manifest.hashes.source_text_sha256,
         )
-        record = self.store.set_state(spec.job_id, target, updated_at=ts)
         return Stage1Result(record=record, crawl_status=bundle.job_status)
 
     # --- Stage 2: process ----------------------------------------------------

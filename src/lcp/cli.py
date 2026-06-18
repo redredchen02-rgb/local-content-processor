@@ -84,7 +84,11 @@ def cli(ctx, config_path, dry_run, as_json, verbose, quiet, output_dir):
 @cli.command()
 @click.option("--url", default=None, help="Single URL to crawl")
 @click.option("--input", "input_file", default=None, help="URL list file")
-@click.option("--job-id", "job_id", required=True, help="Job id to create/use")
+@click.option(
+    "--job-id", "job_id", required=True,
+    help="New job id (re-crawling an existing job is refused; "
+    "delete/supersede it first or use a fresh id)",
+)
 @click.pass_context
 def crawl(ctx, url, input_file, job_id):
     """Stage 1: crawl a URL into a raw job bundle (Scrapy subprocess)."""
@@ -104,8 +108,9 @@ def crawl(ctx, url, input_file, job_id):
         url = urls[0]
 
     # Route the URL crawl through Pipeline.stage1 (the single owner of the
-    # create -> crawl -> map-status -> set_hashes -> set_state sequence) using the
-    # shared CrawlRunnerCrawler adapter — no inline re-implementation of Stage 1.
+    # create -> crawl -> map-status -> persist (state + hashes atomically)
+    # sequence) using the shared CrawlRunnerCrawler adapter — no inline
+    # re-implementation of Stage 1.
     crawler = build_crawler(c.config, c.audit, _now)
     spec = SourceSpec(
         job_id=job_id,
@@ -125,7 +130,11 @@ def crawl(ctx, url, input_file, job_id):
 
 @cli.command()
 @click.option("--dir", "directory", required=True, help="Local material folder")
-@click.option("--job-id", "job_id", required=True, help="Job id to create/use")
+@click.option(
+    "--job-id", "job_id", required=True,
+    help="New job id (re-ingesting an existing job is refused; "
+    "delete/supersede it first or use a fresh id)",
+)
 @click.pass_context
 def ingest(ctx, directory, job_id):
     """Stage 1: ingest a local material folder (no network)."""

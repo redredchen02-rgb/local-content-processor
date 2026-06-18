@@ -408,3 +408,118 @@ def test_persist_from_processing_concurrent_one_winner(tmp_path):
     expected = JobState.BLOCKED if oks[0] == "blocked" else JobState.DUPLICATE
     assert s.get_job("j1").state is expected
     assert not s.is_processing("j1")  # marker cleared by the winner, none leaked
+
+
+# --- U9: persist_crawl_result — state + hashes in ONE transaction ------------
+
+
+def test_persist_crawl_result_lands_state_and_hashes_atomically(tmp_path):
+    """The combined method writes the transition AND the source hashes together:
+    after it, BOTH are present (the torn write the two-call sequence allowed is
+    gone)."""
+    s = _store(tmp_path)
+    s.create_job("j1", created_at=TS)  # NEW
+    rec = s.persist_crawl_result(
+        "j1", JobState.CRAWLED, updated_at=TS,
+        source_html_sha256="h" * 64, source_text_sha256="t" * 64,
+    )
+    assert rec.state is JobState.CRAWLED
+    assert rec.source_html_sha256 == "h" * 64
+    assert rec.source_text_sha256 == "t" * 64
+    # Re-read from SQLite: state and hashes landed together, not just on the
+    # returned record.
+    got = s.get_job("j1")
+    assert got.state is JobState.CRAWLED
+    assert got.source_html_sha256 == "h" * 64
+    assert got.source_text_sha256 == "t" * 64
+
+
+def test_persist_crawl_result_illegal_transition_writes_nothing(tmp_path):
+    """An illegal predecessor refuses BEFORE any mutation — neither the state nor
+    the hashes are partially written (the old two-transaction sequence committed
+    the hashes before the state transition validated, a partial mutation)."""
+    s = _store(tmp_path)
+    s.create_job("j1", created_at=TS)
+    s.set_state("j1", JobState.CRAWLED, updated_at=TS)  # already crawled
+    # CRAWLED -> CRAWLED is not a legal edge -> refuse.
+    with pytest.raises(InputValidationError):
+        s.persist_crawl_result(
+            "j1", JobState.CRAWLED, updated_at=TS,
+            source_html_sha256="h" * 64, source_text_sha256="t" * 64,
+        )
+    got = s.get_job("j1")
+    assert got.state is JobState.CRAWLED
+    # The refused call must not have stamped the new hashes (no partial mutation).
+    assert got.source_html_sha256 is None
+    assert got.source_text_sha256 is None
+
+
+def test_persist_crawl_result_unknown_job_refused(tmp_path):
+    with pytest.raises(InputValidationError):
+        _store(tmp_path).persist_crawl_result("ghost", JobState.CRAWLED, updated_at=TS)
+
+
+def test_persist_crawl_result_refuses_transient_target(tmp_path):
+    s = _store(tmp_path)
+    s.create_job("j1", created_at=TS)
+    with pytest.raises(InputValidationError):
+        s.persist_crawl_result("j1", JobState.PROCESSING, updated_at=TS)
+
+
+def test_persist_crawl_result_uses_single_connection(tmp_path, monkeypatch):
+    """One transaction == one _connect (read+update folded), so a crash can never
+    interleave between two separate committed writes."""
+    s = _store(tmp_path)
+    s.create_job("j1", created_at=TS)
+    n = {"calls": 0}
+    orig = s._connect
+
+    def counting():
+        n["calls"] += 1
+        return orig()
+
+    monkeypatch.setattr(s, "_connect", counting)
+    s.persist_crawl_result(
+        "j1", JobState.CRAWLED, updated_at=TS, source_text_sha256="t" * 64
+    )
+    assert n["calls"] == 1
+
+
+def test_persist_crawl_result_concurrent_one_winner(tmp_path):
+    """BEGIN IMMEDIATE closes the read->update race: two crawls racing the same
+    NEW job to different outcomes resolve to exactly one winner; the loser reads
+    the committed state and refuses the now-illegal transition."""
+    s = _store(tmp_path)
+    s.create_job("j1", created_at=TS)
+    barrier = threading.Barrier(2)
+    results: dict[str, str] = {}
+
+    def worker(name, target):
+        barrier.wait()
+        try:
+            s.persist_crawl_result("j1", target, updated_at=TS,
+                                   source_text_sha256="t" * 64)
+            results[name] = "ok"
+        except InputValidationError:
+            results[name] = "illegal"
+        except Exception as e:  # noqa: BLE001 - surface SQLITE_BUSY etc. as failure
+            results[name] = f"other:{type(e).__name__}"
+
+    # CRAWLED vs CRAWL_FAILED: from NEW both are legal, but whichever lands first
+    # has NO legal edge to the other (CRAWLED->{CRAWLED_WARN,PROCESSING};
+    # CRAWL_FAILED->{NEW}), so the loser always refuses regardless of order.
+    t1 = threading.Thread(target=worker, args=("crawled", JobState.CRAWLED))
+    t2 = threading.Thread(target=worker, args=("failed", JobState.CRAWL_FAILED))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    oks = [k for k, v in results.items() if v == "ok"]
+    illegals = [k for k, v in results.items() if v == "illegal"]
+    assert len(oks) == 1, results
+    assert len(illegals) == 1, results
+    # The winner's hashes landed atomically with its state.
+    got = s.get_job("j1")
+    assert got.state in (JobState.CRAWLED, JobState.CRAWL_FAILED)
+    assert got.source_text_sha256 == "t" * 64
