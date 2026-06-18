@@ -75,6 +75,8 @@ def _draft_body_text(draft: Draft) -> str:
     parts.extend(draft.subheads)
     parts.extend(s.caption for s in draft.image_sections)
     parts.extend(s.caption for s in draft.video_sections)
+    # Tags are bound here so a post-freeze tag edit is caught by approve().
+    parts.extend(draft.tags)
     return "\n".join(p for p in parts if p)
 
 
@@ -245,11 +247,21 @@ def build_review_packet(
         src = Path(processed_cover)
         if src.exists():
             cover_path = review_dir / COVER_NAME
-            shutil.copyfile(src, cover_path)
+            # Atomic copy: write to temp then os.replace so a crash mid-copy
+            # never leaves a partial cover.jpg in the review dir.
+            tmp_cover = cover_path.with_suffix(".jpg.tmp")
             try:
-                os.chmod(cover_path, 0o600)
-            except OSError:
-                pass
+                shutil.copyfile(src, tmp_cover)
+                try:
+                    os.chmod(tmp_cover, 0o600)
+                except OSError:
+                    pass
+                os.replace(tmp_cover, cover_path)
+            finally:
+                try:
+                    tmp_cover.unlink(missing_ok=True)
+                except OSError:
+                    pass
             cover_sha = _sha256_file(cover_path)
 
     # --- sanitized human-facing files (R41) ---
