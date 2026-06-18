@@ -52,6 +52,26 @@ def test_near_identical_title_is_duplicate():
     assert r.matched_items[0].stage == "title_hash"
 
 
+def test_empty_normalized_titles_do_not_collide_as_duplicate():
+    """U4: two unrelated articles whose titles BOTH normalize to '' (punctuation/
+    emoji/all-stopword) must NOT collide on title_hash('') -> false DUPLICATE
+    (terminal). An empty normalized title is no duplication signal — skip stage 1
+    and fall through to the body comparison."""
+    idx = _index(IndexEntry(job_id="j1", title="!!!", body="一篇關於貓咪日常的文章內容"))
+    r = assess_dedup(
+        title="???", body="一篇關於太空船引擎的完全不同內容", index=idx
+    )
+    assert r.status != DedupStatus.DUPLICATE
+
+
+def test_empty_candidate_title_still_body_matches(tmp_path=None):
+    """Empty title must still allow a genuine BODY duplicate to be caught."""
+    idx = _index(IndexEntry(job_id="j2", title="某真實標題", body=LOREM))
+    r = assess_dedup(title="!!!", body=LOREM, index=idx)
+    assert r.status == DedupStatus.DUPLICATE
+    assert r.matched_items[0].stage == "minhash_lsh"
+
+
 # --- Stage 2: body similarity -----------------------------------------------
 
 

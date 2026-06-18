@@ -70,6 +70,46 @@ def test_unsupported_serious_claim_redline():
     assert any("unsupported_claim" in br for br in r.blocking_reasons)
 
 
+# --- U4: footgun redline tokens downgrade to review, never false-BLOCK -------
+
+
+def test_footgun_political_substring_downgrades_to_review_not_blocked():
+    """U4: '政治' is a bare substring of innocent '政治大學' (a university). It must
+    NOT drive a terminal BLOCKED; the footgun-only match downgrades to
+    NEEDS_HUMAN_REVIEW (never silently PASS)."""
+    r = assess_risk(RiskInput(title="政治大學校友會活動", body="校友回娘家", has_source=True))
+    assert r.status == RiskStatus.NEEDS_HUMAN_REVIEW
+    assert r.status != RiskStatus.BLOCKED
+
+
+def test_footgun_minor_substring_downgrades_to_review_not_blocked():
+    """'童' is a bare substring of innocent 童話/童年/兒童樂園."""
+    for title in ("童話故事改編的新電影上映", "兒童樂園週年慶", "我的童年回憶"):
+        r = assess_risk(RiskInput(title=title, body="正文", has_source=True))
+        assert r.status == RiskStatus.NEEDS_HUMAN_REVIEW, title
+        assert r.status != RiskStatus.BLOCKED, title
+
+
+def test_real_political_redline_still_blocks():
+    """The specific political redline keywords (選舉/政黨) stay HARD redlines."""
+    r = assess_risk(RiskInput(title="選舉舞弊疑雲", body="x", has_source=True))
+    assert r.status == RiskStatus.BLOCKED
+    assert any("political" in br for br in r.blocking_reasons)
+
+
+def test_real_minor_redline_still_blocks_via_specific_keyword():
+    """未成年/兒少 stay HARD redlines (only the bare-substring 童 is downgraded)."""
+    r = assess_risk(RiskInput(title="未成年外流影片", body="x", has_source=True))
+    assert r.status == RiskStatus.BLOCKED
+
+
+def test_clean_text_with_no_footgun_still_passes():
+    """No footgun, no redline, has source -> PASS (footgun mechanism must not
+    over-fire on innocuous content)."""
+    r = assess_risk(RiskInput(title="台北華山美食市集週末登場", body="現場有樂團表演", has_source=True))
+    assert r.status == RiskStatus.PASS
+
+
 # --- fail-closed: detector uncertain / unavailable -> needs_human_review -----
 
 
