@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-There is no Makefile or task runner — everything runs through the project venv (`./.venv/bin/...`). Setup: `python3.11 -m venv .venv && ./.venv/bin/pip install -e ".[crawl,media,llm,dedup,gui,dev]"`. Requires Python 3.11+ and `ffmpeg`/`ffprobe` on `PATH`.
+There is no Makefile or task runner — everything runs through the project venv (`./.venv/bin/...`). Setup: `python3.11 -m venv .venv && ./.venv/bin/pip install -e ".[crawl,media,llm,dedup,gui,dev]"`, then `./.venv/bin/lcp init` (scaffolds `config.yaml` 0600 + seeds an empty `site_index.jsonl`; idempotent, never clobbers). Requires Python 3.11+ and `ffmpeg`/`ffprobe` on `PATH`. A **complete** draft needs `--ai-copy` (the copywriter fills `quick_facts`/`summary`/`faq`; `image_sections` is required only for image-bearing bundles, D9) — `run` defaults `--ai-copy` on; `--dry-run` never calls the LLM so it cannot reach a packet.
 
 ```sh
 ./.venv/bin/python -m pytest -q                          # full suite (~750 tests)

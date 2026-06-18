@@ -1,7 +1,7 @@
 ---
 title: "feat: Make the pipeline actually produce a review packet end-to-end, and guard it with a durable e2e test"
 type: feat
-status: active
+status: completed
 date: 2026-06-18
 deepened: 2026-06-18
 ---
@@ -252,7 +252,7 @@ graph TB
 
 **Verification:** A job from a fixture folder ends at `PUBLISHED_RECORDED` having passed every real gate; the frozen packet+manifest are complete, parseable JSON; the test fails if any gate is silently skipped.
 
-- [ ] **Unit 3: Fail-closed malformed-input e2e variants**
+- [x] **Unit 3: Fail-closed malformed-input e2e variants**
 
 **Goal:** Prove each foreseeable bad input **parks** at the correct hold state with a typed exit (2/3/4), never exit 5. Guards the narrow `except ExternalServiceError` boundary against being widened to "fix" a crash.
 
@@ -282,7 +282,7 @@ graph TB
 
 ### Phase 3 — Make it runnable (operator blockers)
 
-- [ ] **Unit 4: `lcp init` — seed config + empty site index so a clean job isn't parked (B1)**
+- [x] **Unit 4: `lcp init` — seed config + empty site index so a clean job isn't parked (B1)**
 
 **Goal:** A fresh operator runs one setup command and their first clean job reaches the assemble gate (and, post-R0, `PROCESSED`) without a manual `resolve`.
 
@@ -311,7 +311,7 @@ graph TB
 
 **Verification:** From a clean checkout, following the documented quickstart reaches `PROCESSED` on the first clean job with no manual hold resolution.
 
-- [ ] **Unit 5: Actionable `NEEDS_REVISION` guidance + explicit dry-run note (B2 / B0 ergonomics)**
+- [x] **Unit 5: Actionable `NEEDS_REVISION` guidance + explicit dry-run note (B2 / B0 ergonomics)**
 
 **Goal:** When a draft lands `NEEDS_REVISION`, the operator learns *which* required sections are missing and what a complete draft needs (`--ai-copy`, a `--template` category, and — for image-bearing articles — captions); a dry-run that cannot produce a packet says so explicitly.
 
@@ -337,7 +337,7 @@ graph TB
 
 ### Phase 4 — Document + validate against reality
 
-- [ ] **Unit 6: Operator runbook + a quickstart that actually works**
+- [x] **Unit 6: Operator runbook + a quickstart that actually works**
 
 **Goal:** A verified, copy-pasteable quickstart and a go/no-go runbook for one real job, reflecting R0 + the B1/B2 fixes.
 
@@ -356,7 +356,7 @@ graph TB
 
 **Verification:** A new operator following the README quickstart reaches a frozen packet; the runbook steps match the automated e2e path.
 
-- [ ] **Unit 7: Hermetic real-subprocess crawl smoke through the production seam**
+- [x] **Unit 7: Hermetic real-subprocess crawl smoke through the production seam**
 
 **Goal:** Prove the production crawl seam (`Pipeline.stage1` → `build_crawler` → Scrapy subprocess with scrubbed env) works hermetically against a loopback fixture — the existing subprocess test calls `scrapy_impl.main` directly and bypasses this seam.
 
@@ -380,7 +380,7 @@ graph TB
 
 **Verification:** The real Scrapy subprocess, driven through the production seam, produces a hardened bundle against a loopback fixture with no live network.
 
-- [ ] **Unit 8: Opt-in, env-gated live-LLM validation lane (closes PR #5 line 81)**
+- [x] **Unit 8: Opt-in, env-gated live-LLM validation lane (closes PR #5 line 81)**
 
 **Goal:** With a real OpenAI-compatible endpoint + secret, a deliberately-run test validates real-endpoint `assemble + structural-copy (incl. the new tags/quick_facts/summary) + grounding`. Default-skipped in CI.
 

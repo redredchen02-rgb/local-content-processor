@@ -63,9 +63,13 @@ Optional-dependency groups (install only what you need):
 Configuration:
 
 ```sh
-cp config.example.yaml config.yaml
+lcp init     # writes config.yaml (0600) + seeds an empty data/site_index.jsonl
 # then edit config.yaml: allow_domains, reviewers, llm.base_url, etc.
 ```
+
+`lcp init` is idempotent and never clobbers an existing `config.yaml`. The empty
+`site_index.jsonl` it seeds is what lets a fresh clean job pass the dedup gate
+(an absent index makes the gate fail-loud and park every job for human review).
 
 **The LLM API key is never stored in `config.yaml`.** Put it in the OS keyring
 (service `local-content-processor`, user `llm`), or set the `LCP_LLM_API_KEY`
@@ -96,10 +100,12 @@ lcp crawl --job-id acme-001 --url https://your-allowlisted-site.example/post/123
 #   (local material instead of a URL:)
 # lcp ingest --job-id acme-001 --dir ./material/acme-001
 
-# 2. Process: media + risk + dedup + assemble + lint/grounding (Stage 2).
-#    --dry-run runs every deterministic stage but does NOT call the LLM.
-lcp process --job-id acme-001 --title "Working title" --dry-run
-lcp process --job-id acme-001 --title "Working title"
+# 2. Process: media + risk + dedup + assemble + copywriter + lint/grounding.
+#    A COMPLETE draft needs --ai-copy (it fills quick_facts/summary/FAQ, and
+#    captions for image bundles); the title must be 25-35 chars. Note: --dry-run
+#    runs the deterministic stages but does NOT call the LLM, so it cannot reach
+#    PROCESSED (no copywriter sections) — use it only to smoke the gates.
+lcp process --job-id acme-001 --title "A working title of twenty-five to thirty-five chars" --ai-copy
 
 # 3. Freeze the reviewed artifact into a sanitized packet (Stage 4).
 lcp review-packet --job-id acme-001 --source-url https://your-allowlisted-site.example/post/123
@@ -127,8 +133,10 @@ lcp list                  # all jobs and their states
 lcp list --state blocked  # filter by state
 lcp list --summary        # counts-by-state
 
-# End-to-end in one call, up to a target:
-lcp run --job-id acme-005 --url https://your-allowlisted-site.example/post/9 --until review
+# End-to-end in one call, up to a target (--ai-copy is ON by default for `run`;
+# pass --no-ai-copy to skip the copywriter). Title must be 25-35 chars.
+lcp run --job-id acme-005 --url https://your-allowlisted-site.example/post/9 \
+    --until review --title "A working title of twenty-five to thirty-five chars"
 ```
 
 Global flags: `--config PATH`, `--dry-run`, `--json` (machine-readable),
