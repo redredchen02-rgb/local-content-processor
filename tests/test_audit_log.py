@@ -6,7 +6,7 @@ import threading
 import pytest
 
 from lcp.adapters.storage.audit_log import EVENT_ERASURE, AuditLog
-from lcp.core.errors import InputValidationError
+from lcp.core.errors import DependencyError, InputValidationError
 
 TS = "2026-06-16T00:00:00Z"
 
@@ -114,6 +114,23 @@ def test_concurrent_appends_keep_seq_unique_and_chain_valid(tmp_path):
     seqs = sorted(json.loads(line)["seq"] for line in lines)
     assert seqs == list(range(n))  # unique + contiguous, no duplicates
     assert log.verify_chain() is True
+
+
+def test_append_fails_loud_without_fcntl(tmp_path, monkeypatch):
+    # U19: on a non-POSIX host fcntl imports as None, which silently turns the
+    # flock(LOCK_EX) read-tail+write serialization into a NO-OP — concurrent
+    # GUI background-thread appends could then corrupt the hash chain with no
+    # signal. The audit log is the tamper-evidence backbone, so append() must
+    # REFUSE LOUD (DependencyError) rather than append lock-free.
+    import lcp.adapters.storage.audit_log as audit_mod
+
+    monkeypatch.setattr(audit_mod, "fcntl", None)
+    log = _log(tmp_path)
+    with pytest.raises(DependencyError):
+        log.append(ts=TS, stage="crawl", event="E0", job_id="j1", actor="m")
+    # Nothing was written: refusing loud must not leave a lock-free tail line.
+    assert not (tmp_path / "audit.jsonl").exists() or \
+        (tmp_path / "audit.jsonl").read_text() == ""
 
 
 def test_append_fsyncs_parent_dir(tmp_path, monkeypatch):

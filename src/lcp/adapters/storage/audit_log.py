@@ -12,7 +12,17 @@ makes silent edits detectable, nothing more.
 PII rule: events MUST NOT contain raw identifiers (titles, source URLs,
 authors, free-text). Only the job_id, stage/event codes, an actor name, and
 OPTIONAL high-entropy artifact sha256 hashes are allowed. append() rejects
-common raw-identifier keys defensively."""
+common raw-identifier keys defensively.
+
+PLATFORM SUPPORT: POSIX only. append() serializes concurrent writers with an
+OS-level fcntl.flock(LOCK_EX) held across read-tail + write — without it two
+threads/processes read the same tail and commit a duplicate seq, corrupting the
+chain (the GUI runs gates in background threads). On a non-POSIX host (e.g.
+Windows) `fcntl` is unavailable; rather than silently append lock-free and risk
+SILENT chain corruption, append() FAILS LOUD with a DependencyError on first
+use. The audit chain is the no-publish-without-a-human backbone — refusing is
+safer than an unguarded write. Windows support would require a different lock
+primitive (e.g. msvcrt.locking) and is intentionally out of scope here."""
 
 from __future__ import annotations
 
@@ -26,9 +36,12 @@ from typing import Any
 try:
     import fcntl  # POSIX-only: used for an exclusive append lock.
 except ImportError:  # pragma: no cover - non-POSIX (e.g. Windows)
+    # No lock primitive available. append() detects this and FAILS LOUD rather
+    # than appending lock-free (which would risk silent hash-chain corruption
+    # under concurrency); see the module docstring's PLATFORM SUPPORT note.
     fcntl = None  # type: ignore[assignment]
 
-from ...core.errors import InputValidationError
+from ...core.errors import DependencyError, InputValidationError
 
 GENESIS_HASH = "0" * 64
 
@@ -199,6 +212,18 @@ class AuditLog:
         if artifact_sha256 is not None and not _SHA256_RE.match(artifact_sha256):
             raise InputValidationError(
                 "artifact_sha256 must be a lowercase hex sha256 digest"
+            )
+
+        # Fail loud on a non-POSIX host: without fcntl the LOCK_EX serialization
+        # below is a NO-OP, so concurrent appends could silently corrupt the
+        # hash chain. The audit log is the tamper-evidence backbone — refuse
+        # rather than write unguarded (see module docstring PLATFORM SUPPORT).
+        # Checked before any file/dir creation so a refusal leaves no partial
+        # state behind.
+        if fcntl is None:
+            raise DependencyError(
+                "audit log requires POSIX fcntl for safe concurrent appends; "
+                "this platform lacks it (the hash-chain lock would be a no-op)"
             )
 
         self.path.parent.mkdir(parents=True, exist_ok=True)
