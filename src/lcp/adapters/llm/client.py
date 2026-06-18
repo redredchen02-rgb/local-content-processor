@@ -30,8 +30,9 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 from urllib.parse import urlsplit
 
 from ...core.config import Config
@@ -51,6 +52,23 @@ CLEAN_FINISH_REASON = "stop"
 
 # Temperature ceiling: constrained rewrite must stay low-variance (plan 0–0.3).
 MAX_TEMPERATURE = 0.3
+
+# Per-process cooldown (Unit 14, R10). The OpenAI SDK already does backoff+jitter
+# WITHIN a single call, but nothing stops a sustained-5xx provider from being
+# re-hammered on every job re-run. After this many CONSECUTIVE
+# ExternalServiceErrors we stop making new calls for COOLDOWN_SECONDS and raise
+# immediately instead — a counter + last-failure window, deliberately NOT a full
+# closed/open/half-open circuit breaker (over-machinery for one in-process
+# consumer). A single transient failure that then succeeds never trips it: the
+# counter resets on any success.
+#
+# WORST-CASE STALL: each real call can itself block up to
+# (max_retries + 1) × timeout_seconds while the SDK retries. Operators should NOT
+# set both `llm.max_retries` and `llm.timeout_seconds` high, or a single
+# pre-cooldown call can stall for that whole product before this cooldown even
+# has a chance to engage.
+COOLDOWN_FAILURE_THRESHOLD = 3
+COOLDOWN_SECONDS = 60.0
 
 
 @dataclass(frozen=True)
@@ -178,12 +196,20 @@ class LlmClient:
         ca_bundle: str | None = None,
         allow_http_hosts: list[str] | None = None,
         client_factory: Any = None,
+        monotonic: Callable[[], float] | None = None,
+        cooldown_failure_threshold: int = COOLDOWN_FAILURE_THRESHOLD,
+        cooldown_seconds: float = COOLDOWN_SECONDS,
     ) -> None:
         """`client_factory` is the seam tests use to inject a stub openai client
         — by default it is the real `openai.OpenAI`. `allow_http_hosts` is the
         explicit, opt-in set of internal hosts permitted to use plain http;
         empty by default so https is required everywhere unless deliberately
-        relaxed for a vetted loopback/private endpoint."""
+        relaxed for a vetted loopback/private endpoint.
+
+        `monotonic` is the injected clock for the per-process cooldown (defaults
+        to `time.monotonic`); tests pass a controllable one so the cooldown
+        window can be driven without sleeping. The shell mints time; the
+        cooldown bookkeeping below stays deterministic given the clock."""
         self._config = config
         self._dry_run = dry_run
         self._ca_bundle = ca_bundle
@@ -191,6 +217,13 @@ class LlmClient:
         self._client_factory = client_factory
         self._client = None  # built lazily
         self._resolved_api_key: str | None = None  # for exact-string redaction
+        # Per-process cooldown state (Unit 14): a consecutive-failure counter and
+        # a monotonic deadline before which new calls short-circuit.
+        self._monotonic = monotonic if monotonic is not None else time.monotonic
+        self._cooldown_failure_threshold = cooldown_failure_threshold
+        self._cooldown_seconds = cooldown_seconds
+        self._consecutive_failures = 0
+        self._cooldown_until: float | None = None
 
     @property
     def model(self) -> str:
@@ -268,6 +301,11 @@ class LlmClient:
                 executed=False,
             )
 
+        # Cooldown gate (Unit 14): if a sustained outage tripped the cooldown and
+        # the window has not elapsed, short-circuit WITHOUT touching the endpoint
+        # — re-hammering a dead provider on every re-run buys nothing.
+        self._raise_if_in_cooldown()
+
         client = self._ensure_client()
         messages = [
             {"role": "system", "content": system},
@@ -281,9 +319,46 @@ class LlmClient:
                 temperature=temperature,
             )
         except Exception as e:  # narrowed below
-            raise self._as_external_error(e)
+            exc = self._as_external_error(e)
+            # Only a real provider/transport failure counts toward the cooldown;
+            # our own DependencyError/InputValidationError (config/usage bugs) are
+            # not transient outages and must not engage it.
+            if isinstance(exc, ExternalServiceError):
+                self._record_failure()
+            raise exc
 
+        # A clean return path is a success regardless of finish_reason: the
+        # provider responded, so the consecutive-failure streak resets.
+        self._record_success()
         return self._interpret(resp)
+
+    def _raise_if_in_cooldown(self) -> None:
+        """Raise ExternalServiceError immediately if we are inside the cooldown
+        window, making NO client call. Cleared once the window elapses."""
+        if self._cooldown_until is None:
+            return
+        if self._monotonic() < self._cooldown_until:
+            raise ExternalServiceError(
+                "LLM call skipped: in per-process cooldown after "
+                f"{self._consecutive_failures} consecutive failures "
+                "(provider repeatedly unavailable; not re-hitting the endpoint)"
+            )
+        # Window elapsed: clear it and allow the next call through (the streak
+        # stays counted; the next failure can re-arm the cooldown immediately).
+        self._cooldown_until = None
+
+    def _record_failure(self) -> None:
+        """Count one consecutive ExternalServiceError; arm the cooldown once the
+        threshold is reached."""
+        self._consecutive_failures += 1
+        if self._consecutive_failures >= self._cooldown_failure_threshold:
+            self._cooldown_until = self._monotonic() + self._cooldown_seconds
+
+    def _record_success(self) -> None:
+        """A successful call resets the streak so one transient blip never trips
+        the cooldown."""
+        self._consecutive_failures = 0
+        self._cooldown_until = None
 
     def _interpret(self, resp: Any) -> ChatResult:
         """Read finish_reason + content. Only 'stop' with non-empty content is
