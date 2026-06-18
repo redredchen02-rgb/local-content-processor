@@ -14,7 +14,6 @@ paste + attestation (R26/R37)."""
 
 from __future__ import annotations
 
-import datetime as _dt
 import json as _json
 import sys
 from pathlib import Path
@@ -22,24 +21,18 @@ from pathlib import Path
 import click
 
 from . import pipeline as pl
+from .adapters.clock import now as _now
 from .adapters.crawler.base import SourceSpec
-from .adapters.crawler.crawl_runner import CrawlRunner, CrawlRunnerCrawler
+from .adapters.crawler.factory import build_crawler
 from .adapters.crawler.ingest import LocalIngestCrawler
-from .adapters.crawler.source_registry import SourceRegistry
 from .adapters.publisher import signoff
 from .adapters.publisher.review_packet import build_review_packet
 from .adapters.storage.audit_log import AuditLog
+from .adapters.storage.config_io import load_config
 from .adapters.storage.job_store import JobStore
-from .core.config import load_config
 from .core.errors import DependencyError, EXIT_INTERNAL, EXIT_OK, LcpError, UsageError
 from .core.models import SourceType
 from .runtime_hardening import apply_hardening
-
-
-def _now() -> str:
-    """ISO8601 UTC timestamp. The CLI is the I/O boundary, so generating the
-    timestamp here (not in core/adapters) keeps the lower layers deterministic."""
-    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class Ctx:
@@ -113,12 +106,7 @@ def crawl(ctx, url, input_file, job_id):
     # Route the URL crawl through Pipeline.stage1 (the single owner of the
     # create -> crawl -> map-status -> set_hashes -> set_state sequence) using the
     # shared CrawlRunnerCrawler adapter — no inline re-implementation of Stage 1.
-    registry = SourceRegistry.from_config(c.config.crawler)
-    crawler = CrawlRunnerCrawler(
-        CrawlRunner(registry, timeout=c.config.crawler.timeout_seconds,
-                    audit=c.audit),
-        ts_provider=_now,
-    )
+    crawler = build_crawler(c.config, c.audit, _now)
     spec = SourceSpec(
         job_id=job_id,
         source_type=SourceType.URL,
@@ -436,12 +424,7 @@ def run(ctx, url, input_dir, job_id, target, title, source_urls):
         raise UsageError("run requires exactly one of --url or --input")
 
     if url:
-        registry = SourceRegistry.from_config(c.config.crawler)
-        crawler = CrawlRunnerCrawler(
-            CrawlRunner(registry, timeout=c.config.crawler.timeout_seconds,
-                        audit=c.audit),
-            ts_provider=_now,
-        )
+        crawler = build_crawler(c.config, c.audit, _now)
         spec = SourceSpec(
             job_id=job_id, source_type=SourceType.URL,
             job_dir=c.store.job_dir(job_id), url=url,

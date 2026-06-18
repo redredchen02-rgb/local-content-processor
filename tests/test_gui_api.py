@@ -391,7 +391,7 @@ def test_job_status_falls_back_to_persisted_state(tmp_path):
 def test_create_and_crawl_unknown_status_defaults_to_crawl_failed(tmp_path, monkeypatch):
     """P3 regression: an unrecognised crawl status must map to CRAWL_FAILED (the
     same default as pipeline.stage1), never leave the job parked at NEW."""
-    import lcp.gui as gui
+    from lcp.adapters.crawler import factory
     from lcp.adapters.crawler.base import RawJobBundle
     from lcp.adapters.crawler.bundle import build_manifest
     from lcp.adapters.storage.job_store import JobStore
@@ -415,8 +415,9 @@ def test_create_and_crawl_unknown_status_defaults_to_crawl_failed(tmp_path, monk
                 manifest=manifest, job_status="weird-unknown-status",
             )
 
-    monkeypatch.setattr(gui, "CrawlRunner", _FakeRunner)
-    monkeypatch.setattr(gui.SourceRegistry, "from_config", staticmethod(lambda *_: None))
+    # build_crawler (U3) constructs the runner/registry now, so patch the factory.
+    monkeypatch.setattr(factory, "CrawlRunner", _FakeRunner)
+    monkeypatch.setattr(factory.SourceRegistry, "from_config", staticmethod(lambda *_: None))
 
     api = _api(tmp_path, base)
     res = api.create_and_crawl("jcf", "https://example.com/x")

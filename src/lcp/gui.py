@@ -44,24 +44,26 @@ share a SQLite handle. The GUI polls state via :meth:`Api.job_status` /
 
 from __future__ import annotations
 
-import datetime as _dt
+import functools
 import threading
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from . import pipeline as pl
 from .core import config as _config
+from .adapters.clock import now as _now
 from .adapters.crawler.base import SourceSpec
-from .adapters.crawler.crawl_runner import CrawlRunner, CrawlRunnerCrawler
+from .adapters.crawler.factory import build_crawler
 from .adapters.crawler.ingest import LocalIngestCrawler
-from .adapters.crawler.source_registry import SourceRegistry
 from .adapters.processor.sanitizer import escape_html, inert_link, sanitize_draft
 from .adapters.publisher import signoff
 from .adapters.publisher.review_packet import build_review_packet
 from .adapters.storage.audit_aggregate import aggregate_audit, summarize_gaps
 from .adapters.storage.audit_log import AuditLog
 from .adapters.storage.job_store import JobStore
+from .adapters.storage import config_io as _config_io
 from .adapters.storage.source_store import SourceStore
-from .core.config import load_config
 from .core.errors import EXIT_INTERNAL, LcpError
 from .core.models import SourceType
 
@@ -77,18 +79,31 @@ WEB_DIR = Path(__file__).resolve().parent / "web"
 SERVER_HOST = "127.0.0.1"
 
 
-def _now() -> str:
-    """ISO8601 UTC timestamp. Api is the GUI's I/O boundary, so it mints the
-    timestamp here (mirrors cli._now()), keeping core/adapters deterministic."""
-    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 def _error_dict(err: LcpError) -> dict:
     """Map an LcpError to a bridge-safe dict (no stack, no secrets leaked).
 
     The message is escaped too — error strings can echo attacker-shapeable input
     (e.g. a bad job id), so we never hand the GUI a raw string to render."""
     return {"error": escape_html(str(err)), "exit_code": getattr(err, "exit_code", EXIT_INTERNAL)}
+
+
+def bridge_safe(fn: Callable[..., dict]) -> Callable[..., dict]:
+    """Wrap a bridge method so any LcpError becomes the standard error dict.
+
+    Collapses the repeated ``try/except LcpError -> _error_dict(e)`` blocks into
+    one place (the catch can't be forgotten). It catches ONLY LcpError — methods
+    that deliberately catch more (OSError/ValueError in cover_report; the
+    bare-Exception bridge guards) keep their own handlers and are NOT decorated.
+    functools.wraps preserves __name__ so pywebview still exposes each method."""
+
+    @functools.wraps(fn)
+    def _wrapped(*args: Any, **kwargs: Any) -> dict:
+        try:
+            return fn(*args, **kwargs)
+        except LcpError as e:
+            return _error_dict(e)
+
+    return _wrapped
 
 
 class _Ctx:
@@ -102,7 +117,7 @@ class _Ctx:
         # — but a present-but-invalid file still surfaces its error. An explicit
         # path is never silently ignored once the file exists.
         load_path = config_path if (config_path and Path(config_path).exists()) else None
-        self.config = load_config(load_path)
+        self.config = _config_io.load_config(load_path)
         resolved = base_dir or self.config.storage.base_dir
         self.store = JobStore(base_dir=resolved)
         self.audit = AuditLog(Path(resolved) / "audit.jsonl")
@@ -131,69 +146,58 @@ class Api:
 
     # --- Stage 1: create + crawl / ingest ------------------------------------
 
+    @bridge_safe
     def create_and_crawl(self, job_id: str, url: str) -> dict:
         """Mirror `crawl`: create + crawl a URL into a raw bundle through the SAME
         Pipeline.stage1 the CLI and ingest use (no hand-rolled Stage 1, no private
         status->state map). Returns the resting state. SSRF/allowlist is enforced
         by the runner's preflight (we never resolve the URL here)."""
-        try:
-            c = self._ctx()
-            registry = SourceRegistry.from_config(c.config.crawler)
-            crawler = CrawlRunnerCrawler(
-                CrawlRunner(
-                    registry, timeout=c.config.crawler.timeout_seconds, audit=c.audit
-                ),
-                ts_provider=_now,
-            )
-            spec = SourceSpec(
-                job_id=job_id,
-                source_type=SourceType.URL,
-                job_dir=c.store.job_dir(job_id),
-                url=url,
-                max_assets=c.config.crawler.max_assets_per_job,
-            )
-            p = pl.Pipeline(c.config, c.store, c.audit, crawler=crawler)
-            res = p.stage1(spec, ts=_now())
-            return {
-                "job_id": escape_html(job_id),
-                "crawl_status": escape_html(res.crawl_status),
-                "state": res.record.state.value,
-            }
-        except LcpError as e:
-            return _error_dict(e)
+        c = self._ctx()
+        crawler = build_crawler(c.config, c.audit, _now)
+        spec = SourceSpec(
+            job_id=job_id,
+            source_type=SourceType.URL,
+            job_dir=c.store.job_dir(job_id),
+            url=url,
+            max_assets=c.config.crawler.max_assets_per_job,
+        )
+        p = pl.Pipeline(c.config, c.store, c.audit, crawler=crawler)
+        res = p.stage1(spec, ts=_now())
+        return {
+            "job_id": escape_html(job_id),
+            "crawl_status": escape_html(res.crawl_status),
+            "state": res.record.state.value,
+        }
 
+    @bridge_safe
     def ingest_dir(self, job_id: str, directory: str) -> dict:
         """Mirror `ingest`: ingest a local material folder (no network)."""
-        try:
-            c = self._ctx()
-            ts = _now()
-            crawler = LocalIngestCrawler()
-            p = pl.Pipeline(c.config, c.store, c.audit, crawler=crawler)
-            spec = SourceSpec(
-                job_id=job_id,
-                source_type=SourceType.LOCAL_DIR,
-                job_dir=c.store.job_dir(job_id),
-                local_dir=Path(directory),
-                max_assets=c.config.crawler.max_assets_per_job,
-            )
-            rec = p.stage1(spec, ts=ts).record
-            return {"job_id": escape_html(job_id), "state": rec.state.value}
-        except LcpError as e:
-            return _error_dict(e)
+        c = self._ctx()
+        ts = _now()
+        crawler = LocalIngestCrawler()
+        p = pl.Pipeline(c.config, c.store, c.audit, crawler=crawler)
+        spec = SourceSpec(
+            job_id=job_id,
+            source_type=SourceType.LOCAL_DIR,
+            job_dir=c.store.job_dir(job_id),
+            local_dir=Path(directory),
+            max_assets=c.config.crawler.max_assets_per_job,
+        )
+        rec = p.stage1(spec, ts=ts).record
+        return {"job_id": escape_html(job_id), "state": rec.state.value}
 
     # --- Stage 2: process ----------------------------------------------------
 
+    @bridge_safe
     def templates(self) -> dict:
         """List the per-栏目 template categories the operator can apply (Unit 5).
         Names only — the template bodies never cross the bridge."""
-        try:
-            from .adapters.llm import templates as tmpl
+        from .adapters.llm import templates as tmpl
 
-            c = self._ctx()
-            return {"categories": [escape_html(x) for x in tmpl.list_template_categories(c.config)]}
-        except LcpError as e:
-            return _error_dict(e)
+        c = self._ctx()
+        return {"categories": [escape_html(x) for x in tmpl.list_template_categories(c.config)]}
 
+    @bridge_safe
     def process(
         self,
         job_id: str,
@@ -208,24 +212,21 @@ class Api:
         Honours dry_run (LLM not called). Stops at the first gate that parks the
         job and reports the resting state. watermark/template/ai_copy are
         process-time inputs (1:1 with the CLI flags)."""
-        try:
-            c = self._ctx()
-            p = pl.Pipeline(c.config, c.store, c.audit, dry_run=bool(dry_run))
-            res = p.process(
-                job_id, ts=_now(), title=title,
-                watermark=watermark,
-                template=template or None,
-                ai_copy=bool(ai_copy),
-            )
-            return {
-                "job_id": escape_html(job_id),
-                "state": res.final_state.value,
-                "stopped_at": escape_html(res.stopped_at) if res.stopped_at else None,
-                "dry_run": res.dry_run,
-                "notes": [escape_html(n) for n in res.notes],
-            }
-        except LcpError as e:
-            return _error_dict(e)
+        c = self._ctx()
+        p = pl.Pipeline(c.config, c.store, c.audit, dry_run=bool(dry_run))
+        res = p.process(
+            job_id, ts=_now(), title=title,
+            watermark=watermark,
+            template=template or None,
+            ai_copy=bool(ai_copy),
+        )
+        return {
+            "job_id": escape_html(job_id),
+            "state": res.final_state.value,
+            "stopped_at": escape_html(res.stopped_at) if res.stopped_at else None,
+            "dry_run": res.dry_run,
+            "notes": [escape_html(n) for n in res.notes],
+        }
 
     # --- Long tasks: background thread + polled status -----------------------
 
@@ -275,6 +276,7 @@ class Api:
             ),
         )
 
+    @bridge_safe
     def job_status(self, job_id: str) -> dict:
         """Read a background task's status: running | done | error | unknown.
 
@@ -285,65 +287,58 @@ class Api:
         if st is not None:
             return st
         # No background task seen — fall back to the persisted record's state.
-        try:
-            c = self._ctx()
-            rec = c.store.get_job(job_id)
-            if rec is None:
-                return {"job_id": escape_html(job_id), "status": "unknown"}
-            return {"job_id": escape_html(job_id), "status": "idle", "state": rec.state.value}
-        except LcpError as e:
-            return _error_dict(e)
+        c = self._ctx()
+        rec = c.store.get_job(job_id)
+        if rec is None:
+            return {"job_id": escape_html(job_id), "status": "unknown"}
+        return {"job_id": escape_html(job_id), "status": "idle", "state": rec.state.value}
 
     # --- Review packet (freeze) + sign-off -----------------------------------
 
+    @bridge_safe
     def make_review_packet(self, job_id: str) -> dict:
         """Mirror `review-packet`: freeze the persisted Stage-2 draft (PROCESSED
         -> REVIEW_PENDING). Human action, not auto."""
-        try:
-            c = self._ctx()
-            draft = pl.load_draft(c.store, job_id)
-            if draft is None:
-                return _error_dict(
-                    _input_error(
-                        f"no processed draft for {job_id}; run process first"
-                    )
+        c = self._ctx()
+        draft = pl.load_draft(c.store, job_id)
+        if draft is None:
+            return _error_dict(
+                _input_error(
+                    f"no processed draft for {job_id}; run process first"
                 )
-            packet = build_review_packet(
-                job_id=job_id,
-                draft=draft,
-                store=c.store,
-                audit=c.audit,
-                submitted_at=_now(),
-                source_urls=[],
             )
-            return {
-                "job_id": escape_html(job_id),
-                "state": "review_pending",
-                "body_sha256": packet.body_sha256,
-                "title_sha256": packet.title_sha256,
-                "cover_sha256": packet.cover_sha256,
-            }
-        except LcpError as e:
-            return _error_dict(e)
+        packet = build_review_packet(
+            job_id=job_id,
+            draft=draft,
+            store=c.store,
+            audit=c.audit,
+            submitted_at=_now(),
+            source_urls=[],
+        )
+        return {
+            "job_id": escape_html(job_id),
+            "state": "review_pending",
+            "body_sha256": packet.body_sha256,
+            "title_sha256": packet.title_sha256,
+            "cover_sha256": packet.cover_sha256,
+        }
 
+    @bridge_safe
     def get_packet(self, job_id: str) -> dict:
         """Return the SANITIZED draft for display (every attacker-shapeable field
         already escaped; source URLs inert). The GUI renders this dict with
         textContent — never innerHTML."""
-        try:
-            c = self._ctx()
-            draft = pl.load_draft(c.store, job_id)
-            if draft is None:
-                return _error_dict(
-                    _input_error(f"no draft for {job_id}")
-                )
-            rec = c.store.get_job(job_id)
-            sanitized = sanitize_draft(draft, source_urls=[])
-            sanitized["job_id"] = escape_html(job_id)
-            sanitized["state"] = rec.state.value if rec else None
-            return sanitized
-        except LcpError as e:
-            return _error_dict(e)
+        c = self._ctx()
+        draft = pl.load_draft(c.store, job_id)
+        if draft is None:
+            return _error_dict(
+                _input_error(f"no draft for {job_id}")
+            )
+        rec = c.store.get_job(job_id)
+        sanitized = sanitize_draft(draft, source_urls=[])
+        sanitized["job_id"] = escape_html(job_id)
+        sanitized["state"] = rec.state.value if rec else None
+        return sanitized
 
     def cover_report(self, job_id: str) -> dict:
         """Cover safe-area advisories + preview/cover paths from the media gate's
@@ -374,47 +369,44 @@ class Api:
                 return _error_dict(e)
             return {"job_id": escape_html(job_id), "has_report": False}
 
+    @bridge_safe
     def approve(self, job_id: str, reviewer: str) -> dict:
         """Mirror `approve`: REVIEW_PENDING -> APPROVED. Reviewer MUST be in the
         config whitelist; non-REVIEW_PENDING source states are refused by the
         state machine (BLOCKED/NEEDS_HUMAN_REVIEW have NO path to APPROVED)."""
-        try:
-            c = self._ctx()
-            # Load the persisted draft and pass it so signoff re-verifies the
-            # frozen body hash — a draft tampered after freeze must NOT approve.
-            draft = pl.load_draft(c.store, job_id)
-            rec = signoff.approve(
-                job_id, reviewer,
-                config=c.config, store=c.store, audit=c.audit, ts=_now(),
-                draft=draft,
-            )
-            return {
-                "job_id": escape_html(job_id),
-                "state": rec.new_state.value,
-                "reviewer_stated": escape_html(rec.reviewer_stated),
-                "observed_os_user": escape_html(rec.observed_os_user),
-                "body_sha256": rec.body_sha256,
-                "disclaimer": rec.disclaimer,
-            }
-        except LcpError as e:
-            return _error_dict(e)
+        c = self._ctx()
+        # Load the persisted draft and pass it so signoff re-verifies the
+        # frozen body hash — a draft tampered after freeze must NOT approve.
+        draft = pl.load_draft(c.store, job_id)
+        rec = signoff.approve(
+            job_id, reviewer,
+            config=c.config, store=c.store, audit=c.audit, ts=_now(),
+            draft=draft,
+        )
+        return {
+            "job_id": escape_html(job_id),
+            "state": rec.new_state.value,
+            "reviewer_stated": escape_html(rec.reviewer_stated),
+            "observed_os_user": escape_html(rec.observed_os_user),
+            "body_sha256": rec.body_sha256,
+            "disclaimer": rec.disclaimer,
+        }
 
+    @bridge_safe
     def reject(self, job_id: str, reviewer: str, reason: str) -> dict:
         """Mirror `reject`: REVIEW_PENDING -> REJECTED (terminal)."""
-        try:
-            c = self._ctx()
-            rec = signoff.reject(
-                job_id, reviewer, reason,
-                config=c.config, store=c.store, audit=c.audit, ts=_now(),
-            )
-            return {
-                "job_id": escape_html(job_id),
-                "state": rec.new_state.value,
-                "reviewer_stated": escape_html(rec.reviewer_stated),
-            }
-        except LcpError as e:
-            return _error_dict(e)
+        c = self._ctx()
+        rec = signoff.reject(
+            job_id, reviewer, reason,
+            config=c.config, store=c.store, audit=c.audit, ts=_now(),
+        )
+        return {
+            "job_id": escape_html(job_id),
+            "state": rec.new_state.value,
+            "reviewer_stated": escape_html(rec.reviewer_stated),
+        }
 
+    @bridge_safe
     def resolve(
         self,
         job_id: str,
@@ -427,87 +419,76 @@ class Api:
         Grounding hold + relint=True: lint re-runs; a clean lint promotes.
         Risk/dedup hold (or grounding without relint): explicit reason required
         (a recorded human override). Reviewer MUST be whitelisted."""
-        try:
-            c = self._ctx()
-            rec = signoff.resolve(
-                job_id, reviewer,
-                config=c.config, store=c.store, audit=c.audit, ts=_now(),
-                relint=bool(relint), reason=reason,
-            )
-            return {
-                "job_id": escape_html(job_id),
-                "state": rec.new_state.value,
-                "reviewer_stated": escape_html(rec.reviewer_stated),
-            }
-        except LcpError as e:
-            return _error_dict(e)
+        c = self._ctx()
+        rec = signoff.resolve(
+            job_id, reviewer,
+            config=c.config, store=c.store, audit=c.audit, ts=_now(),
+            relint=bool(relint), reason=reason,
+        )
+        return {
+            "job_id": escape_html(job_id),
+            "state": rec.new_state.value,
+            "reviewer_stated": escape_html(rec.reviewer_stated),
+        }
 
+    @bridge_safe
     def backfill(self, job_id: str, reviewer: str, url: str, attested: bool) -> dict:
         """Mirror `backfill`: APPROVED -> PUBLISHED_RECORDED ONLY with a
         whitelisted reviewer, a non-empty URL AND the attestation tick. Without
         the tick the job stays APPROVED (the machine never publishes — R26/R37).
         The URL is never resolved."""
-        try:
-            c = self._ctx()
-            new_state = signoff.backfill_published_url(
-                job_id, url,
-                config=c.config, store=c.store, audit=c.audit, ts=_now(),
-                attested=bool(attested), reviewer=reviewer,
-            )
-            return {
-                "job_id": escape_html(job_id),
-                "state": new_state.value,
-                "attested": bool(attested),
-            }
-        except LcpError as e:
-            return _error_dict(e)
+        c = self._ctx()
+        new_state = signoff.backfill_published_url(
+            job_id, url,
+            config=c.config, store=c.store, audit=c.audit, ts=_now(),
+            attested=bool(attested), reviewer=reviewer,
+        )
+        return {
+            "job_id": escape_html(job_id),
+            "state": new_state.value,
+            "attested": bool(attested),
+        }
 
+    @bridge_safe
     def supersede(self, job_id: str, new_job_id: str | None = None) -> dict:
         """Mirror `supersede`: REVIEW_PENDING/APPROVED/NEEDS_REVISION ->
         SUPERSEDED, voiding the old sign-off and back-linking the new job."""
-        try:
-            c = self._ctx()
-            new_state = signoff.supersede(
-                job_id, store=c.store, audit=c.audit, ts=_now(), new_job_id=new_job_id,
-            )
-            return {
-                "job_id": escape_html(job_id),
-                "state": new_state.value,
-                "new_job_id": escape_html(new_job_id) if new_job_id else None,
-            }
-        except LcpError as e:
-            return _error_dict(e)
+        c = self._ctx()
+        new_state = signoff.supersede(
+            job_id, store=c.store, audit=c.audit, ts=_now(), new_job_id=new_job_id,
+        )
+        return {
+            "job_id": escape_html(job_id),
+            "state": new_state.value,
+            "new_job_id": escape_html(new_job_id) if new_job_id else None,
+        }
 
     # --- Worklist + home counts (G7) -----------------------------------------
 
+    @bridge_safe
     def list_jobs(self, state: str | None = None) -> dict:
         """Mirror `list`: the pull-style worklist, optionally filtered by state
         (alias or enum value). review_reason is escaped for display."""
-        try:
-            c = self._ctx()
-            records = pl.list_jobs(c.store, state)
-            rows = [
-                {
-                    "job_id": escape_html(r.job_id),
-                    "state": r.state.value,
-                    "review_reason": (
-                        escape_html(r.review_reason.value) if r.review_reason else None
-                    ),
-                    "updated_at": escape_html(r.updated_at),
-                }
-                for r in records
-            ]
-            return {"jobs": rows, "count": len(rows)}
-        except LcpError as e:
-            return _error_dict(e)
+        c = self._ctx()
+        records = pl.list_jobs(c.store, state)
+        rows = [
+            {
+                "job_id": escape_html(r.job_id),
+                "state": r.state.value,
+                "review_reason": (
+                    escape_html(r.review_reason.value) if r.review_reason else None
+                ),
+                "updated_at": escape_html(r.updated_at),
+            }
+            for r in records
+        ]
+        return {"jobs": rows, "count": len(rows)}
 
+    @bridge_safe
     def summary(self) -> dict:
         """Mirror `list --summary`: home counts-by-state (G7)."""
-        try:
-            c = self._ctx()
-            return {"summary": pl.batch_summary(c.store)}
-        except LcpError as e:
-            return _error_dict(e)
+        c = self._ctx()
+        return {"summary": pl.batch_summary(c.store)}
 
     # --- Dashboard: accumulated metrics (read-only aggregation) ---------------
 
@@ -556,6 +537,7 @@ class Api:
 
     # --- Saved sources: input reuse (PII-exception table) ---------------------
 
+    @bridge_safe
     def saved_sources(self) -> dict:
         """List reusable saved sources. ``label`` is escaped; ``source_ref`` is
         returned INERT (escaped — for DISPLAY only, never an <a href>, never
@@ -563,59 +545,50 @@ class Api:
         pre-fill it into the create-job input — the GUI MUST assign it only to an
         input ``.value`` (never innerHTML); submitting then re-runs the same
         crawl validation (allow_domains/robots) as manual entry."""
-        try:
-            c = self._ctx()
-            rows = [
-                {
-                    "id": escape_html(s.id),
-                    "label": escape_html(s.label),
-                    "source_ref": inert_link(s.source_ref),
-                    "source_ref_raw": s.source_ref,
-                    "created_at": escape_html(s.created_at),
-                }
-                for s in c.sources.list_sources()
-            ]
-            return {"sources": rows, "count": len(rows)}
-        except LcpError as e:
-            return _error_dict(e)
-
-    def add_saved_source(self, label: str, source_ref: str) -> dict:
-        """Persist a reusable source (input reuse). Stored verbatim so it can be
-        re-submitted; returned escaped/inert. NEVER writes the plaintext to audit."""
-        try:
-            c = self._ctx()
-            s = c.sources.add_source(
-                label=label, source_ref=source_ref, created_at=_now()
-            )
-            return {
+        c = self._ctx()
+        rows = [
+            {
                 "id": escape_html(s.id),
                 "label": escape_html(s.label),
                 "source_ref": inert_link(s.source_ref),
-                "saved": True,
+                "source_ref_raw": s.source_ref,
+                "created_at": escape_html(s.created_at),
             }
-        except LcpError as e:
-            return _error_dict(e)
+            for s in c.sources.list_sources()
+        ]
+        return {"sources": rows, "count": len(rows)}
 
+    @bridge_safe
+    def add_saved_source(self, label: str, source_ref: str) -> dict:
+        """Persist a reusable source (input reuse). Stored verbatim so it can be
+        re-submitted; returned escaped/inert. NEVER writes the plaintext to audit."""
+        c = self._ctx()
+        s = c.sources.add_source(
+            label=label, source_ref=source_ref, created_at=_now()
+        )
+        return {
+            "id": escape_html(s.id),
+            "label": escape_html(s.label),
+            "source_ref": inert_link(s.source_ref),
+            "saved": True,
+        }
+
+    @bridge_safe
     def delete_saved_source(self, source_id: str) -> dict:
         """Erase one saved source by opaque id (best-effort; see pii-inventory)."""
-        try:
-            c = self._ctx()
-            removed = c.sources.delete_source(source_id)
-            return {"id": escape_html(source_id), "removed": removed}
-        except LcpError as e:
-            return _error_dict(e)
+        c = self._ctx()
+        removed = c.sources.delete_source(source_id)
+        return {"id": escape_html(source_id), "removed": removed}
 
     # --- Config-driven UI inputs ---------------------------------------------
 
+    @bridge_safe
     def reviewers(self) -> dict:
         """The reviewer whitelist for the dropdown (config.publisher.reviewers).
 
         Operator identifiers (not subject PII); escaped for safe rendering."""
-        try:
-            c = self._ctx()
-            return {"reviewers": [escape_html(r) for r in c.config.publisher.reviewers]}
-        except LcpError as e:
-            return _error_dict(e)
+        c = self._ctx()
+        return {"reviewers": [escape_html(r) for r in c.config.publisher.reviewers]}
 
     def disclaimer(self) -> dict:
         """The VERBATIM attribution-not-authentication disclaimer (unescaped: it
@@ -629,6 +602,7 @@ class Api:
         ``config.yaml`` in the working directory (the gitignored convention)."""
         return Path(self._config_path) if self._config_path else Path("config.yaml")
 
+    @bridge_safe
     def get_settings(self) -> dict:
         """Non-secret LLM settings + whether an api_key is set. NEVER returns the
         key (only a boolean). All strings escaped for safe rendering.
@@ -637,20 +611,18 @@ class Api:
         show whether the crawler allowlist is configured (a non-empty list) —
         there is no write path here; the allowlist stays a config.yaml-only
         compliance decision."""
-        try:
-            c = self._ctx()
-            llm = c.config.llm
-            return {
-                "base_url": escape_html(llm.base_url),
-                "model": escape_html(llm.model),
-                "allowed_hosts": [escape_html(h) for h in llm.allowed_hosts],
-                "allow_domains": [escape_html(d) for d in c.config.crawler.allow_domains],
-                "api_key_set": c.config.has_api_key(),
-                "config_path": escape_html(str(self._settings_path())),
-            }
-        except LcpError as e:
-            return _error_dict(e)
+        c = self._ctx()
+        llm = c.config.llm
+        return {
+            "base_url": escape_html(llm.base_url),
+            "model": escape_html(llm.model),
+            "allowed_hosts": [escape_html(h) for h in llm.allowed_hosts],
+            "allow_domains": [escape_html(d) for d in c.config.crawler.allow_domains],
+            "api_key_set": _config_io.has_api_key(c.config),
+            "config_path": escape_html(str(self._settings_path())),
+        }
 
+    @bridge_safe
     def save_settings(
         self, base_url: str = "", model: str = "", api_key: str = ""
     ) -> dict:
@@ -663,38 +635,35 @@ class Api:
         Ordering matters: the key (the failure-prone, secret-bearing step) is
         stored in the keyring FIRST; the config file is written only after that
         succeeds, so a keyring failure aborts before any file mutation."""
-        try:
-            from urllib.parse import urlsplit
+        from urllib.parse import urlsplit
 
-            base_url = (base_url or "").strip()
-            model = (model or "").strip()
-            host = _config.validate_llm_base_url(base_url)  # raises on bad shape
+        base_url = (base_url or "").strip()
+        model = (model or "").strip()
+        host = _config.validate_llm_base_url(base_url)  # raises on bad shape
 
-            # 1. Secret first — if this fails, nothing is persisted to the file.
-            key_saved = False
-            if api_key and api_key.strip():
-                username = self._ctx().config.llm.keyring_username
-                _config.set_llm_api_key(api_key, username=username)
-                key_saved = True
+        # 1. Secret first — if this fails, nothing is persisted to the file.
+        key_saved = False
+        if api_key and api_key.strip():
+            username = self._ctx().config.llm.keyring_username
+            _config_io.set_llm_api_key(api_key, username=username)
+            key_saved = True
 
-            # 2. Then the file. A loopback http endpoint also needs its host in
-            # allow_http_hosts to be usable at call time (client R40 gate).
-            is_http = urlsplit(base_url).scheme.lower() == "http"
-            _config.update_llm_config_file(
-                self._settings_path(),
-                base_url=base_url,
-                model=model,
-                allowed_hosts_add=host,
-                allow_http_hosts_add=host if is_http else None,
-            )
-            out = self.get_settings()
-            if "error" in out:
-                return out
-            out["saved"] = True
-            out["key_saved"] = key_saved
+        # 2. Then the file. A loopback http endpoint also needs its host in
+        # allow_http_hosts to be usable at call time (client R40 gate).
+        is_http = urlsplit(base_url).scheme.lower() == "http"
+        _config_io.update_llm_config_file(
+            self._settings_path(),
+            base_url=base_url,
+            model=model,
+            allowed_hosts_add=host,
+            allow_http_hosts_add=host if is_http else None,
+        )
+        out = self.get_settings()
+        if "error" in out:
             return out
-        except LcpError as e:
-            return _error_dict(e)
+        out["saved"] = True
+        out["key_saved"] = key_saved
+        return out
 
 
 def _input_error(msg: str) -> LcpError:

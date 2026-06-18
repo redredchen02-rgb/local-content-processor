@@ -358,11 +358,7 @@ def resolve(
     if relint and hold is ReviewReason.GROUNDING:
         # Re-lint path: the human cleared grounding; lint must re-run clean.
         from ..storage.draft_store import _read_source_text, load_draft
-        from ..processor.draft_linter import (
-            build_lint_config,
-            relint_after_grounding_cleared,
-        )
-        from ...core.rules.lint_rules import LintStatus
+        from ..processor.draft_linter import build_lint_config, relint_clears_hold
 
         draft = load_draft(store, job_id)
         if draft is None:
@@ -370,7 +366,10 @@ def resolve(
                 f"no processed draft for {job_id}; cannot re-lint to resolve"
             )
         lint_config = build_lint_config(config.content, config.categories)
-        outcome = relint_after_grounding_cleared(
+        # The processor owns the lint PASS/refuse verdict (returns a bool);
+        # signoff keeps the operator-facing refusal + the state transition. The
+        # single LINT_GATE audit event (actor=reviewer) is emitted inside.
+        cleared = relint_clears_hold(
             job_id=job_id,
             draft=draft,
             source_text=_read_source_text(store, job_id),
@@ -379,7 +378,7 @@ def resolve(
             ts=ts,
             actor=reviewer,
         )
-        if outcome.lint is None or outcome.lint.status is not LintStatus.PASS:
+        if not cleared:
             raise InputValidationError(
                 f"re-lint still fails for {job_id}; the grounding hold cannot be "
                 "auto-resolved — re-edit or supersede instead"

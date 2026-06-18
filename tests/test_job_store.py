@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import threading
 
 import pytest
 
@@ -185,3 +186,110 @@ def test_persist_from_processing_validates_and_persists(tmp_path):
     # unknown job refused
     with pytest.raises(InputValidationError):
         s.persist_from_processing("ghost", JobState.BLOCKED, updated_at=TS)
+
+
+# --- U1: set_state single-connection + BEGIN IMMEDIATE -----------------------
+
+
+def _at_review_pending(s, jid="j1"):
+    """Drive a job to REVIEW_PENDING (the only path runs through PROCESSING)."""
+    s.create_job(jid, created_at=TS)
+    s.set_state(jid, JobState.CRAWLED, updated_at=TS)
+    s.persist_from_processing(jid, JobState.PROCESSED, updated_at=TS)
+    s.set_state(jid, JobState.REVIEW_PENDING, updated_at=TS)
+
+
+def test_set_state_uses_single_connection(tmp_path, monkeypatch):
+    """The fold removes the redundant read connection: one _connect per call
+    (was two — get_job's connection + the UPDATE connection)."""
+    s = _store(tmp_path)
+    s.create_job("j1", created_at=TS)
+    n = {"calls": 0}
+    orig = s._connect
+
+    def counting():
+        n["calls"] += 1
+        return orig()
+
+    monkeypatch.setattr(s, "_connect", counting)
+    s.set_state("j1", JobState.CRAWLED, updated_at=TS)
+    assert n["calls"] == 1
+
+
+def test_set_state_does_not_touch_processing_marker(tmp_path, monkeypatch):
+    """set_state is a general transition: it must NOT inherit
+    persist_from_processing's marker handling (mark/clear)."""
+    s = _store(tmp_path)
+    s.create_job("j1", created_at=TS)
+    seen = {"mark": 0, "clear": 0}
+    monkeypatch.setattr(
+        s, "mark_processing", lambda *a, **k: seen.__setitem__("mark", seen["mark"] + 1)
+    )
+    monkeypatch.setattr(
+        s, "clear_processing",
+        lambda *a, **k: seen.__setitem__("clear", seen["clear"] + 1),
+    )
+    s.set_state("j1", JobState.CRAWLED, updated_at=TS)
+    assert seen == {"mark": 0, "clear": 0}
+
+
+def test_set_state_concurrent_same_row_one_winner(tmp_path):
+    """BEGIN IMMEDIATE closes the read->update race: two writers racing the same
+    REVIEW_PENDING row (-> APPROVED vs -> REJECTED) resolve to exactly one
+    winner; the loser reads the committed state and refuses the now-illegal
+    transition (no double transition)."""
+    s = _store(tmp_path)
+    _at_review_pending(s, "j1")
+    barrier = threading.Barrier(2)
+    results: dict[str, str] = {}
+
+    def worker(name, target):
+        barrier.wait()
+        try:
+            s.set_state("j1", target, updated_at=TS)
+            results[name] = "ok"
+        except InputValidationError:
+            results[name] = "illegal"
+        except Exception as e:  # noqa: BLE001 - surface SQLITE_BUSY etc. as failure
+            results[name] = f"other:{type(e).__name__}"
+
+    t1 = threading.Thread(target=worker, args=("approve", JobState.APPROVED))
+    t2 = threading.Thread(target=worker, args=("reject", JobState.REJECTED))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    oks = [k for k, v in results.items() if v == "ok"]
+    illegals = [k for k, v in results.items() if v == "illegal"]
+    assert len(oks) == 1, results
+    assert len(illegals) == 1, results
+    expected = JobState.APPROVED if oks[0] == "approve" else JobState.REJECTED
+    assert s.get_job("j1").state is expected
+
+
+def test_set_state_many_concurrent_writers_no_busy(tmp_path):
+    """The trade BEGIN IMMEDIATE makes (longer write-lock hold) must not regress
+    into SQLITE_BUSY: N writers on distinct rows serialize under busy_timeout and
+    all complete without raising."""
+    s = _store(tmp_path)
+    n = 8
+    for i in range(n):
+        s.create_job(f"j{i}", created_at=TS)
+    barrier = threading.Barrier(n)
+    errors: list[str] = []
+
+    def worker(i):
+        barrier.wait()
+        try:
+            s.set_state(f"j{i}", JobState.CRAWLED, updated_at=TS)
+        except Exception as e:  # noqa: BLE001 - any raise is a regression here
+            errors.append(repr(e))
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == [], errors
+    assert all(s.get_job(f"j{i}").state is JobState.CRAWLED for i in range(n))

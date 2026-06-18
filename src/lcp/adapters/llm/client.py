@@ -22,9 +22,9 @@ Failure mapping (plan R34):
   ChatResult with needs_revision=True and a specific reason, so the job goes to
   NEEDS_REVISION (truncated/empty) rather than failing the run.
 
-Secrets: the api_key is read via Config.llm_api_key() (keyring/env) and is never
-logged, never put in an exception message, never echoed in headers. All log /
-error text is passed through runtime_hardening.redact()."""
+Secrets: the api_key is read via config_io.resolve_api_key() (keyring/env) and is
+never logged, never put in an exception message, never echoed in headers. All log
+/ error text is passed through runtime_hardening.redact()."""
 
 from __future__ import annotations
 
@@ -37,6 +37,7 @@ from urllib.parse import urlsplit
 from ...core.config import Config
 from ...core.errors import DependencyError, ExternalServiceError, InputValidationError
 from ...runtime_hardening import redact
+from ..storage.config_io import resolve_api_key
 
 if TYPE_CHECKING:
     import httpx
@@ -213,7 +214,7 @@ class LlmClient:
         _validate_base_url(base_url, llm.allowed_hosts, self._allow_http_hosts)
 
         # Resolve the secret last (raises DependencyError if absent). Never log.
-        api_key = self._config.llm_api_key()
+        api_key = resolve_api_key(self._config)
         # Remember it ONLY to redact the EXACT string from any error message a
         # provider echoes back (belt-and-suspenders over the generic redact()).
         self._resolved_api_key = api_key
