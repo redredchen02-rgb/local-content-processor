@@ -59,5 +59,42 @@ def test_sort_by_surprise_dimension() -> None:
     assert out[0].title == "震惊全网塌房实锤曝光"
 
 
+def test_velocity_bonus_raises_surprise_score() -> None:
+    # A rising item (trend_velocity > 0) must have a higher surprise_score than
+    # an identical item with no velocity — velocity_bonus is absorbed into surprise_score.
+    base = _item("weibo", 1, "普通消息", heat=5000)
+    rising = _item("weibo", 1, "普通消息", heat=5000)
+    rising.trend_velocity = 2.0  # max bonus = min(0.1, 2.0 * 0.05) = 0.1
+
+    out_base = rank([base])
+    out_rising = rank([rising])
+    assert out_rising[0].surprise_score > out_base[0].surprise_score
+    assert out_rising[0].surprise_score <= 1.0
+
+
+def test_sentiment_contributes_to_surprise_score() -> None:
+    # Angry/negative sentiment must score higher than neutral.
+    neutral = _item("weibo", 1, "普通播报", heat=5000)
+    neutral.sentiment = "neutral"
+    angry = _item("weibo", 1, "普通播报", heat=5000)
+    angry.sentiment = "anger"
+
+    out_neutral = rank([neutral])
+    out_angry = rank([angry])
+    assert out_angry[0].surprise_score > out_neutral[0].surprise_score
+
+
+def test_sort_by_surprise_consistent_with_score() -> None:
+    # velocity_bonus is now absorbed into surprise_score, so the item with the
+    # higher surprise_score must also rank higher under sort_by='surprise'.
+    low_vel = _item("weibo", 1, "平淡消息", heat=5000)
+    low_vel.trend_velocity = 0.0
+    high_vel = _item("weibo", 2, "平淡消息", heat=5000)
+    high_vel.trend_velocity = 2.0
+
+    by_surprise = rank([low_vel, high_vel], sort_by="surprise")
+    assert by_surprise[0].trend_velocity == 2.0
+
+
 def test_rank_empty() -> None:
     assert rank([]) == []

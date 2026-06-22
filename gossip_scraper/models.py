@@ -24,6 +24,12 @@ class GossipItem:
     heat_score: float = 0.0
     freshness_score: float = 0.0
     surprise_score: float = 0.0
+    trend_velocity: float = 0.0
+    description: str = ""
+    summary: str = ""
+    sentiment: str = ""
+    region: str = ""
+    category: str = ""
     merged_from: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -42,5 +48,11 @@ class GossipItem:
             "heat_score": round(self.heat_score, 3),
             "freshness_score": round(self.freshness_score, 3),
             "surprise_score": round(self.surprise_score, 3),
+            "trend_velocity": round(self.trend_velocity, 3),
+            "description": self.description[:200] if self.description else "",
+            "summary": self.summary,
+            "sentiment": self.sentiment,
+            "region": self.region,
+            "category": self.category,
             "merged_from": self.merged_from or [self.platform],
         }

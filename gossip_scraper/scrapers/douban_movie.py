@@ -1,4 +1,7 @@
-"""Douban movie hot scraper — uses the public search_subjects API."""
+"""Douban movie hot scraper — uses the public search_subjects API.
+
+Returns trending movies with rank-position-based heat (position 1 = hottest).
+Paginates in batches of 20 (Douban API hard limit per request) to reach `limit`."""
 
 from __future__ import annotations
 
@@ -16,29 +19,44 @@ _HEADERS = {
 }
 
 
+_PAGE_SIZE = 20  # Douban API hard limit per request
+
+
 class DoubanMovieScraper:
     platform = "douban_movie"
 
     async def fetch(self, limit: int = 50) -> list[GossipItem]:
+        entries: list[dict] = []
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                _DOUBAN_MOVIE,
-                headers=_HEADERS,
-                params={"type": "movie", "tag": "热门", "page_limit": min(limit, 50)},
-            )
-            resp.raise_for_status()
-            data = resp.json()
+            offset = 0
+            while len(entries) < limit:
+                batch_size = min(_PAGE_SIZE, limit - len(entries))
+                resp = await client.get(
+                    _DOUBAN_MOVIE,
+                    headers=_HEADERS,
+                    params={
+                        "type": "movie",
+                        "tag": "热门",
+                        "page_limit": batch_size,
+                        "page_start": offset,
+                    },
+                )
+                resp.raise_for_status()
+                batch = resp.json().get("subjects", [])
+                if not batch:
+                    break
+                entries.extend(batch)
+                if len(batch) < batch_size:
+                    break
+                offset += batch_size
 
-        items_list = data.get("subjects", [])
+        n = len(entries)
         items: list[GossipItem] = []
-        for i, entry in enumerate(items_list[:limit]):
+        for i, entry in enumerate(entries[:limit]):
             title = entry.get("title", "")
-            rate = entry.get("rate", "0")
             url = entry.get("url", "")
-            try:
-                heat = int(float(rate) * 100000) if rate else 0
-            except (ValueError, TypeError):
-                heat = 0
+            # Rank-position-based heat: position 1 (hottest) gets the highest value.
+            heat = (n - i) * 10000
             items.append(
                 GossipItem(
                     platform=self.platform,

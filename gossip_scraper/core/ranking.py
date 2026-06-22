@@ -1,11 +1,11 @@
 """3-dimension scoring and ranking for cross-platform gossip.
 
-Score = heat_score × 0.50 + freshness_score × 0.25 + surprise_score × 0.25
+Score = heat_score × 0.40 + freshness_score × 0.20 + surprise_score × 0.40
 
 Each dimension normalized to [0, 1]. Weights are tunable.
 Heat = popularity (how many people are talking).
 Freshness = recency (how new/rising the topic is).
-Surprise = drama (how unexpected/dramatic)."""
+Surprise = drama + velocity (how unexpected/dramatic + how fast it is rising)."""
 
 from __future__ import annotations
 
@@ -15,30 +15,90 @@ import time
 from ..models import GossipItem
 
 # Weights for the 3 dimensions (must sum to 1.0)
-W_HEAT = 0.50
-W_FRESH = 0.25
-W_SURPRISE = 0.25
+W_HEAT = 0.40
+W_FRESH = 0.20
+W_SURPRISE = 0.40
 
 # Surprise keywords organized by category (weight tier)
 # Tier 1 (strong): direct surprise/drama signals
 _SURPRISE_TIER1 = (
-    "竟然", "居然", "意外", "反转", "震惊", "突发", "刚刚", "重磅",
-    "曝光", "实锤", "锤了", "塌房", "翻车", "炸裂", "离谱", "逆天",
-    "不敢信", "难以置信", "活久见", "破防", "绷不住",
+    "竟然",
+    "居然",
+    "意外",
+    "反转",
+    "震惊",
+    "突发",
+    "刚刚",
+    "重磅",
+    "曝光",
+    "实锤",
+    "锤了",
+    "塌房",
+    "翻车",
+    "炸裂",
+    "离谱",
+    "逆天",
+    "不敢信",
+    "难以置信",
+    "活久见",
+    "破防",
+    "绷不住",
 )
 # Tier 2 (medium): emotional/dramatic reactions
 _SURPRISE_TIER2 = (
-    "疯了", "炸了", "爆了", "沸了", "哭了", "怒了", "笑死", "绝了",
-    "无语", "太狠了", "太猛了", "太牛了", "太假了", "太真了",
-    "细思极恐", "越想越不对", "细品", "你品", "你细品",
+    "疯了",
+    "炸了",
+    "爆了",
+    "沸了",
+    "哭了",
+    "怒了",
+    "笑死",
+    "绝了",
+    "无语",
+    "太狠了",
+    "太猛了",
+    "太牛了",
+    "太假了",
+    "太真了",
+    "细思极恐",
+    "越想越不对",
+    "细品",
+    "你品",
+    "你细品",
 )
 # Tier 3 (light): gossip/drama context markers
 _SURPRISE_TIER3 = (
-    "瓜", "吃瓜", "塌了", "崩了", "裂了", "碎了", "凉了", "挂了",
-    "翻了", "栽了", "坑了", "骗了", "瞒了", "藏了", "爆出了",
-    "揭露", "揭穿", "内幕", "真相", "黑幕", "潜规则",
-    "人设崩塌", "口碑崩盘", "翻车现场", "大型翻车",
-    "连夜", "紧急", "立即", "火速", "刚刚公布", "刚刚确认",
+    "瓜",
+    "吃瓜",
+    "塌了",
+    "崩了",
+    "裂了",
+    "碎了",
+    "凉了",
+    "挂了",
+    "翻了",
+    "栽了",
+    "坑了",
+    "骗了",
+    "瞒了",
+    "藏了",
+    "爆出了",
+    "揭露",
+    "揭穿",
+    "内幕",
+    "真相",
+    "黑幕",
+    "潜规则",
+    "人设崩塌",
+    "口碑崩盘",
+    "翻车现场",
+    "大型翻车",
+    "连夜",
+    "紧急",
+    "立即",
+    "火速",
+    "刚刚公布",
+    "刚刚确认",
 )
 
 # Pattern-based detection (regex)
@@ -112,9 +172,10 @@ def rank(items: list[GossipItem], sort_by: str = "score") -> list[GossipItem]:
         it.freshness_score = _score_freshness(
             it, heat_ranges, velocity_range, time_range, now, len(items)
         )
-        it.surprise_score = _score_surprise(
-            it, velocity_range, len(items)
-        )
+        it.surprise_score = _score_surprise(it, velocity_range, len(items))
+        # Trend velocity bonus absorbed into surprise_score so sort_by='surprise' stays consistent
+        velocity_bonus = min(0.1, max(0, it.trend_velocity * 0.05))
+        it.surprise_score = min(1.0, it.surprise_score + velocity_bonus)
         it.score = (
             it.heat_score * W_HEAT
             + it.freshness_score * W_FRESH
@@ -174,7 +235,7 @@ def _score_surprise(
     velocity_range: tuple[float, float],
     total_items: int,
 ) -> float:
-    """Surprise dimension: tag + cross-platform + velocity + keywords + patterns."""
+    """Surprise dimension: tag + cross-platform + velocity + keywords + sentiment."""
     # 1. Platform tag (爆/沸/热 = more surprising)
     tag_score = _TAG_SURPRISE.get(item.tag, 0.2)
 
@@ -197,7 +258,11 @@ def _score_surprise(
     # 4. Keyword + pattern detection
     kw_score = _score_keywords(item.title)
 
-    return 0.2 * tag_score + 0.4 * cross_score + 0.1 * vel_score + 0.3 * kw_score
+    # 5. Sentiment (controversy/anger get higher scores)
+    from .sentiment import sentiment_to_score
+    sent_score = sentiment_to_score(item.sentiment)
+
+    return 0.15 * tag_score + 0.35 * cross_score + 0.1 * vel_score + 0.25 * kw_score + 0.15 * sent_score
 
 
 def _score_keywords(title: str) -> float:

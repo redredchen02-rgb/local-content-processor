@@ -26,11 +26,7 @@ class TiebaScraper:
             resp.raise_for_status()
             data = resp.json()
 
-        topic_list = (
-            data.get("data", {})
-            .get("bang_topic", {})
-            .get("topic_list", [])
-        )
+        topic_list = data.get("data", {}).get("bang_topic", {}).get("topic_list", [])
         items: list[GossipItem] = []
         for i, entry in enumerate(topic_list[:limit]):
             name = entry.get("topic_name", "")
