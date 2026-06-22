@@ -661,3 +661,34 @@ def test_delete_row_concurrent_writers_no_busy(tmp_path):
         t.join()
     assert errors == [], errors
     assert all(s.get_job(f"j{i}") is None for i in range(n))
+
+
+def test_bump_interrupt_count_concurrent_no_lost_increments(tmp_path):
+    """F5: two concurrent bump_interrupt_count() calls on the same job must each
+    see distinct return values (1 and 2). A non-serialized read-modify-write loses
+    one increment — both threads read 0, both write 1, final value = 1 instead of 2."""
+    s = _store(tmp_path)
+    s.create_job("jc", created_at=TS)
+    n = 8
+    barrier = threading.Barrier(n)
+    results: list[int] = []
+    errors: list[str] = []
+
+    def worker():
+        barrier.wait()
+        try:
+            v = s.bump_interrupt_count("jc")
+            results.append(v)
+        except Exception as e:  # noqa: BLE001
+            errors.append(repr(e))
+
+    threads = [threading.Thread(target=worker) for _ in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == [], errors
+    assert sorted(results) == list(range(1, n + 1)), (
+        f"expected increments 1..{n}, got {sorted(results)} — concurrent bumps lost increments"
+    )

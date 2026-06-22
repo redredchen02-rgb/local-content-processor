@@ -251,3 +251,51 @@ def test_no_cover_when_absent_stays_none(store, audit):
     )
     assert packet.cover_sha256 is None
     assert packet.cover_path is None
+
+
+# --- F7: draft.tags must be included in body hash ----------------------------
+
+
+def test_tags_change_affects_body_hash():
+    """F7: draft.tags must be part of _draft_body_text so editing tags after
+    freeze changes the body hash and is caught by approve(). Without tags in
+    the hash, an operator could change tags post-freeze and approve would not
+    detect the edit."""
+    base = _draft(tags=["美食", "市集"])
+    changed = _draft(tags=["美食", "市集", "新增標籤"])
+    assert compute_body_sha256(base) != compute_body_sha256(changed), (
+        "body hash did not change when tags changed — tags are not included in the hash"
+    )
+
+
+# --- F4: cover.jpg copy must be atomic ----------------------------------------
+
+
+def test_cover_copy_uses_atomic_replace(store, audit, monkeypatch, tmp_path):
+    """F4: cover.jpg must be copied atomically (temp + os.replace) so a crash
+    mid-copy never leaves a partial cover in the review dir."""
+    import os
+
+    replaces = []
+    real_replace = os.replace
+
+    def tracking_replace(src, dst):
+        replaces.append((src, dst))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", tracking_replace)
+
+    _processed_job(store, "jat")
+    job_dir = store.job_dir("jat")
+    cover = job_dir / "processed" / "cover" / "cover.jpg"
+    cover.parent.mkdir(parents=True, exist_ok=True)
+    cover.write_bytes(b"\xff\xd8\xff\xe0fake-jpeg-cover")
+
+    build_review_packet(
+        job_id="jat", draft=_draft(), store=store, audit=audit,
+        submitted_at=TS, source_urls=[],
+    )
+    cover_replaces = [
+        (s, d) for s, d in replaces if "cover" in str(d)
+    ]
+    assert cover_replaces, "cover.jpg copy did not use os.replace() — not atomic"

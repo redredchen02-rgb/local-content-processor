@@ -189,6 +189,22 @@ def test_domain_not_in_allowlist_rejected_and_audited(tmp_path):
     )
 
 
+def test_empty_registry_allows_all_domains():
+    """Empty allow_domains = open-crawl mode: is_allowed must return True for any host."""
+    reg = SourceRegistry([])
+    assert reg.is_allowed("example.com")
+    assert reg.is_allowed("attacker.test")
+    assert reg.is_allowed("news.example.co.uk")
+
+
+def test_nonempty_registry_still_rejects_unlisted_domain():
+    """Regression: non-empty allowlist must still reject an unrelated host."""
+    reg = SourceRegistry([SourceEntry(domain="example.com")])
+    assert reg.is_allowed("example.com")
+    assert reg.is_allowed("news.example.com")
+    assert not reg.is_allowed("attacker.test")
+
+
 def test_ssrf_blocked_and_audited(tmp_path):
     audit = AuditLog(tmp_path / "audit.jsonl")
     runner = CrawlRunner(_registry(), audit=audit, resolver=_internal_resolver)
