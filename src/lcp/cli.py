@@ -187,8 +187,9 @@ def crawl(ctx, url, input_file, job_id):
     if not url and not input_file:
         raise UsageError("crawl requires --url or --input")
     if input_file:
-        # MVP: the URL-list path is read by the operator; we crawl the first URL
-        # entry here and leave batch fan-out to repeated invocations / cron.
+        # The URL-list file holds one URL per line. crawl creates exactly ONE
+        # job (--job-id is single), so a multi-URL file is a footgun, not a
+        # batch — fail loud instead of silently crawling only the first.
         urls = [
             ln.strip()
             for ln in Path(input_file).read_text(encoding="utf-8").splitlines()
@@ -196,6 +197,12 @@ def crawl(ctx, url, input_file, job_id):
         ]
         if not urls:
             raise UsageError(f"no URLs in {input_file}")
+        if len(urls) > 1:
+            raise UsageError(
+                f"{input_file} has {len(urls)} URLs but crawl creates one job "
+                "(--job-id is single). Crawl one URL per call, or use "
+                "`ingest-gossip` for batch injection."
+            )
         url = urls[0]
 
     # Route the URL crawl through Pipeline.stage1 (the single owner of the

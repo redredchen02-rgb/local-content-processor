@@ -34,7 +34,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-
 from typing import Protocol, runtime_checkable
 
 from ..draft import Draft
@@ -103,9 +102,15 @@ class GroundingStrategy(Protocol):
     cleaned ``source`` — ONLY by local comparison (no URL parsing/fetch). U1's
     chosen strength implements THIS protocol; :func:`verify_grounding` and the
     adapter never change. The baseline is substring/overlap; an NLI strategy
-    (MiniCheck/SummaC) would return entailment instead, behind the same call."""
+    (MiniCheck/SummaC) would return entailment instead, behind the same call.
 
-    def is_grounded(self, claim: str, source: str) -> bool: ...
+    ``source_grams`` is an OPTIONAL precomputed char-shingle set of the source
+    (the overlap baseline uses it to avoid re-shingling the source per claim).
+    Strategies that don't shingle (e.g. NLI) ignore it."""
+
+    def is_grounded(
+        self, claim: str, source: str, source_grams: frozenset[str] | None = None
+    ) -> bool: ...
 
 
 def _normalize(text: str) -> str:
@@ -119,8 +124,10 @@ def _char_shingles(text: str, n: int = _OVERLAP_NGRAM) -> frozenset[str]:
     boundaries) AND space-delimited text without a tokenizer/segmenter.
 
     Returns a frozenset so the value is immutable (callers only ever read it).
-    No module-global cache: source shingles are computed once per verify_grounding
-    call and passed through, so cross-job retention is eliminated."""
+    No module-global cache: :func:`verify_grounding` computes the source shingles
+    ONCE per call and threads them into the strategy via ``source_grams`` (so the
+    full source is shingled once, not once per claim), and no source text is
+    retained across calls/jobs."""
     s = _normalize(text)
     if len(s) < n:
         return frozenset({s}) if s else frozenset()
@@ -141,7 +148,9 @@ class SubstringOverlapStrategy:
 
     overlap_threshold: float = DEFAULT_OVERLAP_THRESHOLD
 
-    def is_grounded(self, claim: str, source: str) -> bool:
+    def is_grounded(
+        self, claim: str, source: str, source_grams: frozenset[str] | None = None
+    ) -> bool:
         c = claim.strip()
         if not c:
             return True
@@ -150,8 +159,10 @@ class SubstringOverlapStrategy:
         claim_grams = _char_shingles(c)
         if not claim_grams:
             return True
-        source_grams = _char_shingles(source)
-        present = sum(1 for g in claim_grams if g in source_grams)
+        # Use the source shingles precomputed once by verify_grounding when
+        # available; fall back to computing them for standalone callers.
+        src_grams = source_grams if source_grams is not None else _char_shingles(source)
+        present = sum(1 for g in claim_grams if g in src_grams)
         return present / len(claim_grams) >= self.overlap_threshold
 
 
@@ -160,8 +171,9 @@ class SubstringOverlapStrategy:
 #     @dataclass(frozen=True)
 #     class NliStrategy:
 #         model: "MiniCheckModel"
-#         def is_grounded(self, claim, source) -> bool:
+#         def is_grounded(self, claim, source, source_grams=None) -> bool:
 #             return self.model.entails(premise=source, hypothesis=claim)
+#             # (source_grams ignored: NLI reasons over the strings directly)
 #
 # It would be passed to verify_grounding(...) unchanged. Still local-only —
 # the model reasons over the strings, it does not resolve any URL.
@@ -232,6 +244,10 @@ def verify_grounding(
     Any ungrounded quote/claim -> ``needs_human_review`` (reason=grounding)."""
     cleaned = sanitize_source(source_text or "")
     strat = strategy if strategy is not None else SubstringOverlapStrategy()
+    # Shingle the source ONCE per call and thread it into the strategy, instead
+    # of re-shingling the full source for every claim (O(claims) -> O(1) source
+    # shingling). Strategies that don't use shingles ignore it.
+    source_grams = _char_shingles(cleaned)
     ungrounded: list[UngroundedClaim] = []
 
     # (a) verbatim quotes MUST be substrings of the cleaned source.
@@ -248,7 +264,7 @@ def verify_grounding(
 
     # (b) narrative claims checked via the pluggable strategy.
     for claim in _split_claims(draft):
-        if not strat.is_grounded(claim, cleaned):
+        if not strat.is_grounded(claim, cleaned, source_grams):
             ungrounded.append(
                 UngroundedClaim(
                     kind="claim",

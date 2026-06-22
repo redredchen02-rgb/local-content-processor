@@ -26,10 +26,12 @@ but the process result is flagged ``dry_run=True`` so the shell can label it."""
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .adapters.container import Adapters as Adapters
 from .adapters.crawler.base import (
     STATUS_CRAWL_FAILED,
     STATUS_CRAWLED,
@@ -39,10 +41,8 @@ from .adapters.crawler.base import (
     RawJobBundle,
     SourceSpec,
 )
-from .adapters.container import Adapters as Adapters
 from .adapters.llm.assembler import assemble
 from .adapters.llm.client import LlmClient
-
 from .adapters.processor.draft_linter import build_lint_config, run_draft_lint_gate
 from .adapters.publisher.review_packet import ReviewPacket, build_review_packet
 from .adapters.storage.audit_log import EVENT_INTERRUPTED_DETECTED, AuditLog
@@ -53,6 +53,8 @@ from .core.draft import Draft, DraftStatus
 from .core.errors import DependencyError, ExternalServiceError, InputValidationError, LcpError
 from .core.rules.risk_rules import RiskInput
 from .core.state import TERMINAL_STATES, TRANSIENT_STATES, JobState
+
+logger = logging.getLogger(__name__)
 
 # Targets for run_until.
 TARGET_DRAFT = "draft"
@@ -464,8 +466,8 @@ class Pipeline:
         # returns None (pass) or a JobState (park). The runner derives
         # ``stopped_at`` from the gate name.
         from .adapters.processor.gate_registry import (
-            GateContext,
             PARK_GATES,
+            GateContext,
             run_gate_chain,
         )
 
@@ -903,14 +905,23 @@ def process_batch(
     jobs = list_jobs(pipeline.store, st)
     results: list[ProcessResult] = []
     for rec in jobs:
-        res = pipeline.process(
-            rec.job_id,
-            ts=ts,
-            title=title,
-            ai_copy=ai_copy,
-            watermark=watermark,
-            template=template,
-        )
+        try:
+            res = pipeline.process(
+                rec.job_id,
+                ts=ts,
+                title=title,
+                ai_copy=ai_copy,
+                watermark=watermark,
+                template=template,
+            )
+        except Exception:  # noqa: BLE001 - batch boundary: isolate per-job failure
+            # One job's failure (an unexpected crash, or a domain error such as an
+            # illegal entry state for this batch's source state) must NOT abort the
+            # remaining jobs. The job keeps its caller-owned .processing marker and
+            # surfaces as interrupted via reconcile() later — never silently
+            # auto-run. job_id is a non-PII operator id, safe to log.
+            logger.warning("process_batch: job %s did not complete; continuing", rec.job_id)
+            continue
         results.append(res)
 
     # Emit PII-free batch summary: {state_code: count} only.

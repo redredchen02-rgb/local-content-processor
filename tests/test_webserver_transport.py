@@ -345,6 +345,7 @@ EXPECTED_ROUTES = frozenset(
         "ingest_gossip",
         "templates",
         "process",
+        "process_batch",
         "create_and_crawl_async",
         "process_async",
         "job_status",

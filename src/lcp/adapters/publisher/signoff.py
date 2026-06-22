@@ -46,6 +46,7 @@ from ...core.draft import Draft
 from ...core.errors import InputValidationError
 from ...core.state import JobState, ReviewReason
 from ..processor.risk_checker import EVENT_RISK_GATE
+from ..storage._fs import atomic_write_0600
 from ..storage.audit_log import (
     EVENT_REDLINE_OVERRIDE,
     EVENT_SIGNOFF_INVALIDATED,
@@ -552,28 +553,12 @@ def backfill_published_url(
 
     freeze = _freeze_hashes(store, job_id)
 
-    # Record the URL to a 0600 operator file (NOT in SQLite/audit text).
-    # Atomic write (temp + os.replace) so a crash mid-write never leaves a
-    # partial URL in the destination file.
-    review_dir = store.job_dir(job_id) / "review"
-    review_dir.mkdir(parents=True, exist_ok=True)
-    url_path = review_dir / "published_url.txt"
-    tmp_path = url_path.with_suffix(".tmp")
-    try:
-        with tmp_path.open("w", encoding="utf-8") as f:
-            f.write(url.strip() + "\n")
-            f.flush()
-            os.fsync(f.fileno())
-        try:
-            os.chmod(tmp_path, 0o600)
-        except OSError:
-            pass
-        os.replace(tmp_path, url_path)
-    finally:
-        try:
-            tmp_path.unlink(missing_ok=True)
-        except OSError:
-            pass
+    # Record the URL to a 0600 operator file (NOT in SQLite/audit text) via the
+    # shared atomic 0600 write (mkstemp -> fsync -> chmod -> os.replace): a crash
+    # mid-write never leaves a partial URL, and the unique mkstemp temp name
+    # avoids the collision a fixed ".tmp" suffix risked on concurrent backfill.
+    url_path = store.job_dir(job_id) / "review" / "published_url.txt"
+    atomic_write_0600(url_path, url.strip() + "\n")
 
     store.set_state(job_id, JobState.PUBLISHED_RECORDED, updated_at=ts)
 

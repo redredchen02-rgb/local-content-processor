@@ -9,10 +9,10 @@ here (publisher -> storage, a normal downward dependency)."""
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from ...core.draft import Draft
+from ._fs import atomic_write_0600
 from .job_store import JobStore
 
 _DRAFT_NAME = "draft.json"
@@ -39,28 +39,11 @@ def save_draft(store: JobStore, job_id: str, draft: Draft) -> Path:
     binds the exact draft Stage 2 produced, not a re-assembled (and therefore
     non-deterministic) one. Plaintext 0600, best-effort deletion (R42).
 
-    Atomic: temp in the same dir + fsync + os.replace, with chmod 0600 on the
-    temp before the replace (so the committed draft is never world-readable and a
-    crash mid-write never leaves a torn draft.json)."""
+    Uses the shared :func:`atomic_write_0600` (mkstemp + fsync + chmod 0600 +
+    os.replace) so the committed draft is never world-readable and a crash
+    mid-write never leaves a torn draft.json."""
     path = _draft_path(store, job_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.tmp.{os.getpid()}")
-    try:
-        with tmp.open("w", encoding="utf-8") as f:
-            f.write(draft.model_dump_json(indent=2))
-            f.flush()
-            os.fsync(f.fileno())
-        try:
-            os.chmod(tmp, 0o600)
-        except OSError:
-            pass
-        os.replace(tmp, path)
-    finally:
-        if tmp.exists():
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
+    atomic_write_0600(path, draft.model_dump_json(indent=2))
     return path
 
 

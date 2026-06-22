@@ -315,6 +315,41 @@ class Api:
             "advisory": _completion_advisory(res.final_state, dry_run=res.dry_run),
         }
 
+    @bridge_safe
+    def process_batch(
+        self,
+        state: str,
+        title: str = "",
+        dry_run: bool = False,
+        watermark: bool | None = None,
+        template: str | None = None,
+        ai_copy: bool = False,
+    ) -> dict:
+        """Mirror `process --all-state`: process every job in a given state
+        independently (parked/failed jobs do not stop the batch). Returns a
+        PII-free per-outcome-state count summary — no job ids/titles cross the
+        bridge."""
+        c = self._ctx()
+        p = pl.Pipeline(c.config, c.store, c.audit, dry_run=bool(dry_run))
+        results = pl.process_batch(
+            p,
+            state,
+            ts=_now(),
+            title=title,
+            ai_copy=bool(ai_copy),
+            watermark=watermark,
+            template=template or None,
+        )
+        summary: dict[str, int] = {}
+        for r in results:
+            summary[r.final_state.value] = summary.get(r.final_state.value, 0) + 1
+        return {
+            "state": escape_html(state),
+            "processed": len(results),
+            "summary": summary,
+            "dry_run": p.dry_run,
+        }
+
     # --- Long tasks: background thread + polled status -----------------------
 
     def _run_bg(self, job_id: str, fn) -> dict:
