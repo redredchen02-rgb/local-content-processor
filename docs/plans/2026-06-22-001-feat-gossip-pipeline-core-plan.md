@@ -152,7 +152,7 @@ graph TB
   U5 --> U6
 ```
 
-- [ ] **Unit 1: Douyin hot-list scraper**
+- [x] **Unit 1: Douyin hot-list scraper**
 
 **Goal:** Add a Douyin scraper to widen 吃瓜 coverage; confirm existing platforms suffice.
 
@@ -179,7 +179,7 @@ graph TB
 
 **Verification:** `python -m gossip_scraper --platform douyin --json` returns items or a clean per-platform miss; other platforms unaffected.
 
-- [ ] **Unit 2: Extend dedup + ranking across active platforms**
+- [x] **Unit 2: Extend dedup + ranking across active platforms**
 
 **Goal:** Cross-platform dedup + ranking cover all active platforms (incl. Douyin); Top-N (R7) holds.
 
@@ -203,7 +203,7 @@ graph TB
 
 **Verification:** stable ordering with Douyin included; no platform-name conditionals remain.
 
-- [ ] **Unit 3: Per-platform scraper health monitoring**
+- [x] **Unit 3: Per-platform scraper health monitoring**
 
 **Goal:** Record per-platform success/failure each run; ERROR log when a platform's 7-day success rate <60%.
 
@@ -226,7 +226,7 @@ graph TB
 
 **Verification:** a simulated failing platform triggers the ERROR; healthy platforms stay quiet.
 
-- [ ] **Unit 4: `ingest-gossip` batch-injection + source-URL persistence (core + cli + gui)**
+- [x] **Unit 4: `ingest-gossip` batch-injection + source-URL persistence (core + cli + gui)**
 
 **Goal:** Accept a `GossipItem` JSON list; create one lcp job per item; **persist each job's source URL** so the existing crawler can deep-crawl it by job_id. Non-lossy skip reporting + duplicate policy + batch cap. Mirror across CLI + GUI.
 
@@ -267,7 +267,7 @@ graph TB
 
 **Verification:** `lcp ingest-gossip items.json` → `lcp list` shows new `NEW` jobs + a skip summary; `lcp run --until review --job-id <id>` (no `--url`) crawls + processes one to `REVIEW_PENDING`.
 
-- [ ] **Unit 5: Verify existing Stage-2 processing on gossip-injected jobs**
+- [x] **Unit 5: Verify existing Stage-2 processing on gossip-injected jobs**
 
 **Goal:** Prove injected jobs flow through the unchanged gate chain to `REVIEW_PENDING`; deep-crawl extracts body (R3) + image URLs (R4) under the existing SSRF guard.
 
@@ -294,9 +294,21 @@ graph TB
 
 **Verification:** an injected job reaches `REVIEW_PENDING` with body + cover + AI copy + watermark, or parks with a reason — never silently incomplete.
 
-- [ ] **Unit 6: Eatmelon brand cover template + copywriter prompt**
+- [ ] **Unit 6: Eatmelon brand cover template + copywriter prompt** — DEFERRED (operator-input dependent)
 
-**Goal:** Eatmelon brand cover (logo + colors) + a required **text-only template cover**; copywriter prompt for Eatmelon fixed-format tone.
+> Status (2026-06-22): deferred pending operator inputs the plan already marked
+> implementation-time. The brand assets (logo file + colour spec) are
+> operator-provided, and the copywriter Eatmelon prompt is "tune against real LLM
+> output" — neither is inventable here without guessing brand identity or
+> shipping an un-tuned prompt against no live LLM. **Concrete sub-task surfaced
+> by U5:** gossip hot-search titles ("吴磊塌房", ~4 chars) are far below lint's
+> 25–35-char title requirement, so the Eatmelon copywriter prompt must *generate*
+> a proper title from the short hot-search phrase + crawled body (today the
+> operator passes `--title`, or the job parks at `NEEDS_REVISION` "title
+> missing"). That prompt change is the first U6 deliverable once brand/tone
+> inputs land.
+
+**Goal:** Eatmelon brand cover (logo + colors) + a required **text-only template cover**; copywriter prompt for Eatmelon fixed-format tone (incl. title generation from short hot-search phrases — U5 finding).
 
 **Requirements:** R9, R10
 
