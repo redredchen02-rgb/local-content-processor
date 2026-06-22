@@ -28,6 +28,7 @@ from .adapters.crawler.factory import build_crawler
 from .adapters.crawler.ingest import LocalIngestCrawler
 from .adapters.publisher import signoff
 from .adapters.publisher.review_packet import build_review_packet
+from .adapters.storage import gossip_ingest as gi
 from .adapters.storage.audit_log import AuditLog
 from .adapters.storage.config_io import (
     find_config_example,
@@ -235,6 +236,36 @@ def ingest(ctx, directory, job_id):
     c.emit(
         {"job_id": job_id, "state": rec.state.value},
         human=f"ingested {job_id}: {rec.state.value}",
+    )
+
+
+@cli.command(name="ingest-gossip")
+@click.option(
+    "--input", "input_file", default=None,
+    help="GossipItem JSON array file (reads stdin if omitted)",
+)
+@click.pass_context
+def ingest_gossip(ctx, input_file):
+    """Stage 1 bridge: create one job per GossipItem, persisting each source URL.
+
+    Reads a GossipItem JSON array (from --input or stdin), creates one NEW job
+    per valid item, and writes each item's source URL into the job bundle so a
+    later `run --job-id` (no --url) can deep-crawl it. Invalid/duplicate items
+    are skipped with a reason (non-lossy report); an oversized batch is refused."""
+    c = Ctx(ctx.obj)
+    raw = (
+        Path(input_file).read_text(encoding="utf-8")
+        if input_file else sys.stdin.read()
+    )
+    items = gi.parse_payload(raw)
+    p = pl.Pipeline(c.config, c.store, c.audit, dry_run=c.dry_run)
+    report = p.ingest_gossip(items, ts=_now())
+    c.emit(
+        report.to_dict(),
+        human=(
+            f"ingest-gossip: created {len(report.created)}, "
+            f"skipped {len(report.skipped)}"
+        ),
     )
 
 
@@ -556,7 +587,16 @@ def run(ctx, url, input_dir, job_id, target, title, source_urls, ai_copy, templa
     copywriter sections); pass --no-ai-copy to skip. Stops early and reports the
     resting state if a gate parks the job (BLOCKED / DUPLICATE / NEEDS_*)."""
     c = Ctx(ctx.obj)
-    if bool(url) == bool(input_dir):
+    if not url and not input_dir:
+        # An ingested gossip job: its source URL was persisted at ingest time
+        # (data/jobs/<id>/source.json). Read it so the crawl can proceed by id.
+        url = gi.read_source_url(c.store.job_dir(job_id))
+        if not url:
+            raise UsageError(
+                "run requires --url or --input (or an `ingest-gossip` job whose "
+                "source URL was persisted)"
+            )
+    elif bool(url) and bool(input_dir):
         raise UsageError("run requires exactly one of --url or --input")
 
     if url:

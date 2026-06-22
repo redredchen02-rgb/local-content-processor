@@ -57,6 +57,7 @@ from .adapters.crawler.factory import build_crawler
 from .adapters.crawler.ingest import LocalIngestCrawler
 from .adapters.processor.sanitizer import escape_html, inert_link, sanitize_draft
 from .adapters.publisher import signoff
+from .adapters.storage import gossip_ingest as gi
 from .adapters.publisher.review_packet import build_review_packet
 from .adapters.storage.audit_aggregate import aggregate_audit, summarize_gaps
 from .adapters.storage.audit_log import AuditLog
@@ -209,6 +210,35 @@ class Api:
         }
 
     @bridge_safe
+    def crawl_ingested(self, job_id: str) -> dict:
+        """Mirror the CLI `run --job-id` (no --url): crawl a gossip-ingested job
+        by reading the source URL persisted at ingest time. Without this the GUI
+        gossip flow dead-ends — ingest persists the URL precisely so the operator
+        need not re-supply it. SSRF/allowlist is enforced by the runner's
+        preflight (we never resolve the URL here)."""
+        c = self._ctx()
+        url = gi.read_source_url(c.store.job_dir(job_id))
+        if not url:
+            raise _input_error(
+                f"job {job_id} has no persisted source URL (not gossip-ingested?)"
+            )
+        crawler = build_crawler(c.config, c.audit, _now)
+        spec = SourceSpec(
+            job_id=job_id,
+            source_type=SourceType.URL,
+            job_dir=c.store.job_dir(job_id),
+            url=url,
+            max_assets=c.config.crawler.max_assets_per_job,
+        )
+        p = pl.Pipeline(c.config, c.store, c.audit, crawler=crawler)
+        res = p.stage1(spec, ts=_now())
+        return {
+            "job_id": escape_html(job_id),
+            "crawl_status": escape_html(res.crawl_status),
+            "state": res.record.state.value,
+        }
+
+    @bridge_safe
     def ingest_dir(self, job_id: str, directory: str) -> dict:
         """Mirror `ingest`: ingest a local material folder (no network)."""
         c = self._ctx()
@@ -224,6 +254,26 @@ class Api:
         )
         rec = p.stage1(spec, ts=ts).record
         return {"job_id": escape_html(job_id), "state": rec.state.value}
+
+    @bridge_safe
+    def ingest_gossip(self, items_json: str) -> dict:
+        """Mirror `ingest-gossip`: create one job per GossipItem, persisting each
+        source URL for the deferred crawl. Invalid/duplicate items are skipped
+        with a reason (non-lossy). All returned strings are HTML-escaped — the
+        urls/titles are attacker-shapeable scraped data."""
+        c = self._ctx()
+        items = gi.parse_payload(items_json)
+        p = pl.Pipeline(c.config, c.store, c.audit)
+        report = p.ingest_gossip(items, ts=_now())
+        return {
+            "created": [escape_html(j) for j in report.created],
+            "skipped": [
+                {k: escape_html(str(v)) for k, v in rec.items()}
+                for rec in report.skipped
+            ],
+            "created_count": len(report.created),
+            "skipped_count": len(report.skipped),
+        }
 
     # --- Stage 2: process ----------------------------------------------------
 

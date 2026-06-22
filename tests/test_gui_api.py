@@ -802,6 +802,7 @@ def test_every_public_api_method_returns_dict_under_injected_fault(tmp_path, mon
     # delegate to _run_bg (always returns a 'running' dict) so they need no fault.
     dummy = {
         "job_id": "j", "url": "https://e.example/x", "directory": str(tmp_path),
+        "items_json": "[]",
         "title": "t", "reviewer": "alice", "reason": "r", "new_job_id": None,
         "attested": True, "state": None, "label": "l", "source_ref": "https://e.example/y",
         "source_id": "sid", "base_url": "", "model": "", "api_key": "",

@@ -45,6 +45,7 @@ from .adapters.processor import dedup_checker, media_checker, risk_checker
 from .adapters.processor.draft_linter import build_lint_config, run_draft_lint_gate
 from .adapters.publisher.review_packet import ReviewPacket, build_review_packet
 from .adapters.storage.audit_log import EVENT_INTERRUPTED_DETECTED, AuditLog
+from .adapters.storage.gossip_ingest import DEFAULT_MAX_ITEMS, IngestReport, ingest_items
 from .adapters.storage.job_store import JobRecord, JobStore
 from .core.config import Config
 from .core.draft import Draft, DraftStatus
@@ -598,6 +599,18 @@ class Pipeline:
         )
 
     # --- Stage 4: review packet (the freeze + PROCESSED -> REVIEW_PENDING) ---
+
+    def ingest_gossip(
+        self,
+        items: list[dict[str, object]],
+        *,
+        ts: str,
+        max_items: int = DEFAULT_MAX_ITEMS,
+    ) -> IngestReport:
+        """Create one NEW lcp job per GossipItem (persisting each source URL to
+        the job bundle for the deferred crawl). Thin wrapper so the shells don't
+        re-implement the ingest orchestration (plan 001, Unit 4)."""
+        return ingest_items(items, self.store, ts=ts, max_items=max_items)
 
     def build_packet(
         self,

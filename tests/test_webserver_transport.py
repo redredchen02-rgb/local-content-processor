@@ -323,7 +323,8 @@ def test_app_js_served(server):
 # dir(Api) introspection, so adding/removing an Api method (or a route) without
 # updating this list FAILS — the test is falsifiable, not a tautology.
 EXPECTED_ROUTES = frozenset({
-    "init_workspace", "create_and_crawl", "ingest_dir", "templates", "process",
+    "init_workspace", "create_and_crawl", "crawl_ingested", "ingest_dir",
+    "ingest_gossip", "templates", "process",
     "create_and_crawl_async", "process_async", "job_status", "get_job",
     "make_review_packet",
     "get_packet", "cover_report", "approve", "reject", "resolve", "backfill",
