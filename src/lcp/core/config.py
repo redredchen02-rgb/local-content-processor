@@ -65,6 +65,13 @@ class ContentConfig(BaseModel):
     tag_min_count: int = 3
     tag_max_count: int = 5
     uncertainty_terms: list[str] = Field(default_factory=lambda: ["網傳", "疑似", "被曝", "據傳"])
+    # Lint tunables projected into LintConfig by build_lint_config. An empty list
+    # / 0 means "use the rule's calibrated default" (DEFAULT_HYPE_WORDS /
+    # DEFAULT_MIN_COPY_CHARS), so behavior is unchanged until an operator sets
+    # them. hype_words: clickbait/hype tags the linter rejects; min_copy_chars:
+    # the paragraph-length floor for the copied-too-much (plagiarism) check.
+    hype_words: list[str] = Field(default_factory=list)
+    min_copy_chars: int = 0
 
 
 class LlmConfig(BaseModel):

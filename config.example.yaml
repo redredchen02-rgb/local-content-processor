@@ -32,6 +32,11 @@ content:
   tag_min_count: 3
   tag_max_count: 5
   uncertainty_terms: ["網傳", "疑似", "被曝", "據傳"]
+  # Lint tunables. Omit / leave empty to use the linter's calibrated defaults.
+  # hype_words: clickbait/hype tags the linter rejects (objective tags only).
+  # min_copy_chars: paragraph-length floor for the copied-too-much check.
+  hype_words: []
+  min_copy_chars: 0
 
 llm:
   base_url: ""             # company OpenAI-compatible endpoint, must include /v1

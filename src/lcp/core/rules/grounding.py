@@ -34,7 +34,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from functools import lru_cache
 from typing import Protocol, runtime_checkable
 
 from ..draft import Draft
@@ -114,15 +113,16 @@ def _normalize(text: str) -> str:
     return _WS_RE.sub("", _PUNCT_RE.sub("", text.lower()))
 
 
-@lru_cache(maxsize=512)
 def _char_shingles(text: str, n: int = _OVERLAP_NGRAM) -> frozenset[str]:
     """Character n-grams of the normalized text. Works for CJK (no word
     boundaries) AND space-delimited text without a tokenizer/segmenter.
 
-    Memoized (bounded LRU): verify_grounding shingles the SAME source once per
-    claim, so re-shingling it was O(claims x |source|); the cache makes it
-    O(|source|) once per source. Returns a frozenset so the shared cached value
-    is immutable (callers only ever read it)."""
+    NOT memoized with a module-global cache: the key would be the raw source /
+    claim TEXT (PII-bearing), so an LRU would retain it in process memory ACROSS
+    jobs — unacceptable for a compliance-first pipeline. verify_grounding instead
+    shingles the cleaned source ONCE per call and reuses it across claims (see
+    below), so the former O(claims x |source|) cost is avoided with NO cross-job
+    retention. Returns a frozenset (callers only ever read it)."""
     s = _normalize(text)
     if len(s) < n:
         return frozenset({s}) if s else frozenset()
@@ -144,6 +144,14 @@ class SubstringOverlapStrategy:
     overlap_threshold: float = DEFAULT_OVERLAP_THRESHOLD
 
     def is_grounded(self, claim: str, source: str) -> bool:
+        """Protocol seam: shingles the source itself. verify_grounding uses the
+        precomputed-source fast path (``_is_grounded``) to shingle the source
+        ONCE and reuse it across every claim instead of re-shingling per claim."""
+        return self._is_grounded(claim, source, _char_shingles(source))
+
+    def _is_grounded(self, claim: str, source: str, source_grams: frozenset[str]) -> bool:
+        """Overlap check against an ALREADY-shingled source (shared across the
+        claims of one verify_grounding call — see _char_shingles' cache note)."""
         c = claim.strip()
         if not c:
             return True
@@ -152,7 +160,6 @@ class SubstringOverlapStrategy:
         claim_grams = _char_shingles(c)
         if not claim_grams:
             return True
-        source_grams = _char_shingles(source)
         present = sum(1 for g in claim_grams if g in source_grams)
         return present / len(claim_grams) >= self.overlap_threshold
 
@@ -248,9 +255,23 @@ def verify_grounding(
                 )
             )
 
-    # (b) narrative claims checked via the pluggable strategy.
+    # (b) narrative claims checked via the pluggable strategy. The baseline
+    # shingles the cleaned source ONCE here and reuses it across every claim (no
+    # module-global cache — the PII-bearing source must not persist past this
+    # call). An injected (e.g. NLI) strategy uses the plain Protocol seam.
+    # Exact-type (not isinstance): the precompute fast-path is valid ONLY for the
+    # baseline itself. A subclass that overrides is_grounded must reach its
+    # override via the Protocol seam below — never be silently routed through the
+    # parent's _is_grounded. (No subclasses exist today; this is defensive.)
+    baseline = strat if type(strat) is SubstringOverlapStrategy else None
+    source_grams = _char_shingles(cleaned) if baseline is not None else frozenset()
     for claim in _split_claims(draft):
-        if not strat.is_grounded(claim, cleaned):
+        grounded = (
+            baseline._is_grounded(claim, cleaned, source_grams)
+            if baseline is not None
+            else strat.is_grounded(claim, cleaned)
+        )
+        if not grounded:
             ungrounded.append(
                 UngroundedClaim(
                     kind="claim",
