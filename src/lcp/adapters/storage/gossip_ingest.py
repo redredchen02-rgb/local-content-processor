@@ -19,14 +19,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
 from ...core.errors import InputValidationError
 from ..crawler.net_guard import ALLOWED_SCHEMES
+from .config_io import _atomic_write_0600
 from .job_store import JobStore
 
 SOURCE_NAME = "source.json"
@@ -90,29 +89,15 @@ def _valid_scheme(url: str) -> bool:
 
 def write_source(job_dir: Path, *, url: str, platform: str, title: str) -> None:
     """Persist the source URL (+ provenance) to ``<job_dir>/source.json``
-    atomically (0600) — the per-job home for the URL the deferred crawl reads."""
+    atomically (0600) — the per-job home for the URL the deferred crawl reads.
+
+    Reuses the storage layer's shared atomic-0600 writer so the crash-safety /
+    permission invariant lives in exactly one place."""
     payload = json.dumps(
         {"url": url, "platform": platform, "title": title},
         ensure_ascii=False,
     )
-    path = job_dir / SOURCE_NAME
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(
-        dir=str(path.parent), prefix=SOURCE_NAME + ".", suffix=".tmp"
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(payload)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, path)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    _atomic_write_0600(job_dir / SOURCE_NAME, payload)
 
 
 def read_source_url(job_dir: Path) -> str | None:
@@ -121,7 +106,9 @@ def read_source_url(job_dir: Path) -> str | None:
     path = job_dir / SOURCE_NAME
     try:
         raw = path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, ValueError):
+        # ValueError covers UnicodeDecodeError on a non-UTF-8 / corrupt file —
+        # honor the "malformed -> None" contract for every corruption mode.
         return None
     try:
         data = json.loads(raw)

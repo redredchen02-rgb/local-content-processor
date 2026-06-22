@@ -61,7 +61,7 @@ def _truncate(path: Path) -> None:
     """Keep only the most recent _MAX_RECORDS lines (bounded file)."""
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
+    except (OSError, ValueError):  # ValueError = UnicodeDecodeError on a corrupt file
         return
     if len(lines) > _MAX_RECORDS:
         path.write_text("\n".join(lines[-_MAX_RECORDS:]) + "\n", encoding="utf-8")
@@ -75,7 +75,7 @@ def _rolling_rate(path: Path, platform: str, now: float) -> float | None:
     total = 0
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, ValueError):  # ValueError = UnicodeDecodeError on a corrupt file
         return None
     for line in text.splitlines():
         if not line.strip():

@@ -210,6 +210,35 @@ class Api:
         }
 
     @bridge_safe
+    def crawl_ingested(self, job_id: str) -> dict:
+        """Mirror the CLI `run --job-id` (no --url): crawl a gossip-ingested job
+        by reading the source URL persisted at ingest time. Without this the GUI
+        gossip flow dead-ends — ingest persists the URL precisely so the operator
+        need not re-supply it. SSRF/allowlist is enforced by the runner's
+        preflight (we never resolve the URL here)."""
+        c = self._ctx()
+        url = gi.read_source_url(c.store.job_dir(job_id))
+        if not url:
+            raise _input_error(
+                f"job {job_id} has no persisted source URL (not gossip-ingested?)"
+            )
+        crawler = build_crawler(c.config, c.audit, _now)
+        spec = SourceSpec(
+            job_id=job_id,
+            source_type=SourceType.URL,
+            job_dir=c.store.job_dir(job_id),
+            url=url,
+            max_assets=c.config.crawler.max_assets_per_job,
+        )
+        p = pl.Pipeline(c.config, c.store, c.audit, crawler=crawler)
+        res = p.stage1(spec, ts=_now())
+        return {
+            "job_id": escape_html(job_id),
+            "crawl_status": escape_html(res.crawl_status),
+            "state": res.record.state.value,
+        }
+
+    @bridge_safe
     def ingest_dir(self, job_id: str, directory: str) -> dict:
         """Mirror `ingest`: ingest a local material folder (no network)."""
         c = self._ctx()

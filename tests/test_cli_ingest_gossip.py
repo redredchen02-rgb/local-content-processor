@@ -103,8 +103,33 @@ def test_gui_ingest_escapes_scraped_fields(tmp_path):
 
 
 def test_webserver_exposes_ingest_gossip_route():
-    # The action is auto-discovered -> POST /api/ingest_gossip exists.
-    assert "ingest_gossip" in webserver.public_routes(Api)
+    # The actions are auto-discovered -> POST /api/ingest_gossip + /api/crawl_ingested exist.
+    routes = webserver.public_routes(Api)
+    assert "ingest_gossip" in routes
+    assert "crawl_ingested" in routes  # the GUI twin of `run --job-id`
+
+
+def test_gui_crawl_ingested_completes_flow(tmp_path, monkeypatch):
+    # The GUI must be able to crawl an ingested job by id (mirror of the CLI
+    # `run --job-id`) — without this twin the GUI gossip flow dead-ends.
+    import lcp.gui as guimod
+
+    monkeypatch.setattr(guimod, "build_crawler", lambda *a, **k: FakeCrawler())
+    api = Api(config_path=str(tmp_path / "c.yaml"), base_dir=str(tmp_path / "d"))
+    out = api.ingest_gossip(
+        json.dumps([{"platform": "weibo", "title": "x", "url": "https://s.weibo.com/weibo?q=gui"}])
+    )
+    jid = out["created"][0]
+    crawled = api.crawl_ingested(jid)
+    assert crawled["state"] in ("crawled", "crawled_warn")
+
+
+def test_gui_crawl_ingested_without_source_is_bridge_safe(tmp_path):
+    # A job with no persisted source URL -> @bridge_safe error dict, never a raise.
+    api = Api(config_path=str(tmp_path / "c.yaml"), base_dir=str(tmp_path / "d"))
+    out = api.crawl_ingested("no-such")
+    assert isinstance(out, dict)
+    assert "crawl_status" not in out  # did not succeed
 
 
 def test_run_by_job_id_without_source_errors(tmp_path):

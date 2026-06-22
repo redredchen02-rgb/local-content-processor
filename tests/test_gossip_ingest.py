@@ -66,6 +66,30 @@ def test_read_source_url_missing_returns_none(tmp_path) -> None:
     assert gi.read_source_url(store.job_dir("plain-job")) is None
 
 
+def test_read_source_url_non_utf8_returns_none(tmp_path) -> None:
+    # A corrupt / non-UTF-8 source.json must honor the "malformed -> None"
+    # contract (UnicodeDecodeError is a ValueError, not OSError) — never crash run.
+    store = _store(tmp_path)
+    store.ensure_job_dir("corrupt")
+    (store.job_dir("corrupt") / gi.SOURCE_NAME).write_bytes(b"\xff\xfe\x00not-utf8")
+    assert gi.read_source_url(store.job_dir("corrupt")) is None
+
+
+def test_tampered_internal_url_rejected_by_crawl_guard(tmp_path) -> None:
+    # A source.json tampered on disk to an internal URL is read back verbatim
+    # (ingest's cheap scheme check passed), but the crawl-time SSRF guard rejects
+    # it — so the deferred-crawl seam cannot become an SSRF bypass.
+    from lcp.adapters.crawler import net_guard
+
+    store = _store(tmp_path)
+    store.ensure_job_dir("tampered")
+    gi.write_source(store.job_dir("tampered"), url="http://127.0.0.1/x", platform="weibo", title="t")
+    url = gi.read_source_url(store.job_dir("tampered"))
+    assert url == "http://127.0.0.1/x"  # read back as-is
+    with pytest.raises(Exception):
+        net_guard.validate_url(url)  # loopback IP rejected at crawl preflight
+
+
 def test_empty_list(tmp_path) -> None:
     report = gi.ingest_items([], _store(tmp_path), ts=TS)
     assert report.created == [] and report.skipped == []
