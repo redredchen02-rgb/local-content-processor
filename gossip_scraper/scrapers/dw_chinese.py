@@ -1,0 +1,80 @@
+"""DW Chinese RSS scraper — Deutsche Welle news in Chinese."""
+
+from __future__ import annotations
+
+import re
+
+import httpx
+
+from ..models import GossipItem
+
+_DW_RSS = "https://rss.dw.com/rdf/rss-chi-all"
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+    ),
+}
+
+
+class DWChineseScraper:
+    platform = "dw_chinese"
+
+    async def fetch(self, limit: int = 50) -> list[GossipItem]:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(_DW_RSS, headers=_HEADERS)
+            resp.raise_for_status()
+            xml = resp.text
+
+        items = _parse_rdf(xml, limit)
+        return items
+
+
+def _parse_rdf(xml: str, limit: int) -> list[GossipItem]:
+    """Parse RDF/RSS feed into GossipItems."""
+    items: list[GossipItem] = []
+    # RDF uses <item rdf:about="..."> with <title> and <link> inside
+    item_blocks = re.findall(r"<item[^>]*>(.*?)</item>", xml, re.DOTALL)
+    if not item_blocks:
+        # Fallback: try standard RSS <item> pattern
+        item_blocks = re.findall(r"<item>(.*?)</item>", xml, re.DOTALL)
+
+    for i, block in enumerate(item_blocks[:limit]):
+        title_m = re.search(r"<title>(.*?)</title>", block)
+        link_m = re.search(r"<link>(.*?)</link>", block)
+        desc_m = re.search(r"<description>(.*?)</description>", block, re.DOTALL)
+        if not title_m:
+            continue
+        title = title_m.group(1).strip()
+        title = re.sub(r"<!\[CDATA\[(.*?)\]\]>", r"\1", title)
+        # Skip channel titles
+        if "DW" in title or "Deutsche Welle" in title:
+            continue
+        url = link_m.group(1).strip() if link_m else ""
+        desc = ""
+        if desc_m:
+            desc = desc_m.group(1).strip()
+            desc = re.sub(r"<!\[CDATA\[(.*?)\]\]>", r"\1", desc)
+            desc = re.sub(r"<[^>]+>", "", desc).strip()[:200]
+        items.append(
+            GossipItem(
+                platform="dw_chinese",
+                rank=i + 1,
+                title=title,
+                url=url,
+                heat=max(1, (len(item_blocks) - i) * 3500),
+                tag=_tag_from_title(title),
+                description=desc,
+            )
+        )
+    return items
+
+
+def _tag_from_title(title: str) -> str:
+    if "突发" in title or "刚刚" in title:
+        return "突发"
+    if "独家" in title:
+        return "独家"
+    if "热" in title:
+        return "热"
+    return ""
