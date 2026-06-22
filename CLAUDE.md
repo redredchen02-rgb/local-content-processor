@@ -73,7 +73,7 @@ These are load-bearing, not aspirational. `docs/security/pii-inventory.md` is th
 - **PII at rest is plaintext, `0600`.** `apply_hardening()` sets umask `0o077` at startup (call before any file write / subprocess spawn). Job bundles live under `data/jobs/<id>/` (gitignored; never commit `data/`).
 - **LLM is zero-capability.** A single Chat Completions call returning text — no tools, no link-following, no writes. Attacker-shapeable fields are HTML-escaped; source URLs render as **inert text**, never a live `<a href>` and never fetched (on both the packet and the GUI bridge).
 - **Secrets never live in `config.yaml`.** LLM API key comes from the OS keyring (service `local-content-processor`, user `llm`) or `LCP_LLM_API_KEY`. `config.yaml` is gitignored; copy from `config.example.yaml`.
-- **SSRF guards:** scheme allowlist, DNS `is_global` check on the top URL *and* every scraped media URL, Scrapy `allowed_domains`, `REDIRECT_ENABLED=False`. Known accepted residual: DNS-rebinding/TOCTOU on the Scrapy path (it re-resolves at connect).
+- **SSRF guards:** scheme allowlist, DNS `is_global` check on the top URL *and* every scraped media URL, Scrapy `allowed_domains`, `REDIRECT_ENABLED=False`. Known accepted residual: DNS-rebinding/TOCTOU on the Scrapy path (it re-resolves at connect). **Empty `allow_domains` list = open-crawl mode** (any public domain is permitted — `SourceRegistry.is_allowed` returns `True`); populate `allow_domains` in `config.yaml` to restrict to own-site. DNS `is_global` guard still rejects private/loopback addresses in both modes.
 
 ## Conventions
 

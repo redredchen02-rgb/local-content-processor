@@ -528,7 +528,10 @@ def backfill_published_url(
     The URL is NOT stored in the PII-free SQLite index or audit text — only the
     fact that a URL was recorded + the body hash. The URL itself is written to a
     0600 file in the job dir (operator-facing, plaintext, best-effort deletion).
-    We never fetch or resolve it."""
+    We never fetch or resolve it.
+
+    Not reentrant: do not call concurrently on the same job. The file write and
+    state transition are separate operations with no distributed lock between them."""
     # Recording a publish is an accountable action -> require a whitelisted
     # reviewer, exactly like approve/reject.
     _require_whitelisted(config, reviewer)
