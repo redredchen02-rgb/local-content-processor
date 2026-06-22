@@ -81,21 +81,32 @@ def local_server(tmp_path_factory):
         httpd.server_close()
 
 
-def _spawn_crawl(url: str, job_dir: Path, extra_env: dict | None = None) -> subprocess.CompletedProcess:
+def _spawn_crawl(
+    url: str, job_dir: Path, extra_env: dict | None = None
+) -> subprocess.CompletedProcess:
     env = dict(os.environ)
     env["LCP_ALLOW_LOOPBACK_FOR_TESTS"] = "1"
     env["PYTHONPATH"] = REPO_SRC
     if extra_env:
         env.update(extra_env)
     cmd = [
-        sys.executable, "-m", "lcp.adapters.crawler.scrapy_impl",
-        "--url", url,
-        "--job-id", job_dir.name,
-        "--job-dir", str(job_dir),
-        "--allow-domain", "127.0.0.1",
-        "--timeout", "15",
-        "--source-domain", "127.0.0.1",
-        "--fetched-at", TS,
+        sys.executable,
+        "-m",
+        "lcp.adapters.crawler.scrapy_impl",
+        "--url",
+        url,
+        "--job-id",
+        job_dir.name,
+        "--job-dir",
+        str(job_dir),
+        "--allow-domain",
+        "127.0.0.1",
+        "--timeout",
+        "15",
+        "--source-domain",
+        "127.0.0.1",
+        "--fetched-at",
+        TS,
     ]
     return subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=90)
 
@@ -103,6 +114,7 @@ def _spawn_crawl(url: str, job_dir: Path, extra_env: dict | None = None) -> subp
 # --------------------------------------------------------------------------
 # Integration: real Scrapy subprocess against the local server
 # --------------------------------------------------------------------------
+
 
 def test_real_subprocess_crawl_produces_bundle_0600_sha256(local_server, tmp_path):
     job_dir = tmp_path / "jobA"
@@ -141,7 +153,6 @@ def test_real_subprocess_does_not_overwrite_existing_job(local_server, tmp_path)
 def test_subprocess_env_strips_secrets(local_server, tmp_path):
     # The PARENT sets a secret; minimal_env() must NOT pass it to the child. We
     # prove it by having the child fail loudly if the secret is visible.
-    job_dir = tmp_path / "jobC"
     # Build the command via the same minimal_env() the runner uses.
     from lcp.runtime_hardening import minimal_env
 
@@ -161,6 +172,7 @@ def test_subprocess_env_strips_secrets(local_server, tmp_path):
 # Orchestration with an injected subprocess stub (deterministic)
 # --------------------------------------------------------------------------
 
+
 def _registry() -> SourceRegistry:
     return SourceRegistry([SourceEntry(domain="example.com", legal_basis="public press release")])
 
@@ -177,8 +189,10 @@ def test_domain_not_in_allowlist_rejected_and_audited(tmp_path):
     audit = AuditLog(tmp_path / "audit.jsonl")
     runner = CrawlRunner(_registry(), audit=audit, resolver=_good_resolver)
     spec = SourceSpec(
-        job_id="j1", source_type=SourceType.URL,
-        job_dir=tmp_path / "j1", url="https://evil.test/x",
+        job_id="j1",
+        source_type=SourceType.URL,
+        job_dir=tmp_path / "j1",
+        url="https://evil.test/x",
     )
     with pytest.raises(InputValidationError):
         runner.crawl_url(spec, ts=TS)
@@ -209,8 +223,10 @@ def test_ssrf_blocked_and_audited(tmp_path):
     audit = AuditLog(tmp_path / "audit.jsonl")
     runner = CrawlRunner(_registry(), audit=audit, resolver=_internal_resolver)
     spec = SourceSpec(
-        job_id="j2", source_type=SourceType.URL,
-        job_dir=tmp_path / "j2", url="https://example.com/x",
+        job_id="j2",
+        source_type=SourceType.URL,
+        job_dir=tmp_path / "j2",
+        url="https://example.com/x",
     )
     with pytest.raises(InputValidationError):
         runner.crawl_url(spec, ts=TS)
@@ -229,23 +245,32 @@ def test_runner_passes_minimal_env_to_subprocess(tmp_path):
         # simulate the child writing a manifest
         spec_job_dir = tmp_path / "j3"
         from lcp.adapters.crawler.bundle import build_manifest
+
         m = build_manifest(
-            job_id="j3", source_type=SourceType.URL, source_domain="example.com",
-            fetched_at=TS, assets=[], source_html="<html></html>", source_text="body",
+            job_id="j3",
+            source_type=SourceType.URL,
+            source_domain="example.com",
+            fetched_at=TS,
+            assets=[],
+            source_html="<html></html>",
+            source_text="body",
             crawl_status=STATUS_NEEDS_REVISION,
         )
         write_manifest(spec_job_dir, m, create_only=True)
 
         class P:
             returncode = 0
+
         return P()
 
     os.environ["LCP_LLM_API_KEY"] = "sk-secret-xyz"
     try:
         runner = CrawlRunner(_registry(), resolver=_good_resolver, subprocess_runner=fake_run)
         spec = SourceSpec(
-            job_id="j3", source_type=SourceType.URL,
-            job_dir=tmp_path / "j3", url="https://example.com/x",
+            job_id="j3",
+            source_type=SourceType.URL,
+            job_dir=tmp_path / "j3",
+            url="https://example.com/x",
         )
         bundle = runner.crawl_url(spec, ts=TS)
     finally:
@@ -262,8 +287,10 @@ def test_runner_timeout_raises_external_service_error(tmp_path):
 
     runner = CrawlRunner(_registry(), resolver=_good_resolver, subprocess_runner=fake_run)
     spec = SourceSpec(
-        job_id="j4", source_type=SourceType.URL,
-        job_dir=tmp_path / "j4", url="https://example.com/x",
+        job_id="j4",
+        source_type=SourceType.URL,
+        job_dir=tmp_path / "j4",
+        url="https://example.com/x",
     )
     with pytest.raises(ExternalServiceError):
         runner.crawl_url(spec, ts=TS)
@@ -273,12 +300,15 @@ def test_runner_no_manifest_raises_external_service_error(tmp_path):
     def fake_run(cmd, **kwargs):
         class P:
             returncode = 1
+
         return P()  # child "crashed", wrote nothing
 
     runner = CrawlRunner(_registry(), resolver=_good_resolver, subprocess_runner=fake_run)
     spec = SourceSpec(
-        job_id="j5", source_type=SourceType.URL,
-        job_dir=tmp_path / "j5", url="https://example.com/x",
+        job_id="j5",
+        source_type=SourceType.URL,
+        job_dir=tmp_path / "j5",
+        url="https://example.com/x",
     )
     with pytest.raises(ExternalServiceError):
         runner.crawl_url(spec, ts=TS)
@@ -294,8 +324,13 @@ def test_runner_nonzero_rc_with_stale_manifest_raises(tmp_path):
     from lcp.adapters.crawler.bundle import build_manifest
 
     stale = build_manifest(
-        job_id="j6", source_type=SourceType.URL, source_domain="example.com",
-        fetched_at=TS, assets=[], source_html="<html>old</html>", source_text="old",
+        job_id="j6",
+        source_type=SourceType.URL,
+        source_domain="example.com",
+        fetched_at=TS,
+        assets=[],
+        source_html="<html>old</html>",
+        source_text="old",
         crawl_status=STATUS_CRAWLED,
     )
     write_manifest(job_dir, stale, create_only=True)
@@ -303,12 +338,15 @@ def test_runner_nonzero_rc_with_stale_manifest_raises(tmp_path):
     def fake_run(cmd, **kwargs):
         class P:
             returncode = 2  # child crashed this run
+
         return P()
 
     runner = CrawlRunner(_registry(), resolver=_good_resolver, subprocess_runner=fake_run)
     spec = SourceSpec(
-        job_id="j6", source_type=SourceType.URL,
-        job_dir=job_dir, url="https://example.com/x",
+        job_id="j6",
+        source_type=SourceType.URL,
+        job_dir=job_dir,
+        url="https://example.com/x",
     )
     with pytest.raises(ExternalServiceError):
         runner.crawl_url(spec, ts=TS)
@@ -336,13 +374,20 @@ def test_scrapy_main_unexpected_error_returns_nonzero(tmp_path, monkeypatch):
     monkeypatch.setattr(scrapy_impl, "_run_spider", boom)
     rc = scrapy_impl.main(
         [
-            "--url", "http://127.0.0.1/x",
-            "--job-id", "jboom",
-            "--job-dir", str(tmp_path / "jboom"),
-            "--allow-domain", "127.0.0.1",
-            "--timeout", "5",
-            "--source-domain", "127.0.0.1",
-            "--fetched-at", TS,
+            "--url",
+            "http://127.0.0.1/x",
+            "--job-id",
+            "jboom",
+            "--job-dir",
+            str(tmp_path / "jboom"),
+            "--allow-domain",
+            "127.0.0.1",
+            "--timeout",
+            "5",
+            "--source-domain",
+            "127.0.0.1",
+            "--fetched-at",
+            TS,
         ]
     )
     assert rc != 0
@@ -353,6 +398,7 @@ def test_scrapy_main_unexpected_error_returns_nonzero(tmp_path, monkeypatch):
 # (fabricated Scrapy Response — no network)
 # --------------------------------------------------------------------------
 
+
 def _response(html: str, url: str = "https://example.com/a"):
     from scrapy.http import HtmlResponse
 
@@ -362,7 +408,9 @@ def _response(html: str, url: str = "https://example.com/a"):
 def _spec(tmp_path, job_id="jx"):
     d = tmp_path / job_id
     d.mkdir(parents=True, exist_ok=True)
-    return SourceSpec(job_id=job_id, source_type=SourceType.URL, job_dir=d, url="https://example.com/a")
+    return SourceSpec(
+        job_id=job_id, source_type=SourceType.URL, job_dir=d, url="https://example.com/a"
+    )
 
 
 def test_extract_dedupes_duplicate_media_urls():
@@ -390,8 +438,14 @@ def test_title_present_body_empty_needs_revision(tmp_path):
 
 def test_total_extraction_failure_crawl_failed(tmp_path):
     # neither title nor body -> CRAWL_FAILED (retriable)
-    out = {"title": "", "body": "", "image_urls": [], "video_urls": [],
-           "source_html": "<html></html>", "metadata": {"url": "https://example.com/a"}}
+    out = {
+        "title": "",
+        "body": "",
+        "image_urls": [],
+        "video_urls": [],
+        "source_html": "<html></html>",
+        "metadata": {"url": "https://example.com/a"},
+    }
     bundle = scrapy_impl.write_bundle_from_extraction(
         _spec(tmp_path, "jfail"), out, source_domain="example.com", fetched_at=TS
     )
@@ -402,10 +456,14 @@ def test_partial_asset_failure_crawled_warn(tmp_path):
     # one image declared, but the pipeline produced no download -> FAILED ->
     # CRAWLED_WARN (content otherwise complete).
     out = {
-        "title": "Good Title", "body": "Good body text",
-        "image_urls": ["https://example.com/missing.jpg"], "video_urls": [],
-        "source_html": "<html></html>", "metadata": {"url": "https://example.com/a"},
-        "downloaded_images": [], "downloaded_files": [],
+        "title": "Good Title",
+        "body": "Good body text",
+        "image_urls": ["https://example.com/missing.jpg"],
+        "video_urls": [],
+        "source_html": "<html></html>",
+        "metadata": {"url": "https://example.com/a"},
+        "downloaded_images": [],
+        "downloaded_files": [],
     }
     bundle = scrapy_impl.write_bundle_from_extraction(
         _spec(tmp_path, "jwarn"), out, source_domain="example.com", fetched_at=TS
@@ -423,19 +481,23 @@ def test_scrapy_reports_asset_truncation_at_max_assets(tmp_path):
     d = tmp_path / "jtrunc"
     d.mkdir(parents=True, exist_ok=True)
     spec = SourceSpec(
-        job_id="jtrunc", source_type=SourceType.URL, job_dir=d,
-        url="https://example.com/a", max_assets=2,
+        job_id="jtrunc",
+        source_type=SourceType.URL,
+        job_dir=d,
+        url="https://example.com/a",
+        max_assets=2,
     )
     out = {
-        "title": "T", "body": "B",
+        "title": "T",
+        "body": "B",
         "image_urls": [f"https://93.184.216.34/img{i}.jpg" for i in range(5)],
-        "video_urls": [], "source_html": "<html></html>",
+        "video_urls": [],
+        "source_html": "<html></html>",
         "metadata": {"url": "https://example.com/a"},
-        "downloaded_images": [], "downloaded_files": [],
+        "downloaded_images": [],
+        "downloaded_files": [],
     }
-    scrapy_impl.write_bundle_from_extraction(
-        spec, out, source_domain="example.com", fetched_at=TS
-    )
+    scrapy_impl.write_bundle_from_extraction(spec, out, source_domain="example.com", fetched_at=TS)
     report = json.loads((d / "raw" / "crawl_report.json").read_text("utf-8"))
     assert report["truncated_at_max_assets"] is True
     assert report["declared_assets"] == 5
@@ -446,17 +508,19 @@ def test_scrapy_report_no_truncation_when_under_cap(tmp_path):
     # Below the cap: the report records no truncation (guards against a flag that
     # is always True).
     out = {
-        "title": "T", "body": "B",
-        "image_urls": ["https://93.184.216.34/only.jpg"], "video_urls": [],
-        "source_html": "<html></html>", "metadata": {"url": "https://example.com/a"},
-        "downloaded_images": [], "downloaded_files": [],
+        "title": "T",
+        "body": "B",
+        "image_urls": ["https://93.184.216.34/only.jpg"],
+        "video_urls": [],
+        "source_html": "<html></html>",
+        "metadata": {"url": "https://example.com/a"},
+        "downloaded_images": [],
+        "downloaded_files": [],
     }
     scrapy_impl.write_bundle_from_extraction(
         _spec(tmp_path, "junder"), out, source_domain="example.com", fetched_at=TS
     )
-    report = json.loads(
-        (tmp_path / "junder" / "raw" / "crawl_report.json").read_text("utf-8")
-    )
+    report = json.loads((tmp_path / "junder" / "raw" / "crawl_report.json").read_text("utf-8"))
     assert report["truncated_at_max_assets"] is False
 
 
@@ -491,12 +555,12 @@ def test_scraped_media_urls_validated_for_ssrf(tmp_path, monkeypatch):
 
     # write_bundle records the rejected URLs as FAILED assets.
     bundle = scrapy_impl.write_bundle_from_extraction(
-        _spec(tmp_path, "jssrf"), out, source_domain="example.com", fetched_at=TS,
+        _spec(tmp_path, "jssrf"),
+        out,
+        source_domain="example.com",
+        fetched_at=TS,
     )
-    failed_urls = {
-        a.source_url for a in bundle.manifest.assets
-        if a.state is AssetState.FAILED
-    }
+    failed_urls = {a.source_url for a in bundle.manifest.assets if a.state is AssetState.FAILED}
     assert "http://169.254.169.254/latest/meta-data/iam" in failed_urls
     assert "http://127.0.0.1/secret.png" in failed_urls
 
@@ -506,20 +570,24 @@ def test_malformed_and_ssrf_drops_get_distinct_truthful_notes(tmp_path):
     in the manifest — that URL never reached the SSRF preflight. write_bundle emits
     a per-reason note: SSRF rejections vs parse failures get distinct, truthful text."""
     out = {
-        "title": "T", "body": "B",
-        "image_urls": [], "video_urls": [],
-        "rejected_media_urls": ["http://169.254.169.254/meta.jpg"],   # SSRF preflight
-        "malformed_media_urls": ["http://[::bad::]/x.jpg"],           # parse failure
-        "source_html": "<html></html>", "metadata": {"url": "https://example.com/a"},
-        "downloaded_images": [], "downloaded_files": [],
+        "title": "T",
+        "body": "B",
+        "image_urls": [],
+        "video_urls": [],
+        "rejected_media_urls": ["http://169.254.169.254/meta.jpg"],  # SSRF preflight
+        "malformed_media_urls": ["http://[::bad::]/x.jpg"],  # parse failure
+        "source_html": "<html></html>",
+        "metadata": {"url": "https://example.com/a"},
+        "downloaded_images": [],
+        "downloaded_files": [],
     }
     bundle = scrapy_impl.write_bundle_from_extraction(
-        _spec(tmp_path, "jnote"), out, source_domain="example.com", fetched_at=TS,
+        _spec(tmp_path, "jnote"),
+        out,
+        source_domain="example.com",
+        fetched_at=TS,
     )
-    notes = {
-        a.source_url: a.note for a in bundle.manifest.assets
-        if a.state is AssetState.FAILED
-    }
+    notes = {a.source_url: a.note for a in bundle.manifest.assets if a.state is AssetState.FAILED}
     assert "SSRF" in notes["http://169.254.169.254/meta.jpg"]
     # The malformed URL is FAILED+recorded, but NOT labelled an SSRF target.
     assert "SSRF" not in notes["http://[::bad::]/x.jpg"]
@@ -540,6 +608,7 @@ def test_robots_disallow_recorded_not_bypassed():
 # --------------------------------------------------------------------------
 # U12: pipeline-output path containment (defense-in-depth, SECURITY)
 # --------------------------------------------------------------------------
+
 
 def test_relative_to_does_not_collapse_dotdot(tmp_path):
     """U12 regression guard: documents WHY safe_join is required. Path.relative_to
@@ -587,19 +656,28 @@ def test_pipeline_output_traversal_path_marked_failed_no_oob_access(tmp_path, mo
 
     spec = _spec(tmp_path, "jtrav")
     out = {
-        "title": "Good Title", "body": "Good body text",
-        "image_urls": ["https://example.com/evil.jpg"], "video_urls": [],
-        "source_html": "<html></html>", "metadata": {"url": "https://example.com/a"},
+        "title": "Good Title",
+        "body": "Good body text",
+        "image_urls": ["https://example.com/evil.jpg"],
+        "video_urls": [],
+        "source_html": "<html></html>",
+        "metadata": {"url": "https://example.com/a"},
         # the relative path the (hypothetically malicious) pipeline reported escapes
         # the images store via `..` and points at the out-of-tree secret.
         "downloaded_images": [
-            {"url": "https://example.com/evil.jpg",
-             "path": "../../../outside/passwd", "checksum": "x"}
+            {
+                "url": "https://example.com/evil.jpg",
+                "path": "../../../outside/passwd",
+                "checksum": "x",
+            }
         ],
         "downloaded_files": [],
     }
     bundle = scrapy_impl.write_bundle_from_extraction(
-        spec, out, source_domain="example.com", fetched_at=TS,
+        spec,
+        out,
+        source_domain="example.com",
+        fetched_at=TS,
     )
     # The asset is FAILED (rejected by containment), not OK.
     failed = [a for a in bundle.manifest.assets if a.state is AssetState.FAILED]
@@ -622,16 +700,20 @@ def test_pipeline_output_normal_relative_path_resolves_and_reads(tmp_path):
     disk.write_bytes(_real_jpeg())
 
     out = {
-        "title": "Good Title", "body": "Good body text",
-        "image_urls": ["https://example.com/a.jpg"], "video_urls": [],
-        "source_html": "<html></html>", "metadata": {"url": "https://example.com/a"},
-        "downloaded_images": [
-            {"url": "https://example.com/a.jpg", "path": rel, "checksum": "x"}
-        ],
+        "title": "Good Title",
+        "body": "Good body text",
+        "image_urls": ["https://example.com/a.jpg"],
+        "video_urls": [],
+        "source_html": "<html></html>",
+        "metadata": {"url": "https://example.com/a"},
+        "downloaded_images": [{"url": "https://example.com/a.jpg", "path": rel, "checksum": "x"}],
         "downloaded_files": [],
     }
     bundle = scrapy_impl.write_bundle_from_extraction(
-        spec, out, source_domain="example.com", fetched_at=TS,
+        spec,
+        out,
+        source_domain="example.com",
+        fetched_at=TS,
     )
     ok = [a for a in bundle.manifest.assets if a.state is AssetState.OK]
     assert len(ok) == 1
@@ -643,6 +725,7 @@ def test_pipeline_output_normal_relative_path_resolves_and_reads(tmp_path):
 # --------------------------------------------------------------------------
 # U12: raw/ cleanup on a killed/failed crawl so a retry starts clean
 # --------------------------------------------------------------------------
+
 
 def test_timeout_clears_raw_for_clean_retry(tmp_path):
     """U12: a SIGKILL'd (TimeoutExpired) crawl must clear the job's raw/ dir so a
@@ -659,8 +742,10 @@ def test_timeout_clears_raw_for_clean_retry(tmp_path):
 
     runner = CrawlRunner(_registry(), resolver=_good_resolver, subprocess_runner=fake_run_timeout)
     spec = SourceSpec(
-        job_id="jto", source_type=SourceType.URL,
-        job_dir=job_dir, url="https://example.com/x",
+        job_id="jto",
+        source_type=SourceType.URL,
+        job_dir=job_dir,
+        url="https://example.com/x",
     )
     with pytest.raises(ExternalServiceError):
         runner.crawl_url(spec, ts=TS)
@@ -680,12 +765,15 @@ def test_failed_run_no_manifest_clears_raw(tmp_path):
 
         class P:
             returncode = 1
+
         return P()
 
     runner = CrawlRunner(_registry(), resolver=_good_resolver, subprocess_runner=fake_run_fail)
     spec = SourceSpec(
-        job_id="jnoman", source_type=SourceType.URL,
-        job_dir=job_dir, url="https://example.com/x",
+        job_id="jnoman",
+        source_type=SourceType.URL,
+        job_dir=job_dir,
+        url="https://example.com/x",
     )
     with pytest.raises(ExternalServiceError):
         runner.crawl_url(spec, ts=TS)
@@ -705,12 +793,15 @@ def test_clean_raw_then_retry_succeeds(tmp_path):
 
         class P:
             returncode = 1
+
         return P()
 
     runner = CrawlRunner(_registry(), resolver=_good_resolver, subprocess_runner=fake_fail)
     spec = SourceSpec(
-        job_id="jretry", source_type=SourceType.URL,
-        job_dir=job_dir, url="https://example.com/x",
+        job_id="jretry",
+        source_type=SourceType.URL,
+        job_dir=job_dir,
+        url="https://example.com/x",
     )
     with pytest.raises(ExternalServiceError):
         runner.crawl_url(spec, ts=TS)
@@ -719,15 +810,22 @@ def test_clean_raw_then_retry_succeeds(tmp_path):
     # Retry: a clean child write succeeds.
     def fake_ok(cmd, **kwargs):
         from lcp.adapters.crawler.bundle import build_manifest
+
         m = build_manifest(
-            job_id="jretry", source_type=SourceType.URL, source_domain="example.com",
-            fetched_at=TS, assets=[], source_html="<html></html>", source_text="body",
+            job_id="jretry",
+            source_type=SourceType.URL,
+            source_domain="example.com",
+            fetched_at=TS,
+            assets=[],
+            source_html="<html></html>",
+            source_text="body",
             crawl_status=STATUS_CRAWLED,
         )
         write_manifest(job_dir, m, create_only=True)
 
         class P:
             returncode = 0
+
         return P()
 
     runner2 = CrawlRunner(_registry(), resolver=_good_resolver, subprocess_runner=fake_ok)

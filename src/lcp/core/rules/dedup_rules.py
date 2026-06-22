@@ -50,7 +50,12 @@ _TITLE_STOPWORDS: frozenset[str] = frozenset(
     {"the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "與", "的", "了"}
 )
 _SITE_SUFFIXES: tuple[str, ...] = (
-    "| ettoday", "- 自由時報", "｜聯合新聞網", "- 中央社", "| 蘋果新聞網", "- youtube",
+    "| ettoday",
+    "- 自由時報",
+    "｜聯合新聞網",
+    "- 中央社",
+    "| 蘋果新聞網",
+    "- youtube",
 )
 _PUNCT_RE = re.compile(r"[^\w\s]", flags=re.UNICODE)
 _WS_RE = re.compile(r"\s+")
@@ -171,7 +176,9 @@ def _shingles(text: str, k: int) -> set[str]:
     return {" ".join(tokens[i : i + k]) for i in range(len(tokens) - k + 1)}
 
 
-def build_minhash(text: str, *, num_perm: int = DEFAULT_NUM_PERM, k: int = DEFAULT_SHINGLE_K) -> MinHash:
+def build_minhash(
+    text: str, *, num_perm: int = DEFAULT_NUM_PERM, k: int = DEFAULT_SHINGLE_K
+) -> MinHash:
     m = MinHash(num_perm=num_perm)
     for sh in _shingles(text, k):
         m.update(sh.encode("utf-8"))
@@ -251,9 +258,7 @@ def assess_dedup(
     Pure: no disk; `index` is handed in. NEVER auto-reject; `duplicate` is
     advisory (caller maps to the DUPLICATE state)."""
     queries = queries or []
-    reliability = (
-        DedupReliability.HIGH if index.site_index_available else DedupReliability.LOW
-    )
+    reliability = DedupReliability.HIGH if index.site_index_available else DedupReliability.LOW
     warnings: list[str] = []
     if not index.site_index_available:
         warnings.append(
@@ -312,9 +317,7 @@ def assess_dedup(
                 status=DedupStatus.DUPLICATE,
                 matched_items=[best],
                 queries=queries,
-                decision_reason=(
-                    f"body MinHash+exact-Jaccard match >= {duplicate_jaccard}"
-                ),
+                decision_reason=(f"body MinHash+exact-Jaccard match >= {duplicate_jaccard}"),
                 reliability=reliability,
                 warnings=warnings,
             )
@@ -338,8 +341,7 @@ def assess_dedup(
             matched_items=[],
             queries=queries,
             decision_reason=(
-                "no match found, but no trustworthy site index to confirm "
-                "uniqueness (fail-loud)"
+                "no match found, but no trustworthy site index to confirm uniqueness (fail-loud)"
             ),
             reliability=DedupReliability.LOW,
             warnings=warnings,

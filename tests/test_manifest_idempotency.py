@@ -43,9 +43,7 @@ def test_deterministic_skip_on_unchanged(tmp_path):
 
 def test_deterministic_skip_rewrites_on_change(tmp_path):
     M.write_manifest(tmp_path, _manifest(note="old"))
-    written = M.write_manifest(
-        tmp_path, _manifest(note="new"), deterministic_skip=True
-    )
+    written = M.write_manifest(tmp_path, _manifest(note="new"), deterministic_skip=True)
     assert written is True
     assert M.read_manifest(tmp_path).assets[0].note == "new"
 

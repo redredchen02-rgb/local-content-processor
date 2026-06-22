@@ -2,10 +2,10 @@ import pytest
 
 from lcp.core.errors import InputValidationError
 from lcp.core.state import (
-    JobState,
-    ReviewReason,
     TERMINAL_STATES,
     TRANSIENT_STATES,
+    JobState,
+    ReviewReason,
     allowed_transitions,
     is_legal_transition,
     validate_transition,

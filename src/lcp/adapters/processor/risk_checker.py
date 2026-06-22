@@ -56,9 +56,7 @@ def run_risk_gate(
 
     `ts` is supplied by the caller (deterministic, like the rest of the codebase).
     Returns the outcome so the pipeline can decide whether to continue."""
-    result = risk_rules.assess_risk(
-        content, detector, enabled_categories=enabled_categories
-    )
+    result = risk_rules.assess_risk(content, detector, enabled_categories=enabled_categories)
     job_state, review_reason = _map_to_state(result)
 
     # PII-free audit: category codes + counts only.
@@ -85,6 +83,4 @@ def run_risk_gate(
             updated_at=ts,
             review_reason=review_reason,
         )
-    return RiskGateOutcome(
-        result=result, job_state=job_state, review_reason=review_reason
-    )
+    return RiskGateOutcome(result=result, job_state=job_state, review_reason=review_reason)

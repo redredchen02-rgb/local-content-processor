@@ -191,6 +191,4 @@ def run_dedup_gate(
             updated_at=ts,
             review_reason=review_reason,
         )
-    return DedupGateOutcome(
-        result=result, job_state=job_state, review_reason=review_reason
-    )
+    return DedupGateOutcome(result=result, job_state=job_state, review_reason=review_reason)

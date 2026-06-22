@@ -102,12 +102,8 @@ _TRANSITIONS: dict[JobState, frozenset[JobState]] = {
     ),
     JobState.PROCESSED: frozenset({JobState.REVIEW_PENDING}),
     # No REVIEW_PENDING->PROCESSING: freeze is enforced by this edge's absence.
-    JobState.REVIEW_PENDING: frozenset(
-        {JobState.APPROVED, JobState.REJECTED, JobState.SUPERSEDED}
-    ),
-    JobState.APPROVED: frozenset(
-        {JobState.PUBLISHED_RECORDED, JobState.SUPERSEDED}
-    ),
+    JobState.REVIEW_PENDING: frozenset({JobState.APPROVED, JobState.REJECTED, JobState.SUPERSEDED}),
+    JobState.APPROVED: frozenset({JobState.PUBLISHED_RECORDED, JobState.SUPERSEDED}),
     # Operator-only recovery edge (U8): a false-terminal BLOCKED/DUPLICATE job
     # can be abandoned to SUPERSEDED by an explicit human action (never reached
     # by any automatic path in _process_inner/pipeline). The successor set is

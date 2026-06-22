@@ -25,8 +25,9 @@ class FakeCrawler(Crawler):
 
     def crawl(self, spec: SourceSpec) -> RawJobBundle:
         assets = [
-            AssetRef(kind=AssetKind.IMAGE, path="raw/images/a.jpg",
-                     sha256="0" * 64, state=AssetState.OK),
+            AssetRef(
+                kind=AssetKind.IMAGE, path="raw/images/a.jpg", sha256="0" * 64, state=AssetState.OK
+            ),
         ]
         manifest = build_manifest(
             job_id=spec.job_id,

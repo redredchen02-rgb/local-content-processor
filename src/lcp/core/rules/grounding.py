@@ -105,8 +105,7 @@ class GroundingStrategy(Protocol):
     adapter never change. The baseline is substring/overlap; an NLI strategy
     (MiniCheck/SummaC) would return entailment instead, behind the same call."""
 
-    def is_grounded(self, claim: str, source: str) -> bool:
-        ...
+    def is_grounded(self, claim: str, source: str) -> bool: ...
 
 
 def _normalize(text: str) -> str:

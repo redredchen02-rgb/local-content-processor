@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 
 from lcp.adapters.processor._persist import persist_gate_state
+from lcp.adapters.processor.risk_checker import run_risk_gate
 from lcp.adapters.publisher import signoff
 from lcp.adapters.publisher.review_packet import build_review_packet
 from lcp.adapters.publisher.signoff import (
@@ -20,7 +21,6 @@ from lcp.adapters.publisher.signoff import (
     EVENT_SIGNOFF_APPROVE,
     EVENT_SIGNOFF_REJECT,
 )
-from lcp.adapters.processor.risk_checker import run_risk_gate
 from lcp.adapters.storage.audit_log import (
     EVENT_REDLINE_OVERRIDE,
     EVENT_SIGNOFF_INVALIDATED,
@@ -76,7 +76,10 @@ def _review_pending_job(store, audit, job_id="j1", draft=None):
     # Write draft.json so approve(draft=None) can load and verify the hash.
     _save_draft(store, job_id, d)
     return build_review_packet(
-        job_id=job_id, draft=d, store=store, audit=audit,
+        job_id=job_id,
+        draft=d,
+        store=store,
+        audit=audit,
         submitted_at=TS,
     )
 
@@ -88,7 +91,12 @@ def test_approve_then_backfill_completes_loop(config, store, audit):
     _review_pending_job(store, audit, "j1")
 
     rec = signoff.approve(
-        "j1", REVIEWER, config=config, store=store, audit=audit, ts=TS,
+        "j1",
+        REVIEWER,
+        config=config,
+        store=store,
+        audit=audit,
+        ts=TS,
     )
     assert rec.new_state is JobState.APPROVED
     assert store.get_job("j1").state is JobState.APPROVED
@@ -99,8 +107,13 @@ def test_approve_then_backfill_completes_loop(config, store, audit):
     assert store.get_job("j1").state is JobState.APPROVED
 
     new_state = signoff.backfill_published_url(
-        "j1", "https://mysite.example/post/1",
-        config=config, store=store, audit=audit, ts=TS, attested=True,
+        "j1",
+        "https://mysite.example/post/1",
+        config=config,
+        store=store,
+        audit=audit,
+        ts=TS,
+        attested=True,
         reviewer=REVIEWER,
     )
     assert new_state is JobState.PUBLISHED_RECORDED
@@ -140,8 +153,13 @@ def test_backfill_without_attest_stays_approved(config, store, audit):
     signoff.approve("jna", REVIEWER, config=config, store=store, audit=audit, ts=TS)
     with pytest.raises(InputValidationError):
         signoff.backfill_published_url(
-            "jna", "https://site.example/x",
-            config=config, store=store, audit=audit, ts=TS, attested=False,
+            "jna",
+            "https://site.example/x",
+            config=config,
+            store=store,
+            audit=audit,
+            ts=TS,
+            attested=False,
             reviewer=REVIEWER,
         )
     assert store.get_job("jna").state is JobState.APPROVED
@@ -152,8 +170,14 @@ def test_backfill_requires_nonempty_url(config, store, audit):
     signoff.approve("ju", REVIEWER, config=config, store=store, audit=audit, ts=TS)
     with pytest.raises(InputValidationError):
         signoff.backfill_published_url(
-            "ju", "  ", config=config, store=store, audit=audit, ts=TS,
-            attested=True, reviewer=REVIEWER,
+            "ju",
+            "  ",
+            config=config,
+            store=store,
+            audit=audit,
+            ts=TS,
+            attested=True,
+            reviewer=REVIEWER,
         )
     assert store.get_job("ju").state is JobState.APPROVED
 
@@ -164,8 +188,13 @@ def test_backfill_non_whitelisted_reviewer_rejected(config, store, audit):
     signoff.approve("jbw", REVIEWER, config=config, store=store, audit=audit, ts=TS)
     with pytest.raises(InputValidationError):
         signoff.backfill_published_url(
-            "jbw", "https://site.example/x",
-            config=config, store=store, audit=audit, ts=TS, attested=True,
+            "jbw",
+            "https://site.example/x",
+            config=config,
+            store=store,
+            audit=audit,
+            ts=TS,
+            attested=True,
             reviewer="mallory",
         )
     assert store.get_job("jbw").state is JobState.APPROVED
@@ -182,7 +211,12 @@ def test_body_edit_after_freeze_blocks_approval(config, store, audit):
     tampered = _draft(event_body="完全不同的正文，被竄改。")
     with pytest.raises(InputValidationError):
         signoff.approve(
-            "jh", REVIEWER, config=config, store=store, audit=audit, ts=TS,
+            "jh",
+            REVIEWER,
+            config=config,
+            store=store,
+            audit=audit,
+            ts=TS,
             draft=tampered,
         )
     assert store.get_job("jh").state is JobState.REVIEW_PENDING
@@ -214,7 +248,12 @@ def test_unchanged_body_passes_hash_binding(config, store, audit):
     _review_pending_job(store, audit, "jok", draft=original)
     # Re-passing the identical draft hashes to the same body -> allowed.
     rec = signoff.approve(
-        "jok", REVIEWER, config=config, store=store, audit=audit, ts=TS,
+        "jok",
+        REVIEWER,
+        config=config,
+        store=store,
+        audit=audit,
+        ts=TS,
         draft=original,
     )
     assert rec.new_state is JobState.APPROVED
@@ -233,7 +272,12 @@ def test_title_edit_after_freeze_blocks_approval(config, store, audit):
     tampered = _draft(title="完全不同的標題，已被竄改")
     with pytest.raises(InputValidationError):
         signoff.approve(
-            "jt", REVIEWER, config=config, store=store, audit=audit, ts=TS,
+            "jt",
+            REVIEWER,
+            config=config,
+            store=store,
+            audit=audit,
+            ts=TS,
             draft=tampered,
         )
     assert store.get_job("jt").state is JobState.REVIEW_PENDING
@@ -262,7 +306,12 @@ def test_unchanged_cover_passes(config, store, audit):
     cover_src.write_bytes(b"stable-cover-bytes")
     _review_pending_job(store, audit, job_id)
     rec = signoff.approve(
-        job_id, REVIEWER, config=config, store=store, audit=audit, ts=TS,
+        job_id,
+        REVIEWER,
+        config=config,
+        store=store,
+        audit=audit,
+        ts=TS,
     )
     assert rec.new_state is JobState.APPROVED
 
@@ -278,9 +327,7 @@ def test_unchanged_cover_passes(config, store, audit):
         (JobState.NEEDS_HUMAN_REVIEW, ReviewReason.RISK),
     ],
 )
-def test_cannot_approve_blocked_duplicate_or_needs_review(
-    config, store, audit, target, reason
-):
+def test_cannot_approve_blocked_duplicate_or_needs_review(config, store, audit, target, reason):
     store.create_job("jx", created_at=TS)
     store.set_state("jx", JobState.CRAWLED, updated_at=TS)
     persist_gate_state(store, "jx", target, updated_at=TS, review_reason=reason)
@@ -299,7 +346,11 @@ def test_supersede_approved_invalidates_signoff_and_links_new_job(config, store,
     signoff.approve("old", REVIEWER, config=config, store=store, audit=audit, ts=TS)
 
     new_state = signoff.supersede(
-        "old", store=store, audit=audit, ts=TS, new_job_id="new",
+        "old",
+        store=store,
+        audit=audit,
+        ts=TS,
+        new_job_id="new",
     )
     assert new_state is JobState.SUPERSEDED
     assert store.get_job("old").state is JobState.SUPERSEDED
@@ -321,8 +372,14 @@ def test_cannot_supersede_terminal_published(config, store, audit):
     _review_pending_job(store, audit, "pub")
     signoff.approve("pub", REVIEWER, config=config, store=store, audit=audit, ts=TS)
     signoff.backfill_published_url(
-        "pub", "https://x.example/1", config=config, store=store, audit=audit,
-        ts=TS, attested=True, reviewer=REVIEWER,
+        "pub",
+        "https://x.example/1",
+        config=config,
+        store=store,
+        audit=audit,
+        ts=TS,
+        attested=True,
+        reviewer=REVIEWER,
     )
     with pytest.raises(InputValidationError):
         signoff.supersede("pub", store=store, audit=audit, ts=TS)
@@ -369,8 +426,13 @@ def test_blocked_recovery_requires_redline_override(config, store, audit):
 def test_blocked_recovery_with_override_emits_redline_override_event(config, store, audit):
     _blocked_via_risk_gate(store, audit, "jb")
     new_state = signoff.supersede(
-        "jb", store=store, audit=audit, ts=TS, actor="alice",
-        redline_override=True, new_job_id="jb2",
+        "jb",
+        store=store,
+        audit=audit,
+        ts=TS,
+        actor="alice",
+        redline_override=True,
+        new_job_id="jb2",
     )
     assert new_state is JobState.SUPERSEDED
     assert store.get_job("jb").state is JobState.SUPERSEDED
@@ -396,7 +458,12 @@ def test_duplicate_recovery_is_ordinary_single_step(config, store, audit):
     # (it was never signed off).
     _duplicate_job(store, "jd")
     new_state = signoff.supersede(
-        "jd", store=store, audit=audit, ts=TS, actor="alice", new_job_id="jd2",
+        "jd",
+        store=store,
+        audit=audit,
+        ts=TS,
+        actor="alice",
+        new_job_id="jd2",
     )
     assert new_state is JobState.SUPERSEDED
     events = [l["event"] for l in audit._read_lines()]
@@ -405,7 +472,9 @@ def test_duplicate_recovery_is_ordinary_single_step(config, store, audit):
     assert EVENT_SIGNOFF_INVALIDATED not in events
 
 
-def test_blocked_supersede_refuses_without_supersedable_extension(monkeypatch, config, store, audit):
+def test_blocked_supersede_refuses_without_supersedable_extension(
+    monkeypatch, config, store, audit
+):
     # Regression guard: the state-table edge alone is NOT enough — `supersede`
     # independently gates on _SUPERSEDABLE. If BLOCKED were dropped from the
     # frozenset, even a correct override gesture must still refuse.
@@ -414,7 +483,11 @@ def test_blocked_supersede_refuses_without_supersedable_extension(monkeypatch, c
     monkeypatch.setattr(signoff, "_SUPERSEDABLE", narrowed)
     with pytest.raises(InputValidationError):
         signoff.supersede(
-            "jb", store=store, audit=audit, ts=TS, actor="alice",
+            "jb",
+            store=store,
+            audit=audit,
+            ts=TS,
+            actor="alice",
             redline_override=True,
         )
 
@@ -436,7 +509,10 @@ def _nhr_job(store, job_id, reason, *, draft=None, source_text=None):
     if draft is not None:
         save_draft(store, job_id, draft)
     persist_gate_state(
-        store, job_id, JobState.NEEDS_HUMAN_REVIEW, updated_at=TS,
+        store,
+        job_id,
+        JobState.NEEDS_HUMAN_REVIEW,
+        updated_at=TS,
         review_reason=reason,
     )
 
@@ -448,7 +524,12 @@ def test_resolve_risk_dedup_hold_via_override(config, store, audit, reason):
 
     _nhr_job(store, "jr", reason)
     rec = signoff.resolve(
-        "jr", REVIEWER, config=config, store=store, audit=audit, ts=TS,
+        "jr",
+        REVIEWER,
+        config=config,
+        store=store,
+        audit=audit,
+        ts=TS,
         reason="manually reviewed, false positive",
     )
     assert rec.new_state is JobState.PROCESSED
@@ -463,7 +544,12 @@ def test_resolve_override_requires_reason(config, store, audit):
     _nhr_job(store, "jor", ReviewReason.RISK)
     with pytest.raises(InputValidationError):
         signoff.resolve(
-            "jor", REVIEWER, config=config, store=store, audit=audit, ts=TS,
+            "jor",
+            REVIEWER,
+            config=config,
+            store=store,
+            audit=audit,
+            ts=TS,
         )
     assert store.get_job("jor").state is JobState.NEEDS_HUMAN_REVIEW
 
@@ -496,7 +582,12 @@ def test_resolve_grounding_hold_relint_clean_promotes(config, store, audit):
     assert len(draft.title) >= 25 and len(draft.title) <= 35
     _nhr_job(store, "jg", ReviewReason.GROUNDING, draft=draft, source_text=source)
     rec = signoff.resolve(
-        "jg", REVIEWER, config=config, store=store, audit=audit, ts=TS,
+        "jg",
+        REVIEWER,
+        config=config,
+        store=store,
+        audit=audit,
+        ts=TS,
         relint=True,
     )
     assert rec.new_state is JobState.PROCESSED
@@ -518,7 +609,12 @@ def test_resolve_grounding_relint_dirty_lint_refuses(config, store, audit):
     _nhr_job(store, "jgd", ReviewReason.GROUNDING, draft=draft, source_text=source)
     with pytest.raises(InputValidationError) as ei:
         signoff.resolve(
-            "jgd", REVIEWER, config=config, store=store, audit=audit, ts=TS,
+            "jgd",
+            REVIEWER,
+            config=config,
+            store=store,
+            audit=audit,
+            ts=TS,
             relint=True,
         )
     # U5: signoff keeps the exact operator-facing refusal (message + exit code);
@@ -528,9 +624,7 @@ def test_resolve_grounding_relint_dirty_lint_refuses(config, store, audit):
     assert store.get_job("jgd").state is JobState.NEEDS_HUMAN_REVIEW
 
 
-@pytest.mark.parametrize(
-    "reason", [ReviewReason.RISK, ReviewReason.DEDUP, ReviewReason.GROUNDING]
-)
+@pytest.mark.parametrize("reason", [ReviewReason.RISK, ReviewReason.DEDUP, ReviewReason.GROUNDING])
 def test_reject_nhr_without_freeze_reaches_rejected(config, store, audit, reason):
     """A NEEDS_HUMAN_REVIEW job (no packet/freeze) can be rejected -> REJECTED.
 
@@ -540,8 +634,13 @@ def test_reject_nhr_without_freeze_reaches_rejected(config, store, audit, reason
 
     _nhr_job(store, "jrej", reason)
     rec = signoff.reject(
-        "jrej", REVIEWER, "not suitable",
-        config=config, store=store, audit=audit, ts=TS,
+        "jrej",
+        REVIEWER,
+        "not suitable",
+        config=config,
+        store=store,
+        audit=audit,
+        ts=TS,
     )
     assert rec.new_state is JobState.REJECTED
     assert store.get_job("jrej").state is JobState.REJECTED
@@ -553,7 +652,12 @@ def test_resolve_requires_nhr_state(config, store, audit):
     _review_pending_job(store, audit, "jrp")
     with pytest.raises(InputValidationError):
         signoff.resolve(
-            "jrp", REVIEWER, config=config, store=store, audit=audit, ts=TS,
+            "jrp",
+            REVIEWER,
+            config=config,
+            store=store,
+            audit=audit,
+            ts=TS,
             reason="x",
         )
 
@@ -562,7 +666,12 @@ def test_resolve_non_whitelisted_rejected(config, store, audit):
     _nhr_job(store, "jnw", ReviewReason.RISK)
     with pytest.raises(InputValidationError):
         signoff.resolve(
-            "jnw", "mallory", config=config, store=store, audit=audit, ts=TS,
+            "jnw",
+            "mallory",
+            config=config,
+            store=store,
+            audit=audit,
+            ts=TS,
             reason="x",
         )
     assert store.get_job("jnw").state is JobState.NEEDS_HUMAN_REVIEW
@@ -571,7 +680,11 @@ def test_resolve_non_whitelisted_rejected(config, store, audit):
 def test_supersede_nhr_is_allowed(config, store, audit):
     _nhr_job(store, "jsup", ReviewReason.DEDUP)
     new_state = signoff.supersede(
-        "jsup", store=store, audit=audit, ts=TS, new_job_id="jsup2",
+        "jsup",
+        store=store,
+        audit=audit,
+        ts=TS,
+        new_job_id="jsup2",
     )
     assert new_state is JobState.SUPERSEDED
     assert store.get_job("jsup").state is JobState.SUPERSEDED
@@ -607,8 +720,14 @@ def test_audit_chain_verifies_after_full_loop(config, store, audit):
     _review_pending_job(store, audit, "j1")
     signoff.approve("j1", REVIEWER, config=config, store=store, audit=audit, ts=TS)
     signoff.backfill_published_url(
-        "j1", "https://x.example/1", config=config, store=store, audit=audit,
-        ts=TS, attested=True, reviewer=REVIEWER,
+        "j1",
+        "https://x.example/1",
+        config=config,
+        store=store,
+        audit=audit,
+        ts=TS,
+        attested=True,
+        reviewer=REVIEWER,
     )
     assert audit.verify_chain()
     pub = [l for l in audit._read_lines() if l["event"] == EVENT_PUBLISHED_RECORDED][-1]
@@ -634,24 +753,34 @@ def test_backfill_observed_os_user_called_once(config, store, audit, monkeypatch
     _review_pending_job(store, audit, "ju5")
     signoff.approve("ju5", REVIEWER, config=config, store=store, audit=audit, ts=TS)
     signoff.backfill_published_url(
-        "ju5", "https://x.example/1", config=config, store=store, audit=audit,
-        ts=TS, attested=True, reviewer=REVIEWER,
+        "ju5",
+        "https://x.example/1",
+        config=config,
+        store=store,
+        audit=audit,
+        ts=TS,
+        attested=True,
+        reviewer=REVIEWER,
     )
     # Count calls made BY backfill_published_url specifically (approve also calls it).
     # After approve, the count should be N; after backfill it should be N+1 (once).
-    backfill_start = len([c for c in calls[:] if True])
     # Reset counter for isolation
+    calls.clear()
     calls.clear()
     _review_pending_job(store, audit, "ju5b")
     signoff.approve("ju5b", REVIEWER, config=config, store=store, audit=audit, ts=TS)
     calls.clear()
     signoff.backfill_published_url(
-        "ju5b", "https://x.example/2", config=config, store=store, audit=audit,
-        ts=TS, attested=True, reviewer=REVIEWER,
+        "ju5b",
+        "https://x.example/2",
+        config=config,
+        store=store,
+        audit=audit,
+        ts=TS,
+        attested=True,
+        reviewer=REVIEWER,
     )
-    assert len(calls) == 1, (
-        f"observed_os_user() called {len(calls)} times in backfill; expected 1"
-    )
+    assert len(calls) == 1, f"observed_os_user() called {len(calls)} times in backfill; expected 1"
 
 
 def test_backfill_url_file_is_atomic(config, store, audit, tmp_path, monkeypatch):
@@ -670,13 +799,17 @@ def test_backfill_url_file_is_atomic(config, store, audit, tmp_path, monkeypatch
     _review_pending_job(store, audit, "ju5c")
     signoff.approve("ju5c", REVIEWER, config=config, store=store, audit=audit, ts=TS)
     signoff.backfill_published_url(
-        "ju5c", "https://x.example/3", config=config, store=store, audit=audit,
-        ts=TS, attested=True, reviewer=REVIEWER,
+        "ju5c",
+        "https://x.example/3",
+        config=config,
+        store=store,
+        audit=audit,
+        ts=TS,
+        attested=True,
+        reviewer=REVIEWER,
     )
     # An atomic write uses os.replace(tmp, dst); a non-atomic open('w') uses none.
-    url_writes = [
-        (s, d) for s, d in writes if "published_url" in str(d)
-    ]
+    url_writes = [(s, d) for s, d in writes if "published_url" in str(d)]
     assert url_writes, "backfill did not use os.replace() for published_url.txt — not atomic"
 
 

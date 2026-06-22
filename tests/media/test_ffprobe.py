@@ -13,8 +13,8 @@ import subprocess
 
 import pytest
 
-from lcp.core.errors import DependencyError, ExternalServiceError
 from lcp.adapters.media import ffprobe
+from lcp.core.errors import DependencyError, ExternalServiceError
 from lcp.runtime_hardening import minimal_env
 
 _HAVE_FFMPEG = shutil.which("ffmpeg") is not None
@@ -28,8 +28,15 @@ pytestmark = pytest.mark.skipif(
 
 def _ffmpeg_gen(argv_tail: list[str]) -> None:
     subprocess.run(
-        [shutil.which("ffmpeg"), "-nostdin", "-y", "-hide_banner", "-loglevel",
-         "error", *argv_tail],
+        [
+            shutil.which("ffmpeg"),
+            "-nostdin",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            *argv_tail,
+        ],
         check=True,
         env=minimal_env(),
         timeout=60,
@@ -43,10 +50,22 @@ def sample_video(tmp_path_factory):
     out = d / "sample.mp4"
     _ffmpeg_gen(
         [
-            "-f", "lavfi", "-i", "testsrc=size=1280x720:rate=30:duration=1",
-            "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
-            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
-            "-shortest", str(out),
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=1280x720:rate=30:duration=1",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=1",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-shortest",
+            str(out),
         ]
     )
     return out
@@ -59,12 +78,23 @@ def black_video(tmp_path_factory):
     out = d / "black.mp4"
     _ffmpeg_gen(
         [
-            "-f", "lavfi", "-i",
+            "-f",
+            "lavfi",
+            "-i",
             "testsrc=size=640x480:rate=25:duration=1",
-            "-f", "lavfi", "-i",
+            "-f",
+            "lavfi",
+            "-i",
             "color=c=black:size=640x480:rate=25:duration=1",
-            "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
-            "-map", "[v]", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(out),
+            "-filter_complex",
+            "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+            "-map",
+            "[v]",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            str(out),
         ]
     )
     return out
@@ -77,10 +107,22 @@ def silent_video(tmp_path_factory):
     out = d / "silent.mp4"
     _ffmpeg_gen(
         [
-            "-f", "lavfi", "-i", "testsrc=size=320x240:rate=25:duration=1",
-            "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono",
-            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
-            "-shortest", str(out),
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=320x240:rate=25:duration=1",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=r=44100:cl=mono",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-shortest",
+            str(out),
         ]
     )
     return out

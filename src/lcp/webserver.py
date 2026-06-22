@@ -93,9 +93,7 @@ def allowed_hosts(port: int) -> frozenset[str]:
     are included for operator convenience even though we bind IPv4 127.0.0.1 —
     allowing a name that cannot reach the socket is harmless; the reverse
     (binding a name we do not allow) is what breaks."""
-    return frozenset(
-        {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
-    )
+    return frozenset({f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"})
 
 
 def loopback_origins(port: int) -> frozenset[str]:
@@ -115,9 +113,7 @@ def _header(headers: Mapping[str, str], name: str) -> str | None:
     return None
 
 
-def authorize(
-    *, path: str, headers: Mapping[str, str], token: str, port: int
-) -> str | None:
+def authorize(*, path: str, headers: Mapping[str, str], token: str, port: int) -> str | None:
     """Run the fail-closed request-auth chain. Return a denial REASON, or ``None``
     when the request may proceed. Order is Host -> token -> CSRF; any miss denies.
 
@@ -292,8 +288,10 @@ class _Handler(BaseHTTPRequestHandler):
         """Run the gate chain; on denial send a minimal 401 (token) / 403 (other)
         and return False. The exact internal reason is never sent to the client."""
         reason = authorize(
-            path=self.path, headers=dict(self.headers.items()),
-            token=self._srv.token, port=self._srv.public_port,
+            path=self.path,
+            headers=dict(self.headers.items()),
+            token=self._srv.token,
+            port=self._srv.public_port,
         )
         if reason is None:
             return True
@@ -324,9 +322,7 @@ class _Handler(BaseHTTPRequestHandler):
         content_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
         if candidate.name == "index.html":
             # Inject the live per-launch token into the page's <meta>.
-            data = data.replace(
-                TOKEN_PLACEHOLDER.encode(), self._srv.token.encode()
-            )
+            data = data.replace(TOKEN_PLACEHOLDER.encode(), self._srv.token.encode())
         self._send(200, data, content_type)
 
     # --- POST: /api/<method> dispatch -------------------------------------
@@ -336,16 +332,14 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if not self._authorized():
             return
-        name = self.path[len(API_PREFIX):].split("?", 1)[0]
+        name = self.path[len(API_PREFIX) :].split("?", 1)[0]
         if name not in self._srv.routes:
             self._deny(404, "not found")
             return
         try:
             self._dispatch_guarded(name)
         except Exception:  # noqa: BLE001 - last-resort net: never leak a stack
-            self._send_json(
-                {"error": "internal error", "exit_code": EXIT_INTERNAL}
-            )
+            self._send_json({"error": "internal error", "exit_code": EXIT_INTERNAL})
 
     def _dispatch_guarded(self, name: str) -> None:
         # Parse {"args": [...]} — a malformed body is a typed input error, not a 500.
@@ -360,7 +354,7 @@ class _Handler(BaseHTTPRequestHandler):
             payload = json.loads(raw) if raw else {}
             args = payload.get("args", []) if isinstance(payload, dict) else None
             if not isinstance(args, list):
-                raise InputValidationError("request body must be {\"args\": [...]}")
+                raise InputValidationError('request body must be {"args": [...]}')
         except (ValueError, InputValidationError) as e:
             err = e if isinstance(e, LcpError) else InputValidationError("malformed request body")
             self._send_json(_error_dict_for(err))

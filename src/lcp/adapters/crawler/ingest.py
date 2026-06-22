@@ -69,8 +69,7 @@ class LocalIngestCrawler(Crawler):
         # Otherwise a second ingest would clobber source.txt/media and THEN raise.
         if manifest_path(spec.job_dir).exists():
             raise InputValidationError(
-                f"job bundle already exists for {spec.job_id}; refusing to "
-                "overwrite (create_only)"
+                f"job bundle already exists for {spec.job_id}; refusing to overwrite (create_only)"
             )
 
         raw_dir = spec.job_dir / "raw"
@@ -139,7 +138,9 @@ class LocalIngestCrawler(Crawler):
                 # max_assets slot (it produced no usable asset).
                 assets.append(
                     AssetRef(
-                        kind=kind, path=member.name, state=AssetState.FAILED,
+                        kind=kind,
+                        path=member.name,
+                        state=AssetState.FAILED,
                         note="empty file (unopenable)",
                     )
                 )
@@ -179,15 +180,12 @@ class LocalIngestCrawler(Crawler):
         # Completeness report (Unit 10): what was imported vs flagged/skipped, so a
         # mixed pack with missing or unopenable items is visible, not silent. PII-
         # free: filenames are operator-chosen, not subject content.
-        ok_images = sum(
-            1 for a in assets if a.kind is AssetKind.IMAGE and a.state is AssetState.OK
-        )
-        ok_videos = sum(
-            1 for a in assets if a.kind is AssetKind.VIDEO and a.state is AssetState.OK
-        )
+        ok_images = sum(1 for a in assets if a.kind is AssetKind.IMAGE and a.state is AssetState.OK)
+        ok_videos = sum(1 for a in assets if a.kind is AssetKind.VIDEO and a.state is AssetState.OK)
         failed = [
             {"name": Path(a.path).name, "reason": a.note or "failed"}
-            for a in assets if a.state is AssetState.FAILED
+            for a in assets
+            if a.state is AssetState.FAILED
         ]
         report = {
             "job_id": spec.job_id,

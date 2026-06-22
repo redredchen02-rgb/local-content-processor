@@ -5,7 +5,6 @@ from __future__ import annotations
 from lcp.core.models import AssetState
 from lcp.core.rules import asset_rules
 
-
 # --- predicates ---------------------------------------------------------------
 
 
@@ -70,9 +69,7 @@ def test_judge_image_skips_blur_when_variance_none():
 
 
 def test_judge_video_ok():
-    d = asset_rules.judge_video(
-        codec="h264", fps=30.0, bitrate_mbps=4.0, width=1280, height=720
-    )
+    d = asset_rules.judge_video(codec="h264", fps=30.0, bitrate_mbps=4.0, width=1280, height=720)
     assert d.ok
 
 
@@ -82,17 +79,13 @@ def test_video_spec_ok_boolean_mirror():
 
 
 def test_judge_video_wrong_codec():
-    d = asset_rules.judge_video(
-        codec="mpeg4", fps=30.0, bitrate_mbps=4.0, width=1280, height=720
-    )
+    d = asset_rules.judge_video(codec="mpeg4", fps=30.0, bitrate_mbps=4.0, width=1280, height=720)
     assert d.state == AssetState.NEEDS_REVISION
     assert any("codec" in r for r in d.reasons)
 
 
 def test_judge_video_low_bitrate():
-    d = asset_rules.judge_video(
-        codec="h264", fps=30.0, bitrate_mbps=0.3, width=1280, height=720
-    )
+    d = asset_rules.judge_video(codec="h264", fps=30.0, bitrate_mbps=0.3, width=1280, height=720)
     assert any("bitrate" in r for r in d.reasons)
 
 
@@ -103,9 +96,7 @@ def test_judge_video_fps_out_of_range():
 
 
 def test_judge_video_missing_facts_flagged():
-    d = asset_rules.judge_video(
-        codec=None, fps=None, bitrate_mbps=None, width=None, height=None
-    )
+    d = asset_rules.judge_video(codec=None, fps=None, bitrate_mbps=None, width=None, height=None)
     assert d.state == AssetState.NEEDS_REVISION
     # codec, fps, bitrate, resolution -> 4 reasons
     assert len(d.reasons) == 4

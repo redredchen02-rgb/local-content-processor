@@ -39,7 +39,7 @@ from ...core.rules.extraction import extract_content as _core_extract
 from ..storage.manifest import write_manifest
 from . import net_guard
 from .base import RawJobBundle, SourceSpec
-from .bundle import build_manifest, derive_status, sha256_bytes, sha256_text
+from .bundle import build_manifest, derive_status, sha256_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,7 @@ logger = logging.getLogger(__name__)
 # Second-order SSRF guard (I/O — stays in the adapter; injected into the pure
 # core extractor, core/rules/extraction.py, which does no I/O of its own)
 # --------------------------------------------------------------------------
+
 
 def _media_url_is_safe(url: str) -> bool:
     """SECOND-ORDER SSRF guard: validate a scraped media URL through net_guard
@@ -68,9 +69,7 @@ def _media_url_is_safe(url: str) -> bool:
     except Exception as e:  # noqa: BLE001 - stay fail-closed but surface the bug
         # An UNEXPECTED guard error must not be silently swallowed; log it (no
         # attacker content) and still fail closed (drop the URL, never download).
-        logger.warning(
-            "unexpected media-URL guard error (%s); dropping URL", type(e).__name__
-        )
+        logger.warning("unexpected media-URL guard error (%s); dropping URL", type(e).__name__)
         return False
 
 
@@ -86,11 +85,12 @@ def extract_content(response: Any) -> dict[str, Any]:
 # Scrapy settings
 # --------------------------------------------------------------------------
 
+
 def build_settings(*, job_dir: Path, allow_domains: list[str], timeout: int) -> dict[str, Any]:
     """Scrapy settings dict enforcing the plan's crawl policy."""
     raw = job_dir / "raw"
     return {
-        "ROBOTSTXT_OBEY": True,             # never bypass robots (R8)
+        "ROBOTSTXT_OBEY": True,  # never bypass robots (R8)
         "AUTOTHROTTLE_ENABLED": True,
         "AUTOTHROTTLE_START_DELAY": 1.0,
         "AUTOTHROTTLE_MAX_DELAY": 10.0,
@@ -98,7 +98,7 @@ def build_settings(*, job_dir: Path, allow_domains: list[str], timeout: int) -> 
         "RETRY_ENABLED": True,
         "RETRY_TIMES": 2,
         "RETRY_HTTP_CODES": [500, 502, 503, 504, 408, 429],
-        "REDIRECT_ENABLED": False,          # do not blindly follow redirects (R40)
+        "REDIRECT_ENABLED": False,  # do not blindly follow redirects (R40)
         "COOKIES_ENABLED": False,
         "TELNETCONSOLE_ENABLED": False,
         "LOG_LEVEL": "ERROR",
@@ -116,6 +116,7 @@ def build_settings(*, job_dir: Path, allow_domains: list[str], timeout: int) -> 
 # --------------------------------------------------------------------------
 # Spider (imported lazily so the module imports without scrapy where unused)
 # --------------------------------------------------------------------------
+
 
 def _make_spider_cls() -> type[Any]:
     import scrapy
@@ -150,15 +151,14 @@ def _make_spider_cls() -> type[Any]:
 # Subprocess entrypoint
 # --------------------------------------------------------------------------
 
+
 def _run_spider(spec: SourceSpec, allow_domains: list[str], timeout: int) -> dict[str, Any]:
     """Run the Scrapy spider in-process (we are already in the subprocess).
     Returns the extracted dict, or {} on total failure."""
     from scrapy.crawler import CrawlerProcess
 
     spider_cls = _make_spider_cls()
-    settings = build_settings(
-        job_dir=spec.job_dir, allow_domains=allow_domains, timeout=timeout
-    )
+    settings = build_settings(job_dir=spec.job_dir, allow_domains=allow_domains, timeout=timeout)
     holder: dict[str, Any] = {}
 
     process = CrawlerProcess(settings=settings, install_root_handler=False)
@@ -240,9 +240,7 @@ def write_bundle_from_extraction(
     malformed = extracted.get("malformed_media_urls", [])
     for url, note in [
         (u, "rejected by SSRF guard (internal/metadata target)") for u in rejected
-    ] + [
-        (u, "dropped: malformed media URL (unparseable host)") for u in malformed
-    ]:
+    ] + [(u, "dropped: malformed media URL (unparseable host)") for u in malformed]:
         if len(assets) >= spec.max_assets:
             break
         kind = classify_media_url(url) or AssetKind.IMAGE
@@ -300,9 +298,7 @@ def write_bundle_from_extraction(
         crawl_status=status,
     )
     write_manifest(spec.job_dir, manifest, create_only=True)
-    return RawJobBundle(
-        job_id=spec.job_id, raw_dir=raw, manifest=manifest, job_status=status
-    )
+    return RawJobBundle(job_id=spec.job_id, raw_dir=raw, manifest=manifest, job_status=status)
 
 
 def _assets_from_pipeline_output(
@@ -350,8 +346,9 @@ def _assets_from_pipeline_output(
                     sha = sha256_bytes(data)
                     rel = disk_path.relative_to(job_dir).as_posix()
                     assets.append(
-                        AssetRef(kind=kind, path=rel, source_url=url,
-                                 sha256=sha, state=AssetState.OK)
+                        AssetRef(
+                            kind=kind, path=rel, source_url=url, sha256=sha, state=AssetState.OK
+                        )
                     )
                     return
                 except OSError:

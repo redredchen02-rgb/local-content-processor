@@ -93,9 +93,7 @@ class ValidatedTarget:
 _RESOLVE_LOCK = threading.Lock()
 
 
-def default_resolver(
-    host: str, *, timeout: float = DNS_RESOLVE_TIMEOUT_SECONDS
-) -> list[str]:
+def default_resolver(host: str, *, timeout: float = DNS_RESOLVE_TIMEOUT_SECONDS) -> list[str]:
     """Real A+AAAA resolution via getaddrinfo, bounded by `timeout` seconds.
 
     getaddrinfo takes no per-call timeout, so we set the process-wide socket
@@ -116,9 +114,7 @@ def default_resolver(
                 f"DNS resolution timed out for {host!r} after {timeout}s"
             ) from e
         except OSError as e:
-            raise InputValidationError(
-                f"DNS resolution failed for {host!r}: {e}"
-            ) from e
+            raise InputValidationError(f"DNS resolution failed for {host!r}: {e}") from e
         finally:
             socket.setdefaulttimeout(prev_timeout)
     ips: list[str] = []
@@ -233,9 +229,7 @@ def _validate(url: str, resolver: Resolver) -> ValidatedTarget:
     parts = urlsplit(url)
     scheme = parts.scheme.lower()
     if scheme not in ALLOWED_SCHEMES:
-        raise InputValidationError(
-            f"scheme not allowed: {scheme!r} (only http/https)"
-        )
+        raise InputValidationError(f"scheme not allowed: {scheme!r} (only http/https)")
     host = parts.hostname
     if not host:
         raise InputValidationError(f"URL has no host: {url!r}")
@@ -257,14 +251,10 @@ def _validate(url: str, resolver: Resolver) -> ValidatedTarget:
     ips = resolver(host)
     for ip in ips:
         assert_global_ip(ip)  # any non-global IP -> reject the whole host
-    return ValidatedTarget(
-        url=url, scheme=scheme, host=host, pinned_ip=ips[0], port=port
-    )
+    return ValidatedTarget(url=url, scheme=scheme, host=host, pinned_ip=ips[0], port=port)
 
 
-def validate_url(
-    url: str, *, resolver: Resolver | None = None
-) -> ValidatedTarget:
+def validate_url(url: str, *, resolver: Resolver | None = None) -> ValidatedTarget:
     """Validate a URL for fetching. Raises InputValidationError on any SSRF
     risk. The ACTIVE defense is this validate-time check (scheme allowlist +
     per-resolved-IP is_global reject). The returned ValidatedTarget.pinned_ip is
@@ -274,9 +264,7 @@ def validate_url(
     return _validate(url, resolver or default_resolver)
 
 
-def revalidate_redirect(
-    location: str, *, resolver: Resolver | None = None
-) -> ValidatedTarget:
+def revalidate_redirect(location: str, *, resolver: Resolver | None = None) -> ValidatedTarget:
     """Re-validation hook for redirect targets (30x Location).
 
     AVAILABLE FOR A FUTURE pinned-connection transport — NOT currently wired into
@@ -291,6 +279,7 @@ def revalidate_redirect(
 # --------------------------------------------------------------------------
 # path traversal
 # --------------------------------------------------------------------------
+
 
 def safe_join(base: str | os.PathLike[str], user_path: str | os.PathLike[str]) -> Path:
     """Join `user_path` under `base` safely, defeating path traversal.

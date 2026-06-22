@@ -32,7 +32,8 @@ def _api(tmp_path):
 def test_save_settings_writes_base_url_model_host_never_key(tmp_path, monkeypatch):
     stored = {}
     monkeypatch.setattr(
-        config_io, "set_llm_api_key",
+        config_io,
+        "set_llm_api_key",
         lambda secret, **kw: stored.update(secret=secret, kw=kw),
     )
     api = _api(tmp_path)
@@ -286,9 +287,9 @@ def test_has_api_key_reflects_env(monkeypatch):
 def test_index_html_settings_panel_has_no_inline_handlers():
     from pathlib import Path
 
-    html = (
-        Path(__file__).resolve().parents[1] / "src" / "lcp" / "web" / "index.html"
-    ).read_text(encoding="utf-8")
+    html = (Path(__file__).resolve().parents[1] / "src" / "lcp" / "web" / "index.html").read_text(
+        encoding="utf-8"
+    )
     assert 'id="settings"' in html
     assert 'id="settings-api-key"' in html
     assert 'type="password"' in html  # the key field is masked

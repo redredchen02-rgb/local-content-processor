@@ -50,9 +50,8 @@ from .adapters.storage.job_store import JobRecord, JobStore
 from .core.config import Config
 from .core.draft import Draft, DraftStatus
 from .core.errors import DependencyError, ExternalServiceError, InputValidationError, LcpError
-from .core.models import SourceType
 from .core.rules.risk_rules import RiskInput
-from .core.state import JobState, TERMINAL_STATES, TRANSIENT_STATES
+from .core.state import TERMINAL_STATES, TRANSIENT_STATES, JobState
 
 # Targets for run_until.
 TARGET_DRAFT = "draft"
@@ -97,6 +96,7 @@ def _pid_alive(pid: int) -> bool:
     except OSError:
         return False
     return True
+
 
 # Map a crawl status string onto the persisted JobState after Stage 1.
 _CRAWL_STATUS_TO_STATE: dict[str, JobState] = {
@@ -169,9 +169,17 @@ class InterruptedJob:
 # this module is strict-checked).
 from .adapters.storage.draft_store import (  # noqa: E402
     _DRAFT_NAME as _DRAFT_NAME,
+)
+from .adapters.storage.draft_store import (
     _draft_path as _draft_path,
+)
+from .adapters.storage.draft_store import (
     _read_source_text as _read_source_text,
+)
+from .adapters.storage.draft_store import (
     load_draft as load_draft,
+)
+from .adapters.storage.draft_store import (
     save_draft as save_draft,
 )
 
@@ -320,7 +328,9 @@ class Pipeline:
         # that canonical edge; the edge is also wired in web/lex.js). Without
         # this the live NEEDS_REVISION -> PROCESSING edge was unreachable.
         if record.state not in (
-            JobState.CRAWLED, JobState.CRAWLED_WARN, JobState.PROCESS_FAILED,
+            JobState.CRAWLED,
+            JobState.CRAWLED_WARN,
+            JobState.PROCESS_FAILED,
             JobState.NEEDS_REVISION,
         ):
             raise InputValidationError(
@@ -378,7 +388,10 @@ class Pipeline:
             from .adapters.processor._persist import persist_gate_state
 
             persist_gate_state(
-                self.store, job_id, JobState.PROCESS_FAILED, updated_at=ts,
+                self.store,
+                job_id,
+                JobState.PROCESS_FAILED,
+                updated_at=ts,
                 error_code="llm_external_error",
             )
             return ProcessResult(
@@ -498,9 +511,7 @@ class Pipeline:
 
         resolved_template = tmpl.get_template(self.config, template)
         template_values = (
-            {"category": template or "", "title": title or ""}
-            if resolved_template
-            else None
+            {"category": template or "", "title": title or ""} if resolved_template else None
         )
         draft = assemble(
             source_text,
@@ -537,9 +548,7 @@ class Pipeline:
         if draft.status is DraftStatus.NEEDS_REVISION:
             from .adapters.processor._persist import persist_gate_state
 
-            persist_gate_state(
-                self.store, job_id, JobState.NEEDS_REVISION, updated_at=ts
-            )
+            persist_gate_state(self.store, job_id, JobState.NEEDS_REVISION, updated_at=ts)
             if draft.review_reason:
                 notes.append(f"assemble: {draft.review_reason}")
             return ProcessResult(
@@ -668,9 +677,7 @@ class Pipeline:
         returns the resting state if any gate parks the job — it never forces a
         job past a gate."""
         if target not in (TARGET_DRAFT, TARGET_REVIEW):
-            raise InputValidationError(
-                f"--until must be 'draft' or 'review' (got {target!r})"
-            )
+            raise InputValidationError(f"--until must be 'draft' or 'review' (got {target!r})")
 
         rec = self.stage1(spec, ts=ts).record
         if rec.state not in (JobState.CRAWLED, JobState.CRAWLED_WARN):
@@ -843,14 +850,11 @@ def resolve_state(name: str) -> JobState:
         return JobState(key)
     except ValueError as e:
         raise InputValidationError(
-            f"unknown state filter: {name!r} (try one of "
-            f"{sorted(STATE_ALIASES)!r})"
+            f"unknown state filter: {name!r} (try one of {sorted(STATE_ALIASES)!r})"
         ) from e
 
 
-def list_jobs(
-    store: JobStore, state: str | JobState | None = None
-) -> list[JobRecord]:
+def list_jobs(store: JobStore, state: str | JobState | None = None) -> list[JobRecord]:
     """Pull-style worklist (flow G5/G7).
 
     With `state` -> jobs in that state (alias or enum). Without -> ALL persisted

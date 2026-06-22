@@ -6,7 +6,6 @@ monkeypatching ffprobe so the spec/black judgement is deterministic and offline.
 
 from pathlib import Path
 
-import pytest
 from PIL import Image
 
 from lcp.adapters.media import ffprobe
@@ -137,7 +136,8 @@ def test_video_spec_miss_parks_needs_revision(tmp_path, monkeypatch):
     vp.write_bytes(b"\x00\x00\x00\x18ftypmp42")  # dummy; probe is monkeypatched
 
     monkeypatch.setattr(
-        ffprobe, "probe",
+        ffprobe,
+        "probe",
         lambda *a, **k: ffprobe.VideoInfo(
             codec="vp9", width=1280, height=720, fps=30.0, bitrate_mbps=2.0
         ),
@@ -159,10 +159,15 @@ def test_compliant_video_passes(tmp_path, monkeypatch):
     vp.parent.mkdir(parents=True, exist_ok=True)
     vp.write_bytes(b"\x00\x00\x00\x18ftypmp42")
     monkeypatch.setattr(
-        ffprobe, "probe",
+        ffprobe,
+        "probe",
         lambda *a, **k: ffprobe.VideoInfo(
-            codec="h264", width=1280, height=720, fps=30.0,
-            bitrate_mbps=2.0, duration_s=10.0,
+            codec="h264",
+            width=1280,
+            height=720,
+            fps=30.0,
+            bitrate_mbps=2.0,
+            duration_s=10.0,
         ),
     )
     monkeypatch.setattr(ffprobe, "detect_black_segments", lambda *a, **k: [])

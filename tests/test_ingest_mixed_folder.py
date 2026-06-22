@@ -7,14 +7,16 @@ from pathlib import Path
 
 from lcp.adapters.crawler.base import SourceSpec
 from lcp.adapters.crawler.ingest import LocalIngestCrawler
-from lcp.core.models import AssetState, SourceType
+from lcp.core.models import SourceType
 
 
 def _spec(job_dir: Path, src: Path) -> SourceSpec:
     job_dir.mkdir(parents=True, exist_ok=True)
     return SourceSpec(
-        job_id=job_dir.name, source_type=SourceType.LOCAL_DIR,
-        job_dir=job_dir, local_dir=src,
+        job_id=job_dir.name,
+        source_type=SourceType.LOCAL_DIR,
+        job_dir=job_dir,
+        local_dir=src,
     )
 
 
@@ -80,13 +82,16 @@ def test_empty_media_does_not_consume_max_assets_slot(tmp_path):
     # valid later file.
     src = tmp_path / "pack"
     src.mkdir()
-    (src / "1empty.jpg").write_bytes(b"")          # sorts first, empty
+    (src / "1empty.jpg").write_bytes(b"")  # sorts first, empty
     (src / "2good.png").write_bytes(b"\x89PNGdata")  # valid, must still import
     job_dir = tmp_path / "j6"
     job_dir.mkdir(parents=True, exist_ok=True)
     spec = SourceSpec(
-        job_id="j6", source_type=SourceType.LOCAL_DIR,
-        job_dir=job_dir, local_dir=src, max_assets=1,
+        job_id="j6",
+        source_type=SourceType.LOCAL_DIR,
+        job_dir=job_dir,
+        local_dir=src,
+        max_assets=1,
     )
     bundle = LocalIngestCrawler().crawl(spec)
     rep = _report(bundle)

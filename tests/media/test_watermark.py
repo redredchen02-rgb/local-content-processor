@@ -25,8 +25,12 @@ def _base(size=(800, 450), color=(0, 0, 0)):
 
 def test_logo_watermark_bottom_right_is_rgb_with_mark(tmp_path):
     cfg = WatermarkConfig(
-        enabled=True, mode="logo", logo_body_path=_logo(tmp_path / "logo.png"),
-        position="bottom-right", opacity=1.0, margin=10,
+        enabled=True,
+        mode="logo",
+        logo_body_path=_logo(tmp_path / "logo.png"),
+        position="bottom-right",
+        opacity=1.0,
+        margin=10,
     )
     out = add_watermark(_base(), cfg, kind="body")
     assert out.mode == "RGB"
@@ -37,10 +41,13 @@ def test_logo_watermark_bottom_right_is_rgb_with_mark(tmp_path):
 
 def test_cover_kind_uses_cover_asset(tmp_path):
     cfg = WatermarkConfig(
-        enabled=True, mode="logo",
+        enabled=True,
+        mode="logo",
         logo_body_path=_logo(tmp_path / "b.png", color=(0, 255, 0, 255)),
         logo_cover_path=_logo(tmp_path / "c.png", color=(255, 0, 0, 255)),
-        position="top-left", opacity=1.0, margin=5,
+        position="top-left",
+        opacity=1.0,
+        margin=5,
     )
     out = add_watermark(Image.new("RGB", (1300, 640)), cfg, kind="cover")
     # top-left carries the cover (red) asset, not the body (green) one.
@@ -52,8 +59,12 @@ def test_cover_kind_uses_cover_asset(tmp_path):
 
 def test_text_watermark_renders_pixels(tmp_path):
     cfg = WatermarkConfig(
-        enabled=True, mode="text", text="EATMELON", position="bottom-right",
-        opacity=1.0, color=(255, 255, 255),
+        enabled=True,
+        mode="text",
+        text="EATMELON",
+        position="bottom-right",
+        opacity=1.0,
+        color=(255, 255, 255),
     )
     out = add_watermark(_base(), cfg, kind="body")
     assert out.mode == "RGB"
@@ -72,7 +83,9 @@ def test_empty_text_rejected():
 
 def test_rgba_source_saves_as_rgb(tmp_path):
     cfg = WatermarkConfig(
-        enabled=True, mode="logo", logo_body_path=_logo(tmp_path / "l.png"),
+        enabled=True,
+        mode="logo",
+        logo_body_path=_logo(tmp_path / "l.png"),
     )
     out = add_watermark(Image.new("RGBA", (800, 450)), cfg, kind="body")
     assert out.mode == "RGB"  # JPEG-writable, no "cannot write mode RGBA"
@@ -88,7 +101,9 @@ def test_oversized_logo_is_clamped_no_crash(tmp_path):
 
 def test_missing_logo_asset_raises(tmp_path):
     cfg = WatermarkConfig(
-        enabled=True, mode="logo", logo_body_path=str(tmp_path / "nope.png"),
+        enabled=True,
+        mode="logo",
+        logo_body_path=str(tmp_path / "nope.png"),
     )
     with pytest.raises(InputValidationError):
         add_watermark(_base(), cfg, kind="body")
@@ -126,9 +141,12 @@ def _sharp_jpeg(path, size=(1000, 600)):
 def test_normalize_applies_watermark_when_enabled(tmp_path):
     src = _sharp_jpeg(tmp_path / "in.jpg")
     cfg = WatermarkConfig(
-        enabled=True, mode="logo",
+        enabled=True,
+        mode="logo",
         logo_body_path=_logo(tmp_path / "logo.png"),
-        position="bottom-right", opacity=1.0, margin=8,
+        position="bottom-right",
+        opacity=1.0,
+        margin=8,
     )
     res = normalizer.normalize_image(src, tmp_path / "out.jpg", watermark=cfg)
     out = Image.open(res.out_path)
@@ -166,18 +184,32 @@ def test_media_gate_produces_watermarked_cover(tmp_path):
     img_dir = job_dir / "raw" / "images"
     img_dir.mkdir(parents=True, exist_ok=True)
     _sharp_jpeg(img_dir / "a.jpg", size=(1000, 700))
-    write_manifest(job_dir, Manifest(
-        job_id="jw", source_type=SourceType.LOCAL_DIR,
-        assets=[AssetRef(kind=AssetKind.IMAGE, path="raw/images/a.jpg", state=AssetState.OK)],
-    ), create_only=False)
+    write_manifest(
+        job_dir,
+        Manifest(
+            job_id="jw",
+            source_type=SourceType.LOCAL_DIR,
+            assets=[AssetRef(kind=AssetKind.IMAGE, path="raw/images/a.jpg", state=AssetState.OK)],
+        ),
+        create_only=False,
+    )
     audit = AuditLog(tmp_path / "audit.jsonl")
-    wm = WatermarkConfig(enabled=True, mode="logo",
-                         logo_body_path=_logo(tmp_path / "logob.png", color=(0, 255, 0, 255)),
-                         logo_cover_path=_logo(tmp_path / "logoc.png", color=(255, 0, 0, 255)),
-                         position="bottom-right", opacity=1.0, margin=10)
+    wm = WatermarkConfig(
+        enabled=True,
+        mode="logo",
+        logo_body_path=_logo(tmp_path / "logob.png", color=(0, 255, 0, 255)),
+        logo_cover_path=_logo(tmp_path / "logoc.png", color=(255, 0, 0, 255)),
+        position="bottom-right",
+        opacity=1.0,
+        margin=10,
+    )
     out = run_media_gate(
-        job_id="jw", store=store, audit=audit, ts="2026-06-17T00:00:00Z",
-        media_config=MediaConfig(), watermark=wm,
+        job_id="jw",
+        store=store,
+        audit=audit,
+        ts="2026-06-17T00:00:00Z",
+        media_config=MediaConfig(),
+        watermark=wm,
     )
     cover = Image.open(job_dir / out.report["cover"])
     assert cover.getpixel((cover.width - 6, cover.height - 6))[0] > 120  # mark present
@@ -187,9 +219,12 @@ def test_cover_watermarked_once_after_compose(tmp_path):
     a = _sharp_jpeg(tmp_path / "a.jpg")
     b = _sharp_jpeg(tmp_path / "b.jpg")
     cfg = WatermarkConfig(
-        enabled=True, mode="logo",
+        enabled=True,
+        mode="logo",
         logo_cover_path=_logo(tmp_path / "c.png", color=(255, 0, 0, 255)),
-        position="bottom-right", opacity=1.0, margin=10,
+        position="bottom-right",
+        opacity=1.0,
+        margin=10,
     )
     out_path = normalizer.make_cover([a, b], tmp_path / "cover.jpg", watermark=cfg)
     cover = Image.open(out_path)

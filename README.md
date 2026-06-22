@@ -1,5 +1,8 @@
 # local-content-processor (`lcp`)
 
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Changelog](https://img.shields.io/badge/changelog-Keep%20a%20Changelog-%23E05735)](CHANGELOG.md)
+
 A **local content pipeline**: it takes a source (a URL on your own allowlisted,
 legally-citable site, or a local folder of material), runs it through
 
@@ -44,9 +47,20 @@ no auto-publish.
 Requires **Python 3.11+** and **ffmpeg / ffprobe** on `PATH` (media
 normalization shells out to them).
 
+From PyPI (stable):
+
 ```sh
+pip install "local-content-processor[crawl,media,llm,dedup,dev]"
+```
+
+From source (development):
+
+```sh
+git clone https://github.com/redredchen02-rgb/local-content-processor
+cd local-content-processor
 python3.11 -m venv .venv
 ./.venv/bin/pip install -e ".[crawl,media,llm,dedup,dev]"
+pre-commit install   # enable lint hooks on every commit
 ```
 
 The GUI needs **no extra dependency**: `lcp gui` starts a stdlib `http.server`
@@ -100,6 +114,35 @@ Key things to set in `config.yaml` before a real run:
   (each needs a legal basis). An empty allowlist rejects everything.
 - `publisher.reviewers` — the whitelist of reviewer names allowed to approve/reject.
 - `llm.base_url` (an OpenAI-compatible `/v1` endpoint) and `llm.allowed_hosts`.
+
+## Quickstart (5 minutes with Docker)
+
+The fastest way to try `lcp`:
+
+```sh
+# 1. Start lcp
+docker compose up -d
+
+# 2. Initialize configuration
+docker compose exec lcp lcp init
+
+# 3. Ingest sample content (create your own content dir or use an existing one)
+docker compose exec lcp lcp ingest --job-id demo-001 --dir ./material/demo-001
+
+# 4. View the worklist
+docker compose exec lcp lcp list
+
+# 5. Open the GUI
+open http://127.0.0.1:8765
+```
+
+> **Note:** Set `LCP_LLM_API_KEY` in your shell environment before starting
+> (`export LCP_LLM_API_KEY="sk-..."`) or configure it inside the GUI settings
+> panel. Without an LLM key, processing steps that require the AI copywriter
+> will skip it — the deterministic gates still run.
+
+See the [CLI quickstart](#quickstart-cli) below for the full workflow from
+crawl to backfill.
 
 ## Quickstart (CLI)
 

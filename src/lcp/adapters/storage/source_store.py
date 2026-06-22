@@ -124,16 +124,12 @@ class SourceStore:
             conn.commit()
         finally:
             conn.close()
-        return SavedSource(
-            id=sid, label=label, source_ref=source_ref, created_at=created_at
-        )
+        return SavedSource(id=sid, label=label, source_ref=source_ref, created_at=created_at)
 
     def list_sources(self) -> list[SavedSource]:
         conn = self._connect()
         try:
-            rows = conn.execute(
-                "SELECT * FROM saved_sources ORDER BY created_at, id"
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM saved_sources ORDER BY created_at, id").fetchall()
         finally:
             conn.close()
         return [_row_to_source(r) for r in rows]
@@ -141,9 +137,7 @@ class SourceStore:
     def get_source(self, source_id: str) -> SavedSource | None:
         conn = self._connect()
         try:
-            row = conn.execute(
-                "SELECT * FROM saved_sources WHERE id = ?", (source_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM saved_sources WHERE id = ?", (source_id,)).fetchone()
         finally:
             conn.close()
         return _row_to_source(row) if row else None

@@ -44,7 +44,7 @@ def load_config(path: str | os.PathLike[str] | None) -> Config:
         raise InputValidationError("config root must be a mapping")
     try:
         return Config.model_validate(raw)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - pydantic validation boundary conversion
         raise InputValidationError(f"config validation error: {e}") from e
 
 
@@ -60,7 +60,7 @@ def resolve_api_key(config: Config) -> str:
         secret = keyring.get_password(KEYRING_SERVICE, config.llm.keyring_username)
         if secret:
             return secret
-    except Exception:
+    except Exception:  # noqa: BLE001 - keyring fallback; env var is the backup
         pass
     env = os.environ.get("LCP_LLM_API_KEY")
     if env:
@@ -103,7 +103,7 @@ def set_llm_api_key(secret: str, *, username: str = "llm") -> None:
         import keyring
 
         keyring.set_password(KEYRING_SERVICE, username, secret.strip())
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - keyring backend boundary conversion
         raise DependencyError(
             "could not store api_key in the OS keyring "
             f"({type(e).__name__}); set the LCP_LLM_API_KEY env var instead."
@@ -167,9 +167,7 @@ def _atomic_write_0600(path: Path, text: str) -> None:
     fsync, chmod 0600, os.replace. A crash mid-write never leaves a torn or a
     world-readable file. Shared by the settings write and `init_workspace`."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(
-        dir=str(path.parent), prefix=path.name + ".", suffix=".tmp"
-    )
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)

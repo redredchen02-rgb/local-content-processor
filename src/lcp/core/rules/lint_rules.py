@@ -56,8 +56,23 @@ REQUIRED_SECTIONS: tuple[tuple[str, str], ...] = (
 # Hype / clickbait markers a tag must not contain (objective-tags rule, R17).
 # Lowercased substring match; starting baseline, extend via config.
 DEFAULT_HYPE_WORDS: tuple[str, ...] = (
-    "爆款", "必看", "炸裂", "震驚", "驚爆", "狂", "神級", "逆天", "秒殺", "瘋傳",
-    "史上最", "破表", "嚇傻", "崩潰", "clickbait", "shocking", "insane",
+    "爆款",
+    "必看",
+    "炸裂",
+    "震驚",
+    "驚爆",
+    "狂",
+    "神級",
+    "逆天",
+    "秒殺",
+    "瘋傳",
+    "史上最",
+    "破表",
+    "嚇傻",
+    "崩潰",
+    "clickbait",
+    "shocking",
+    "insane",
 )
 
 # A source paragraph copied verbatim into the draft body that is at least this
@@ -186,13 +201,9 @@ def lint_draft(
     else:
         n = len(title)
         if n < config.title_min_chars:
-            errors.append(
-                f"title too short: {n} < {config.title_min_chars} chars"
-            )
+            errors.append(f"title too short: {n} < {config.title_min_chars} chars")
         elif n > config.title_max_chars:
-            errors.append(
-                f"title too long: {n} > {config.title_max_chars} chars"
-            )
+            errors.append(f"title too long: {n} > {config.title_max_chars} chars")
 
     # --- required sections (intro is one of them) --------------------------
     for attr, label in REQUIRED_SECTIONS:
@@ -216,13 +227,9 @@ def lint_draft(
     # --- tags: count in range + objective (no hype) ------------------------
     tag_n = len(draft.tags)
     if tag_n < config.tag_min_count:
-        errors.append(
-            f"too few tags: {tag_n} < {config.tag_min_count}"
-        )
+        errors.append(f"too few tags: {tag_n} < {config.tag_min_count}")
     elif tag_n > config.tag_max_count:
-        errors.append(
-            f"too many tags: {tag_n} > {config.tag_max_count}"
-        )
+        errors.append(f"too many tags: {tag_n} > {config.tag_max_count}")
     hype_hits = _hype_tags(draft.tags, config.hype_words)
     if hype_hits:
         errors.append(f"hype/clickbait tag(s) not objective: {hype_hits}")
@@ -233,9 +240,7 @@ def lint_draft(
         kw for kw in draft.keywords if kw.strip() and kw.strip().lower() not in body_text
     ]
     if orphan_keywords:
-        warnings.append(
-            f"keyword(s) not found in draft body: {orphan_keywords}"
-        )
+        warnings.append(f"keyword(s) not found in draft body: {orphan_keywords}")
 
     # --- category in config ------------------------------------------------
     if config.categories:
@@ -252,9 +257,7 @@ def lint_draft(
 
     # --- copied-too-much: verbatim source paragraphs ----------------------
     if source_paragraphs:
-        copied, ratio = _copied_too_much(
-            body_paras, source_paragraphs, config.min_copy_chars
-        )
+        copied, ratio = _copied_too_much(body_paras, source_paragraphs, config.min_copy_chars)
         if copied:
             if ratio >= config.block_copy_ratio:
                 block = True

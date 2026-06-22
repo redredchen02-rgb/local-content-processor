@@ -21,7 +21,7 @@ from lcp.adapters.publisher.review_packet import (
 )
 from lcp.adapters.storage.audit_log import AuditLog
 from lcp.adapters.storage.job_store import JobStore
-from lcp.core.draft import Draft, FaqItem, MediaSection, SourceQuote
+from lcp.core.draft import Draft, FaqItem, SourceQuote
 from lcp.core.errors import InputValidationError
 from lcp.core.state import JobState
 
@@ -73,7 +73,11 @@ def test_packet_builds_with_hashes_and_transitions_to_review_pending(store, audi
     draft = _draft()
 
     packet = build_review_packet(
-        job_id="j1", draft=draft, store=store, audit=audit, submitted_at=TS,
+        job_id="j1",
+        draft=draft,
+        store=store,
+        audit=audit,
+        submitted_at=TS,
     )
 
     # State moved PROCESSED -> REVIEW_PENDING (the freeze point).
@@ -105,8 +109,12 @@ def test_packet_copies_cover_and_hashes_it(store, audit, tmp_path):
     cover_src.write_bytes(b"\xff\xd8\xff\xe0fake-jpeg-bytes")
 
     packet = build_review_packet(
-        job_id="jc", draft=_draft(), store=store, audit=audit,
-        submitted_at=TS, processed_cover=cover_src,
+        job_id="jc",
+        draft=_draft(),
+        store=store,
+        audit=audit,
+        submitted_at=TS,
+        processed_cover=cover_src,
     )
     assert packet.cover_path is not None and packet.cover_path.exists()
     assert packet.cover_sha256 is not None and len(packet.cover_sha256) == 64
@@ -117,7 +125,11 @@ def test_packet_copies_cover_and_hashes_it(store, audit, tmp_path):
 def test_packet_without_cover_records_null_cover_hash(store, audit):
     _processed_job(store, "jn")
     packet = build_review_packet(
-        job_id="jn", draft=_draft(), store=store, audit=audit, submitted_at=TS,
+        job_id="jn",
+        draft=_draft(),
+        store=store,
+        audit=audit,
+        submitted_at=TS,
     )
     assert packet.cover_sha256 is None
     assert read_review_manifest(store, "jn")["freeze"]["cover_sha256"] is None
@@ -133,7 +145,11 @@ def test_script_in_title_and_body_is_escaped_in_packet(store, audit):
         event_body="正文 <img src=x onerror=alert(2)> 結束",
     )
     packet = build_review_packet(
-        job_id="jx", draft=draft, store=store, audit=audit, submitted_at=TS,
+        job_id="jx",
+        draft=draft,
+        store=store,
+        audit=audit,
+        submitted_at=TS,
     )
 
     title_text = packet.title_path.read_text(encoding="utf-8")
@@ -149,7 +165,11 @@ def test_script_in_title_and_body_is_escaped_in_packet(store, audit):
 def test_source_urls_render_as_inert_text(store, audit):
     _processed_job(store, "ju")
     packet = build_review_packet(
-        job_id="ju", draft=_draft(), store=store, audit=audit, submitted_at=TS,
+        job_id="ju",
+        draft=_draft(),
+        store=store,
+        audit=audit,
+        submitted_at=TS,
         source_urls=["https://example.com/<script>", "javascript:alert(1)"],
     )
     msg = packet.message_path.read_text(encoding="utf-8")
@@ -168,11 +188,14 @@ def test_packet_files_are_0600(store, audit, tmp_path):
     cover_src = tmp_path / "c.jpg"
     cover_src.write_bytes(b"\xff\xd8\xff\xe0jpeg")
     packet = build_review_packet(
-        job_id="jm", draft=_draft(), store=store, audit=audit,
-        submitted_at=TS, processed_cover=cover_src,
+        job_id="jm",
+        draft=_draft(),
+        store=store,
+        audit=audit,
+        submitted_at=TS,
+        processed_cover=cover_src,
     )
-    for p in (packet.title_path, packet.message_path, packet.manifest_path,
-              packet.cover_path):
+    for p in (packet.title_path, packet.message_path, packet.manifest_path, packet.cover_path):
         mode = stat.S_IMODE(os.stat(p).st_mode)
         assert mode == 0o600, f"{p} mode {oct(mode)} != 0600"
 
@@ -183,7 +206,11 @@ def test_packet_files_are_0600(store, audit, tmp_path):
 def test_audit_event_is_pii_free_and_carries_body_hash(store, audit):
     _processed_job(store, "ja")
     packet = build_review_packet(
-        job_id="ja", draft=_draft(), store=store, audit=audit, submitted_at=TS,
+        job_id="ja",
+        draft=_draft(),
+        store=store,
+        audit=audit,
+        submitted_at=TS,
     )
     assert audit.verify_chain()
     lines = audit._read_lines()
@@ -202,7 +229,11 @@ def test_packet_refuses_non_processed_job(store, audit):
     store.set_state("jp", JobState.CRAWLED, updated_at=TS)
     with pytest.raises(InputValidationError):
         build_review_packet(
-            job_id="jp", draft=_draft(), store=store, audit=audit, submitted_at=TS,
+            job_id="jp",
+            draft=_draft(),
+            store=store,
+            audit=audit,
+            submitted_at=TS,
         )
 
 
@@ -211,7 +242,11 @@ def test_no_in_place_rerun_after_freeze(store, audit):
     the draft is frozen (freeze via edge-absence)."""
     _processed_job(store, "jf")
     build_review_packet(
-        job_id="jf", draft=_draft(), store=store, audit=audit, submitted_at=TS,
+        job_id="jf",
+        draft=_draft(),
+        store=store,
+        audit=audit,
+        submitted_at=TS,
     )
     # The persist seam validates PROCESSING -> target only from a legal
     # predecessor; REVIEW_PENDING is not one, so re-processing is impossible.
@@ -234,8 +269,12 @@ def test_cover_auto_picked_up_from_processed_dir(store, audit):
     cover.write_bytes(b"\xff\xd8\xff\xe0fake-jpeg-bytes-for-hashing")
 
     packet = build_review_packet(
-        job_id="jc", draft=_draft(), store=store, audit=audit,
-        submitted_at=TS, source_urls=[],
+        job_id="jc",
+        draft=_draft(),
+        store=store,
+        audit=audit,
+        submitted_at=TS,
+        source_urls=[],
     )
     assert packet.cover_sha256 is not None
     assert packet.cover_path is not None and packet.cover_path.exists()
@@ -246,8 +285,12 @@ def test_no_cover_when_absent_stays_none(store, audit):
     """No processed cover on disk -> cover hash stays None (unchanged behaviour)."""
     _processed_job(store, "jn")
     packet = build_review_packet(
-        job_id="jn", draft=_draft(), store=store, audit=audit,
-        submitted_at=TS, source_urls=[],
+        job_id="jn",
+        draft=_draft(),
+        store=store,
+        audit=audit,
+        submitted_at=TS,
+        source_urls=[],
     )
     assert packet.cover_sha256 is None
     assert packet.cover_path is None
@@ -292,10 +335,12 @@ def test_cover_copy_uses_atomic_replace(store, audit, monkeypatch, tmp_path):
     cover.write_bytes(b"\xff\xd8\xff\xe0fake-jpeg-cover")
 
     build_review_packet(
-        job_id="jat", draft=_draft(), store=store, audit=audit,
-        submitted_at=TS, source_urls=[],
+        job_id="jat",
+        draft=_draft(),
+        store=store,
+        audit=audit,
+        submitted_at=TS,
+        source_urls=[],
     )
-    cover_replaces = [
-        (s, d) for s, d in replaces if "cover" in str(d)
-    ]
+    cover_replaces = [(s, d) for s, d in replaces if "cover" in str(d)]
     assert cover_replaces, "cover.jpg copy did not use os.replace() — not atomic"

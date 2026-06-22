@@ -11,9 +11,9 @@ import pytest
 from lcp.adapters.storage.audit_log import AuditLog
 from lcp.adapters.storage.job_store import JobStore
 from lcp.cli import _completion_advisory as cli_advisory
-from lcp.gui import _completion_advisory as gui_advisory
 from lcp.core.config import Config, PublisherConfig
 from lcp.core.state import JobState
+from lcp.gui import _completion_advisory as gui_advisory
 from tests.support.pipeline_fakes import (
     TITLE,
     build_pipeline,

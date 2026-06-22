@@ -174,8 +174,13 @@ def _validate_videos(
             reasons.append(f"blackdetect failed: {e}")
         state = AssetState.OK if not reasons else AssetState.NEEDS_REVISION
         entry.update(
-            state=state.value, reasons=reasons, codec=info.codec, fps=info.fps,
-            bitrate_mbps=info.bitrate_mbps, width=info.width, height=info.height,
+            state=state.value,
+            reasons=reasons,
+            codec=info.codec,
+            fps=info.fps,
+            bitrate_mbps=info.bitrate_mbps,
+            width=info.width,
+            height=info.height,
         )
         entries.append(entry)
         if reasons:
@@ -183,9 +188,7 @@ def _validate_videos(
     return entries, needs_revision
 
 
-def _watermark_body_images(
-    paths: list[str], watermark: WatermarkConfig
-) -> None:
+def _watermark_body_images(paths: list[str], watermark: WatermarkConfig) -> None:
     """Apply the official body watermark in place to each normalized body image.
 
     Runs only when watermarking is enabled and AFTER the cover is composed from
@@ -226,12 +229,10 @@ def run_media_gate(
     videos: list[AssetRef] = []
     if manifest is not None:
         images = [
-            a for a in manifest.assets
-            if a.kind == AssetKind.IMAGE and a.state == AssetState.OK
+            a for a in manifest.assets if a.kind == AssetKind.IMAGE and a.state == AssetState.OK
         ]
         videos = [
-            a for a in manifest.assets
-            if a.kind == AssetKind.VIDEO and a.state == AssetState.OK
+            a for a in manifest.assets if a.kind == AssetKind.VIDEO and a.state == AssetState.OK
         ]
 
     img_entries, ok_outputs, img_needs = _validate_images(images, job_dir, media_config)
@@ -304,7 +305,8 @@ def run_media_gate(
 
     # PII-free audit: counts + status only (never asset paths / reasons text).
     nr_count = sum(
-        1 for e in (img_entries + vid_entries)
+        1
+        for e in (img_entries + vid_entries)
         if e["state"] in (AssetState.NEEDS_REVISION.value, AssetState.FAILED.value)
     )
     audit.append(

@@ -69,7 +69,8 @@ def test_cli_ingest_gossip_reads_stdin(tmp_path):
         ensure_ascii=False,
     )
     res = CliRunner().invoke(
-        cli, ["--config", str(cfg), "--output-dir", str(data), "--json", "ingest-gossip"],
+        cli,
+        ["--config", str(cfg), "--output-dir", str(data), "--json", "ingest-gossip"],
         input=payload,
     )
     assert res.exit_code == 0, res.output
@@ -137,7 +138,17 @@ def test_run_by_job_id_without_source_errors(tmp_path):
     # A plain job id with no persisted source URL and no --url -> clear UsageError.
     res = CliRunner().invoke(
         cli,
-        ["--config", str(cfg), "--output-dir", str(data), "run", "--job-id", "no-such", "--until", "draft"],
+        [
+            "--config",
+            str(cfg),
+            "--output-dir",
+            str(data),
+            "run",
+            "--job-id",
+            "no-such",
+            "--until",
+            "draft",
+        ],
     )
     assert res.exit_code != 0
     assert "requires --url" in (res.output + str(res.exception or ""))
@@ -150,14 +161,27 @@ def test_run_by_job_id_resolves_persisted_source(tmp_path, monkeypatch):
     monkeypatch.setattr(climod, "build_crawler", lambda *a, **k: FakeCrawler())
     cfg, data = _setup(tmp_path)  # init also seeds an empty index -> UNIQUE at dedup
 
-    f = _write_items(tmp_path, [{"platform": "weibo", "title": "x", "url": "https://s.weibo.com/weibo?q=run"}])
+    f = _write_items(
+        tmp_path, [{"platform": "weibo", "title": "x", "url": "https://s.weibo.com/weibo?q=run"}]
+    )
     ing = _invoke(cfg, data, "ingest-gossip", "--input", f)
     jid = json.loads(ing.output)["created"][0]
 
     res = CliRunner().invoke(
         cli,
-        ["--config", str(cfg), "--output-dir", str(data), "--dry-run", "--json",
-         "run", "--job-id", jid, "--until", "draft"],
+        [
+            "--config",
+            str(cfg),
+            "--output-dir",
+            str(data),
+            "--dry-run",
+            "--json",
+            "run",
+            "--job-id",
+            jid,
+            "--until",
+            "draft",
+        ],
     )
     assert res.exit_code == 0, res.output
     # The job advanced past NEW -> the persisted URL was resolved and stage1 crawled it.

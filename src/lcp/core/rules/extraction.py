@@ -41,9 +41,7 @@ def classify_media_url(url: str) -> AssetKind | None:
     return None
 
 
-def extract_content(
-    response: Any, *, is_media_url_safe: Callable[[str], bool]
-) -> dict[str, Any]:
+def extract_content(response: Any, *, is_media_url_safe: Callable[[str], bool]) -> dict[str, Any]:
     """Pure extraction from a crawl Response. Returns title, body text,
     image_urls, video_urls, rejected_media_urls, malformed_media_urls,
     source_html, and metadata.

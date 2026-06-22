@@ -25,9 +25,7 @@ from lcp.core.text_sanitize import sanitize_source
 
 # The named slots an operator template may reference. Deliberately small: these
 # are framing values, not a channel to inject source text or instructions.
-ALLOWED_SLOTS: frozenset[str] = frozenset(
-    {"category", "title", "tags", "keywords"}
-)
+ALLOWED_SLOTS: frozenset[str] = frozenset({"category", "title", "tags", "keywords"})
 
 
 class _AllowlistMapping(Mapping[str, str]):
@@ -54,9 +52,7 @@ def validate_template(template: str) -> TemplateLintResult:
     result (with any warnings) when accepted. Call on save AND on import."""
     result = lint_template(template, ALLOWED_SLOTS)
     if result.rejected:
-        raise InputValidationError(
-            "template rejected: " + "; ".join(result.errors)
-        )
+        raise InputValidationError("template rejected: " + "; ".join(result.errors))
     return result
 
 

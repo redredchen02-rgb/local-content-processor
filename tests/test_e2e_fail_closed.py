@@ -74,8 +74,11 @@ def test_truncated_draft_needs_revision(store, audit):
 
         def chat(self, **kwargs):
             return ChatResult(
-                text="partial...", finish_reason="length", model="fake-model",
-                needs_revision=True, revision_reason="truncated:length",
+                text="partial...",
+                finish_reason="length",
+                model="fake-model",
+                needs_revision=True,
+                revision_reason="truncated:length",
                 executed=True,
             )
 
@@ -99,9 +102,16 @@ def test_llm_external_error_lands_process_failed(store, audit):
 def test_cli_bad_input_is_typed_exit_never_internal(tmp_path):
     # Processing a non-existent job is a foreseeable bad input -> a typed
     # InputValidationError (exit 2), NEVER the unexpected-error exit 5.
-    rc = main([
-        "--output-dir", str(tmp_path),
-        "process", "--job-id", "does-not-exist", "--title", TITLE,
-    ])
+    rc = main(
+        [
+            "--output-dir",
+            str(tmp_path),
+            "process",
+            "--job-id",
+            "does-not-exist",
+            "--title",
+            TITLE,
+        ]
+    )
     assert rc == EXIT_INPUT
     assert rc != EXIT_INTERNAL

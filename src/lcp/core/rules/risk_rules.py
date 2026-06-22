@@ -91,9 +91,7 @@ DAILY_CHECK_CATEGORIES: frozenset[RiskCategory] = frozenset(
 # Categories that require an explicit human enable before any auto-processing
 # (R3: 校園分類預設停用). They are NOT redlines per se — they are simply OFF
 # until a human turns them on for a given run.
-DISABLED_BY_DEFAULT_CATEGORIES: frozenset[RiskCategory] = frozenset(
-    {RiskCategory.CAMPUS_STUDENT}
-)
+DISABLED_BY_DEFAULT_CATEGORIES: frozenset[RiskCategory] = frozenset({RiskCategory.CAMPUS_STUDENT})
 
 
 def is_category_enabled(
@@ -184,8 +182,7 @@ class RiskDetector(Protocol):
     U1's chosen strength (rule-list vs NLI) implements THIS protocol; the gate
     skeleton (:func:`assess_risk`) and the adapter never change."""
 
-    def detect(self, content: "RiskInput") -> "tuple[list[RiskFlag], bool]":
-        ...
+    def detect(self, content: "RiskInput") -> "tuple[list[RiskFlag], bool]": ...
 
 
 # --- Default baseline detector (rule / keyword) ------------------------------
@@ -227,17 +224,37 @@ _FOOTGUN_KEYWORDS: dict[RiskCategory, tuple[str, ...]] = {
 }
 
 _DEFAMATION_KEYWORDS: tuple[str, ...] = (
-    "詐騙犯", "小三", "渣男", "騙子", "罪犯", "scammer", "fraudster", "cheater",
+    "詐騙犯",
+    "小三",
+    "渣男",
+    "騙子",
+    "罪犯",
+    "scammer",
+    "fraudster",
+    "cheater",
 )
 
 # Naive identifiable-PII signals (full name + contact/address pattern). The
 # baseline is intentionally simple; U1/regex hardening can extend it.
 _PII_KEYWORDS: tuple[str, ...] = (
-    "身分證", "身份證號", "住址", "電話", "手機號", "id number", "home address",
+    "身分證",
+    "身份證號",
+    "住址",
+    "電話",
+    "手機號",
+    "id number",
+    "home address",
 )
 
 _CAMPUS_KEYWORDS: tuple[str, ...] = (
-    "國中", "高中", "大學", "校園", "學生", "campus", "high school", "university student",
+    "國中",
+    "高中",
+    "大學",
+    "校園",
+    "學生",
+    "campus",
+    "high school",
+    "university student",
 )
 
 
@@ -268,9 +285,7 @@ class KeywordRiskDetector:
         for category, words in self.redline_keywords.items():
             for w in words:
                 if w.lower() in haystack:
-                    flags.append(
-                        RiskFlag(category, f"redline keyword matched: {category.value}")
-                    )
+                    flags.append(RiskFlag(category, f"redline keyword matched: {category.value}"))
                     break
 
         # Footgun tokens (U4): a bare token (童/政治) that matched but produced NO
@@ -295,24 +310,18 @@ class KeywordRiskDetector:
 
         for w in self.defamation_keywords:
             if w.lower() in haystack:
-                flags.append(
-                    RiskFlag(RiskCategory.DEFAMATION, "accusatory/defamatory phrasing")
-                )
+                flags.append(RiskFlag(RiskCategory.DEFAMATION, "accusatory/defamatory phrasing"))
                 break
 
         for w in self.pii_keywords:
             if w.lower() in haystack:
-                flags.append(
-                    RiskFlag(RiskCategory.PRIVATE_PII, "identifiable private PII pattern")
-                )
+                flags.append(RiskFlag(RiskCategory.PRIVATE_PII, "identifiable private PII pattern"))
                 break
 
         # Provenance / claim checks (these are facts the caller supplies, not
         # keyword guesses).
         if not content.has_source:
-            flags.append(
-                RiskFlag(RiskCategory.UNCLEAR_SOURCE, "source/provenance not established")
-            )
+            flags.append(RiskFlag(RiskCategory.UNCLEAR_SOURCE, "source/provenance not established"))
             if content.contains_serious_claim:
                 flags.append(
                     RiskFlag(

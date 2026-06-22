@@ -30,9 +30,17 @@ MAX_TEMPLATE_CHARS = 4096
 # Role / turn markers that must never appear in operator copy — they are how an
 # attacker tries to forge a new conversation turn or a higher-authority block.
 _ROLE_MARKERS: tuple[str, ...] = (
-    "<|", "|>", "<s>", "</s>", "[inst]", "[/inst]",
-    "system:", "assistant:", "developer:",
-    "###system", "### system",
+    "<|",
+    "|>",
+    "<s>",
+    "</s>",
+    "[inst]",
+    "[/inst]",
+    "system:",
+    "assistant:",
+    "developer:",
+    "###system",
+    "### system",
 )
 
 # The datamark token prefix the assembler uses to fence untrusted DATA. A
@@ -42,10 +50,20 @@ _DATAMARK_PREFIX = "DATA_"
 # Visible injection phrases — warned (not rejected): the layered shell already
 # neutralises them, but they are worth surfacing to the operator.
 _INJECTION_PHRASES: tuple[str, ...] = (
-    "ignore previous", "ignore the above", "ignore all previous",
-    "disregard the above", "disregard previous", "forget the above",
-    "you are now", "new instructions", "override", "jailbreak",
-    "无视上述", "忽略上述", "忽略以上", "忽略之前",
+    "ignore previous",
+    "ignore the above",
+    "ignore all previous",
+    "disregard the above",
+    "disregard previous",
+    "forget the above",
+    "you are now",
+    "new instructions",
+    "override",
+    "jailbreak",
+    "无视上述",
+    "忽略上述",
+    "忽略以上",
+    "忽略之前",
 )
 
 _FENCE_RE = re.compile(r"```|~~~")
@@ -83,9 +101,7 @@ def _has_homoglyph(text: str) -> bool:
     return False
 
 
-def lint_template(
-    template: str, allowed_slots: frozenset[str] | set[str]
-) -> TemplateLintResult:
+def lint_template(template: str, allowed_slots: frozenset[str] | set[str]) -> TemplateLintResult:
     """Lint an operator template against the allowlist + injection-surface rules.
 
     ``allowed_slots`` is the set of named ``{slot}`` placeholders the renderer

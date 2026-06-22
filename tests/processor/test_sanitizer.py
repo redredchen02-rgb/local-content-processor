@@ -10,12 +10,9 @@ from __future__ import annotations
 
 import socket
 
-import pytest
-
 from lcp.adapters.processor import sanitizer
 from lcp.adapters.processor.sanitizer import escape_html, inert_link, sanitize_draft
 from lcp.core.draft import Draft, FaqItem, MediaSection, SourceQuote
-
 
 # --- escape_html: renders inert, not executable ------------------------------
 
@@ -28,7 +25,7 @@ def test_script_tag_is_escaped_inert():
 
 
 def test_img_onerror_is_escaped_inert():
-    out = escape_html('<img src=x onerror=alert(document.cookie)>')
+    out = escape_html("<img src=x onerror=alert(document.cookie)>")
     assert "<img" not in out
     assert "&lt;img" in out
     # the attribute text survives but as inert text, never as live markup
@@ -144,9 +141,19 @@ def test_sanitize_draft_source_urls_are_inert():
 def test_sanitize_draft_preserves_structure():
     out = sanitize_draft(_hostile_draft())
     assert set(out) >= {
-        "title", "intro", "quick_facts", "event_body", "image_sections",
-        "video_sections", "faq", "summary", "tags", "keywords", "category",
-        "quotes", "source_urls",
+        "title",
+        "intro",
+        "quick_facts",
+        "event_body",
+        "image_sections",
+        "video_sections",
+        "faq",
+        "summary",
+        "tags",
+        "keywords",
+        "category",
+        "quotes",
+        "source_urls",
     }
     assert len(out["faq"]) == 1
     assert out["faq"][0]["question"].startswith("問")

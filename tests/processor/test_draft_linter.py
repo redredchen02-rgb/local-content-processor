@@ -13,7 +13,6 @@ import socket
 
 import pytest
 
-from lcp.adapters.processor import draft_linter
 from lcp.adapters.processor.draft_linter import (
     EVENT_GROUNDING_GATE,
     EVENT_LINT_GATE,
@@ -53,9 +52,7 @@ def audit(tmp_path):
 
 @pytest.fixture()
 def lint_config():
-    return build_lint_config(
-        ContentConfig(title_min_chars=8, title_max_chars=35), CATEGORIES
-    )
+    return build_lint_config(ContentConfig(title_min_chars=8, title_max_chars=35), CATEGORIES)
 
 
 def _new_processing_job(store: JobStore, job_id: str) -> None:
@@ -93,19 +90,36 @@ def test_relint_requires_image_sections_when_bundle_has_images(audit, lint_confi
     # relint — otherwise the grounding-hold recovery path silently skips the
     # conditional image-section requirement (fail-open the correctness review found).
     d = _good_draft(image_sections=[])
-    assert relint_clears_hold(
-        job_id="ri", draft=d, source_text=SOURCE, lint_config=lint_config,
-        audit=audit, ts=TS, has_images=True,
-    ) is False
+    assert (
+        relint_clears_hold(
+            job_id="ri",
+            draft=d,
+            source_text=SOURCE,
+            lint_config=lint_config,
+            audit=audit,
+            ts=TS,
+            has_images=True,
+        )
+        is False
+    )
     # Text-only (no bundle images) -> image_sections not required -> clears.
-    assert relint_clears_hold(
-        job_id="ri2", draft=d, source_text=SOURCE, lint_config=lint_config,
-        audit=audit, ts=TS, has_images=False,
-    ) is True
+    assert (
+        relint_clears_hold(
+            job_id="ri2",
+            draft=d,
+            source_text=SOURCE,
+            lint_config=lint_config,
+            audit=audit,
+            ts=TS,
+            has_images=False,
+        )
+        is True
+    )
 
 
 def test_media_presence_reads_persisted_report(store):
     import json
+
     job_dir = store.job_dir("mp")
     (job_dir / "processed").mkdir(parents=True, exist_ok=True)
     (job_dir / "processed" / "validation_report.json").write_text(
