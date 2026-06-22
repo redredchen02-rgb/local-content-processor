@@ -144,7 +144,7 @@ graph TB
 
 ---
 
-- [ ] **Unit 2: pipeline.py — interrupt_count 不在 ExternalServiceError 路徑重置 (P2: ADV-003)**
+- [x] **Unit 2: pipeline.py — interrupt_count 不在 ExternalServiceError 路徑重置 (P2: ADV-003)**
 
 **Goal:** 修正 finally 無條件 clear_interrupt_count 的邏輯，使 crash→ExternalServiceError→crash 序列能正確累積崩潰計數
 
@@ -178,7 +178,7 @@ graph TB
 
 ---
 
-- [ ] **Unit 3: webserver.py + gui.py — sync/async inflight guard 統一 (P1: SEC-002)**
+- [x] **Unit 3: webserver.py + gui.py — sync/async inflight guard 統一 (P1: SEC-002)**
 
 **Goal:** 消除 `process_async` 與 `process` 可同時對同一 job 執行 Stage-2 的 race condition
 
@@ -213,7 +213,7 @@ graph TB
 
 ---
 
-- [ ] **Unit 4: ingest.py — _TEXT_NAMES / _TITLE_NAMES 改為 tuple (P1: F1)**
+- [x] **Unit 4: ingest.py — _TEXT_NAMES / _TITLE_NAMES 改為 tuple (P1: F1)**
 
 **Goal:** 消除因 Python set hash 隨機化導致同一 material 資料夾在不同進程/執行間選出不同正文的非確定性
 
@@ -246,7 +246,7 @@ graph TB
 
 ---
 
-- [ ] **Unit 5: signoff.py — backfill_published_url 原子寫 + observed_os_user 只取一次 (P1+P2: F2, F3)**
+- [x] **Unit 5: signoff.py — backfill_published_url 原子寫 + observed_os_user 只取一次 (P1+P2: F2, F3)**
 
 **Goal:** 消除 `backfill_published_url` 的非原子寫風險（SIGKILL 可留部分寫入文件）；同時修正同函數中 `observed_os_user()` 被呼叫兩次、可能產生不一致 audit record 的問題
 
@@ -278,7 +278,7 @@ graph TB
 
 ---
 
-- [ ] **Unit 6: signoff.py — approve() 強制 hash binding（draft.json 缺失時 fail-loud） (P1: F6)**
+- [x] **Unit 6: signoff.py — approve() 強制 hash binding（draft.json 缺失時 fail-loud） (P1: F6)**
 
 **Goal:** 消除 `approve()` 在 `draft.json` 缺失時靜默跳過 body/title hash 校驗的安全漏洞，使「freeze binding ALWAYS enforced」的承諾成真
 
@@ -310,7 +310,7 @@ graph TB
 
 ---
 
-- [ ] **Unit 7: lint_rules.py — _copied_too_much 分子/分母使用相同基數 (P1: CORE-1)**
+- [x] **Unit 7: lint_rules.py — _copied_too_much 分子/分母使用相同基數 (P1: CORE-1)**
 
 **Goal:** 修正 source 段落有重複時比例被低估的邏輯錯誤，使「100% 複製唯一段落」正確返回 ratio=1.0
 
@@ -341,7 +341,7 @@ graph TB
 
 ---
 
-- [ ] **Unit 8: extraction.py — _accept 跨類型 URL 去重 (P1: CORE-2)**
+- [x] **Unit 8: extraction.py — _accept 跨類型 URL 去重 (P1: CORE-2)**
 
 **Goal:** 消除同一 URL 同時進入 image_urls 和 video_urls 的可能性，防止 double download + double SSRF preflight + 重複 manifest entry
 
@@ -376,7 +376,7 @@ graph TB
 
 ---
 
-- [ ] **Unit 9: review_packet.py — cover.jpg 原子複製 + tags 加入 body hash (P2: F4, F7)**
+- [x] **Unit 9: review_packet.py — cover.jpg 原子複製 + tags 加入 body hash (P2: F4, F7)**
 
 **Goal:** 兩個 review_packet.py P2 bug：(1) `shutil.copyfile` 非原子複製可讓崩潰凍結部分 cover；(2) `tags` 不在 body hash 範圍，reviewer 批准的 tags 可被靜默修改
 
@@ -408,7 +408,7 @@ graph TB
 
 ---
 
-- [ ] **Unit 10: job_store.py — bump_interrupt_count read-modify-write 序列化 (P2: F5)**
+- [x] **Unit 10: job_store.py — bump_interrupt_count read-modify-write 序列化 (P2: F5)**
 
 **Goal:** 消除兩個並發呼叫 `bump_interrupt_count` 時因 TOCTOU 導致計數少增的問題
 
@@ -439,7 +439,7 @@ graph TB
 
 ---
 
-- [ ] **Unit 11: audit_log.py — flock(LOCK_UN) 移到 with 塊內 (P2: F8)**
+- [x] **Unit 11: audit_log.py — flock(LOCK_UN) 移到 with 塊內 (P2: F8)**
 
 **Goal:** 修正 `fcntl.flock(LOCK_UN)` 在 `with f:` 關閉後執行（對已關閉 fd 操作）的邏輯反轉問題
 
@@ -468,7 +468,7 @@ graph TB
 
 ---
 
-- [ ] **Unit 12: risk_rules.py — KeywordRiskDetector.campus_keywords 接線 (P2: CORE-3)**
+- [x] **Unit 12: risk_rules.py — KeywordRiskDetector.campus_keywords 接線 (P2: CORE-3)**
 
 **Goal:** 修正 `campus_keywords` 欄位對 `_mentions_disabled_category()` 沒有任何作用的 dead field 問題，讓 operator 的自訂調整實際生效
 

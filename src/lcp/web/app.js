@@ -673,12 +673,8 @@ async function openJob(jobId) {
 
   clear($("job-banner"));
   $("job-banner").appendChild(loadingRow());
-  const listRes = await a.list_jobs(null);
-  let rec = null;
-  if (!isError(listRes)) {
-    (listRes.jobs || []).forEach(function (j) { if (j.job_id === jobId) rec = j; });
-  }
-  if (rec === null) {
+  const rec = await a.get_job(jobId);
+  if (isError(rec)) {
     renderError($("job-banner"), { error: "找不到这个工作：" + jobId, exit_code: 2 });
     clear($("job-actions")); clear($("job-packet"));
     return;
@@ -1257,7 +1253,9 @@ async function computeReadiness() {
   if (isError(s)) { applyPill(false, false); return { error: true, exit_code: s.exit_code, msg: s.error, config_path: s.config_path }; }
   const p1 = !!(s.base_url && s.model);
   const p2 = s.api_key_set === true;
-  const p3 = ("allow_domains" in s) ? (s.allow_domains.length > 0) : "unknown";
+  // Empty allow_domains means all domains are permitted (open crawl mode).
+  // Only show "missing" if the key is absent entirely (pre-Phase-0).
+  const p3 = ("allow_domains" in s) ? true : "unknown";
   const p4 = !isError(r) && !!(r.reviewers && r.reviewers.length > 0);
   applyPill(p1 && p2, p4);
   return { p1: p1, p2: p2, p3: p3, p4: p4, config_path: s.config_path, pipelineReady: p1 && p2, signoffReady: p4 };
@@ -1304,7 +1302,7 @@ function renderReadiness(r) {
   const list = el("div"); list.className = "ready-list";
   list.appendChild(readyRow("模型 endpoint", r.p1, "process 需要它；没设处理时会报「还没设定好」", "可在此编辑"));
   list.appendChild(readyRow("模型 API key", r.p2, "同上；存在 OS keyring", "可在此编辑"));
-  list.appendChild(readyRow("爬虫允许清单 allow_domains", r.p3, "空清单会拒绝每个抓取网址", "config.yaml only（合规边界）"));
+  list.appendChild(readyRow("爬虫允许清单 allow_domains", r.p3, "空清单＝允许所有网址；填入域名则限制为白名单", "config.yaml only（合规边界）"));
   list.appendChild(readyRow("审阅者白名单 reviewers", r.p4, "空名单会让全部签核被阻", "config.yaml only（签核归属）"));
   c.appendChild(list);
 

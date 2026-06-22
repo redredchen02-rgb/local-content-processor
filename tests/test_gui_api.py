@@ -368,6 +368,28 @@ def test_list_jobs_bad_state_returns_error(tmp_path):
     assert "error" in res and res["exit_code"] == 2
 
 
+def test_get_job_returns_single_job_shape(tmp_path):
+    """get_job() returns the same fields as one list_jobs row, O(1)."""
+    base = str(tmp_path)
+    _processed_job_with_draft(base, "j1")
+    api = _api(tmp_path, base)
+    res = api.get_job("j1")
+    assert "error" not in res
+    assert res["job_id"] == "j1"
+    assert res["state"] == "processed"
+    assert "review_reason" in res
+    assert "updated_at" in res
+    assert "interrupted" in res
+    assert "interrupt_attempts" in res
+    assert "interrupt_exhausted" in res
+
+
+def test_get_job_unknown_returns_error(tmp_path):
+    api = _api(tmp_path, str(tmp_path))
+    res = api.get_job("ghost")
+    assert "error" in res and res["exit_code"] == 2
+
+
 def test_list_jobs_surfaces_interrupted_job(tmp_path):
     """CLI/GUI parity (U7): a crash-interrupted job (.processing marker on a
     CRAWLED job) is flagged ``interrupted`` through the GUI worklist, just like the

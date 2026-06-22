@@ -541,6 +541,42 @@ class Api:
             "redline_override": bool(redline_override),
         }
 
+    # --- Single-job lookup (O(1) instead of list_jobs O(n) scan) -------------
+
+    @bridge_safe
+    def get_job(self, job_id: str) -> dict:
+        """Return one job's metadata in the same shape as a list_jobs row.
+
+        Used by openJob() to avoid fetching the entire worklist just to find
+        one job. Includes the interrupted/exhausted flags from reconcile()."""
+        c = self._ctx()
+        interrupted = {
+            i.job_id: i
+            for i in pl.Pipeline(c.config, c.store, c.audit).reconcile()
+        }
+        rec = c.store.get_job(escape_html(job_id))
+        if rec is None:
+            return _error_dict(
+                _input_error(f"unknown job: {job_id}")
+            )
+        return {
+            "job_id": escape_html(rec.job_id),
+            "state": rec.state.value,
+            "review_reason": (
+                escape_html(rec.review_reason.value) if rec.review_reason else None
+            ),
+            "updated_at": escape_html(rec.updated_at),
+            "interrupted": rec.job_id in interrupted,
+            "interrupt_attempts": (
+                interrupted[rec.job_id].attempts if rec.job_id in interrupted else 0
+            ),
+            "interrupt_exhausted": (
+                interrupted[rec.job_id].exhausted
+                if rec.job_id in interrupted
+                else False
+            ),
+        }
+
     # --- Worklist + home counts (G7) -----------------------------------------
 
     @bridge_safe
