@@ -895,8 +895,10 @@ def process_batch(
     """Process every job in a given state independently.
 
     Continues past parked/failed jobs (each job is independent). Returns a list
-    of ``ProcessResult`` — one per job processed. The shells render counts or
-    ``--json`` aggregate output."""
+    of ``ProcessResult`` — one per job processed. Emits a PII-free
+    ``BATCH_SUMMARY`` audit event with per-state counts."""
+    from .adapters.storage.audit_log import EVENT_BATCH_SUMMARY
+
     st = resolve_state(state) if isinstance(state, str) else state
     jobs = list_jobs(pipeline.store, st)
     results: list[ProcessResult] = []
@@ -910,4 +912,20 @@ def process_batch(
             template=template,
         )
         results.append(res)
+
+    # Emit PII-free batch summary: {state_code: count} only.
+    if results:
+        counts: dict[str, int] = {}
+        for r in results:
+            key = r.final_state.value
+            counts[key] = counts.get(key, 0) + 1
+        pipeline.audit.append(
+            ts=ts,
+            stage="batch",
+            event=EVENT_BATCH_SUMMARY,
+            job_id="batch",
+            actor="system",
+            extra={"source_state": st.value, "processed": len(results), "outcomes": counts},
+        )
+
     return results

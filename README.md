@@ -188,6 +188,9 @@ lcp list                  # all jobs and their states
 lcp list --state blocked  # filter by state
 lcp list --summary        # counts-by-state
 
+# Batch process all jobs in a state (each job independent, continues past failures):
+lcp process --all-state crawled --ai-copy --title "Batch title 25-35 chars"
+
 # End-to-end in one call, up to a target (--ai-copy is ON by default for `run`;
 # pass --no-ai-copy to skip the copywriter). Title must be 25-35 chars.
 lcp run --job-id acme-005 --url https://your-allowlisted-site.example/post/9 \

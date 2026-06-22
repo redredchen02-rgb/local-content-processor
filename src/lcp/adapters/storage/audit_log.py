@@ -61,6 +61,9 @@ EVENT_REDLINE_OVERRIDE = "REDLINE_OVERRIDE"
 # A crash left a .processing marker on a non-terminal job; reconciliation surfaced
 # it for explicit operator re-process (U7). PII-free: job_id + a crash-attempt count.
 EVENT_INTERRUPTED_DETECTED = "INTERRUPTED_DETECTED"
+# Batch-run summary: {state: count} totals after a process_batch call.
+# PII-free: enum state codes + integer counts only (no titles, URLs, or job_ids).
+EVENT_BATCH_SUMMARY = "BATCH_SUMMARY"
 
 # Keys that would smuggle PII into the audit. Rejected by append().
 _PROHIBITED_KEYS = frozenset(
