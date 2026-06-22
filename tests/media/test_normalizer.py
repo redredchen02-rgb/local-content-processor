@@ -8,9 +8,9 @@ import warnings
 import pytest
 from PIL import Image
 
+from lcp.adapters.media import normalizer
 from lcp.core.errors import InputValidationError
 from lcp.core.models import AssetState
-from lcp.adapters.media import normalizer
 
 
 def _save_rgb(path, size, color=(120, 60, 30)):
@@ -84,9 +84,7 @@ def test_flat_image_is_blurry_needs_revision(tmp_path):
 def test_too_small_image_needs_revision(tmp_path):
     src = _save_noise(tmp_path / "tiny.png", (100, 100))
     dst = tmp_path / "out.jpg"
-    res = normalizer.normalize_image(
-        src, dst, min_width=640, min_height=360, blur_threshold=0.0
-    )
+    res = normalizer.normalize_image(src, dst, min_width=640, min_height=360, blur_threshold=0.0)
     assert res.decision.state == AssetState.NEEDS_REVISION
     assert any("too small" in r for r in res.decision.reasons)
 
@@ -104,9 +102,7 @@ def test_exif_transpose_applied(tmp_path):
     portrait = img.rotate(-90, expand=True)  # now 200x400
     portrait.save(tmp_path / "rot.jpg", exif=exif)
 
-    res = normalizer.normalize_image(
-        tmp_path / "rot.jpg", tmp_path / "out.jpg", max_width=400
-    )
+    res = normalizer.normalize_image(tmp_path / "rot.jpg", tmp_path / "out.jpg", max_width=400)
     # Orientation 6 means the display image is landscape (wider than tall).
     assert res.width >= res.height
 

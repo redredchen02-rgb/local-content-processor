@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import quote_plus
+
 import httpx
 
 from ..models import GossipItem
@@ -41,7 +43,7 @@ class BilibiliScraper:
                     platform=self.platform,
                     rank=i + 1,
                     title=keyword,
-                    url=f"https://search.bilibili.com/all?keyword={keyword}",
+                    url=f"https://search.bilibili.com/all?keyword={quote_plus(keyword)}",
                     heat=int(heat) if heat else 0,
                     tag=tag,
                 )

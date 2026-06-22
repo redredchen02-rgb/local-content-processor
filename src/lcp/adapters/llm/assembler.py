@@ -31,14 +31,16 @@ here (full lint = Unit 7b, R17)."""
 from __future__ import annotations
 
 import logging
-import secrets
+
 
 from ...core.draft import Draft, DraftStatus, SourceQuote
+
 # sanitize_source now lives in core/ (the single source of truth used by both
 # this adapter and the pure rule layer). Re-exported here so the public name
 # lcp.adapters.llm.assembler.sanitize_source (and the llm package export) is
 # unchanged.
 from ...core.text_sanitize import sanitize_source
+from ._shared import make_delimiter as _make_delimiter
 from .client import ChatResult, LlmClient
 
 logger = logging.getLogger(__name__)
@@ -50,12 +52,6 @@ __all__ = [
     "build_user_message",
     "sanitize_source",
 ]
-
-
-def _make_delimiter() -> str:
-    """An unpredictable per-call delimiter token so injected text cannot guess
-    and 'close' the data region to escape into the instruction context."""
-    return f"DATA_{secrets.token_hex(8)}"
 
 
 def build_system_prompt() -> str:

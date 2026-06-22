@@ -1,0 +1,17 @@
+version: "3.9"
+
+services:
+  lcp:
+    build: .
+    image: local-content-processor:latest
+    container_name: lcp
+    ports:
+      - "8765:8765"
+    volumes:
+      # Persistent job data
+      - ./data:/app/data
+      # Operator configuration (create via `lcp init` first)
+      - ./config.yaml:/app/config.yaml:ro
+    environment:
+      - LCP_LLM_API_KEY=${LCP_LLM_API_KEY:-}
+    command: lcp gui --port 8765

@@ -253,9 +253,7 @@ def test_dedup_default_index_path_uses_store_base_dir(store, audit):
     # No site_index_path passed -> uses store.base_dir/site_index.jsonl, which
     # does not exist -> fail-loud uncertain (never crashes, never auto-rejects).
     _new_processing_job(store, "j5")
-    out = run_dedup_gate(
-        job_id="j5", title="t", body="b", store=store, audit=audit, ts=TS
-    )
+    out = run_dedup_gate(job_id="j5", title="t", body="b", store=store, audit=audit, ts=TS)
     assert out.result.reliability == DedupReliability.LOW
     assert out.result.status != DedupStatus.DUPLICATE  # never auto-reject
 
@@ -334,6 +332,7 @@ def test_three_review_reasons_are_distinct_for_bucketing(store, audit):
     """risk / dedup / grounding each carry a distinct ReviewReason so per-gate
     accuracy can be bucketed (Success Criteria). grounding is Unit 7b's reason;
     here we assert the enum supports all three distinctly."""
+
     # risk gate -> RISK
     class _Down:
         def detect(self, content):

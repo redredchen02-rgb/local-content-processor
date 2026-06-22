@@ -1,6 +1,5 @@
 from lcp.adapters.storage.audit_log import EVENT_ERASURE, AuditLog
 from lcp.adapters.storage.job_store import BestEffortDeletionResult, JobStore
-from lcp.core.state import JobState
 
 TS = "2026-06-16T00:00:00Z"
 

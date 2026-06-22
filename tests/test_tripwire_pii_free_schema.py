@@ -25,7 +25,7 @@ import sqlite3
 
 import pytest
 
-from lcp.adapters.storage.audit_log import AuditLog, _PROHIBITED_KEYS
+from lcp.adapters.storage.audit_log import _PROHIBITED_KEYS, AuditLog
 from lcp.adapters.storage.job_store import JobStore
 from lcp.core.models import AssetRef, Manifest
 from lcp.core.rules.risk_rules import RiskCategory
@@ -39,14 +39,14 @@ TS = "2026-06-18T00:00:00Z"
 # CODE. No free text. A new column must be justified and added here knowingly.
 _ALLOWED_JOBS_COLUMNS = frozenset(
     {
-        "job_id",            # opaque id (caller-supplied, not derived from PII)
-        "state",             # JobState enum value
-        "created_at",        # ISO timestamp
-        "updated_at",        # ISO timestamp
+        "job_id",  # opaque id (caller-supplied, not derived from PII)
+        "state",  # JobState enum value
+        "created_at",  # ISO timestamp
+        "updated_at",  # ISO timestamp
         "source_html_sha256",  # content hash
         "source_text_sha256",  # content hash
-        "error_code",        # LcpError code
-        "review_reason",     # ReviewReason enum CODE
+        "error_code",  # LcpError code
+        "review_reason",  # ReviewReason enum CODE
     }
 )
 
@@ -138,7 +138,7 @@ _ALLOWED_MANIFEST_FIELDS = frozenset(
     {
         "job_id",
         "source_type",
-        "source_domain",   # deliberately persisted (R: own-site provenance)
+        "source_domain",  # deliberately persisted (R: own-site provenance)
         "crawl_status",
         "fetched_at",
         "assets",
@@ -156,9 +156,7 @@ _ALLOWED_ASSET_FIELDS = frozenset(
         "note",  # bounded per-asset outcome annotation (enum-adjacent, plan G2)
     }
 )
-_ALLOWED_HASHES_FIELDS = frozenset(
-    {"source_html_sha256", "source_text_sha256"}
-)
+_ALLOWED_HASHES_FIELDS = frozenset({"source_html_sha256", "source_text_sha256"})
 
 
 def test_manifest_fields_match_allow_list() -> None:

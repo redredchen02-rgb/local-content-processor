@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from urllib.parse import quote_plus
 
 import httpx
 
@@ -49,7 +50,7 @@ class BaiduScraper:
                 hot_change = 0.0
             hot_tag = _tag_from_hot_tag(entry.get("hotTag", 0))
             desc = entry.get("desc", "")
-            url = entry.get("url", f"https://www.baidu.com/s?wd={word}")
+            url = entry.get("url", f"https://www.baidu.com/s?wd={quote_plus(word)}")
             items.append(
                 GossipItem(
                     platform=self.platform,

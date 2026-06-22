@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import socket
 
-import pytest
-
 from lcp.core.draft import Draft, FaqItem, MediaSection
 from lcp.core.rules import lint_rules
 from lcp.core.rules.lint_rules import (

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from lcp.core.rules import dedup_rules
 from lcp.core.rules.dedup_rules import (
     DedupIndex,
     DedupReliability,
@@ -58,9 +57,7 @@ def test_empty_normalized_titles_do_not_collide_as_duplicate():
     (terminal). An empty normalized title is no duplication signal — skip stage 1
     and fall through to the body comparison."""
     idx = _index(IndexEntry(job_id="j1", title="!!!", body="一篇關於貓咪日常的文章內容"))
-    r = assess_dedup(
-        title="???", body="一篇關於太空船引擎的完全不同內容", index=idx
-    )
+    r = assess_dedup(title="???", body="一篇關於太空船引擎的完全不同內容", index=idx)
     assert r.status != DedupStatus.DUPLICATE
 
 

@@ -94,9 +94,7 @@ def write_manifest(
     LLM output."""
     path = manifest_path(job_dir)
     if create_only and path.exists():
-        raise InputValidationError(
-            f"refusing to overwrite existing manifest: {path}"
-        )
+        raise InputValidationError(f"refusing to overwrite existing manifest: {path}")
     text = _serialize(manifest)
     if deterministic_skip and path.exists():
         # Both sides are the same deterministic serialization; compare the

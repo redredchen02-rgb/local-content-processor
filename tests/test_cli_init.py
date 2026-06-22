@@ -16,9 +16,7 @@ from lcp.gui import Api
 
 
 def _invoke_init(cfg, data):
-    return CliRunner().invoke(
-        cli, ["--config", str(cfg), "--output-dir", str(data), "init"]
-    )
+    return CliRunner().invoke(cli, ["--config", str(cfg), "--output-dir", str(data), "init"])
 
 
 def test_init_creates_config_0600_and_empty_index(tmp_path):

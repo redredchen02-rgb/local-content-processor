@@ -8,6 +8,7 @@ import types
 
 import pytest
 
+from lcp.adapters.llm.client import ChatResult, LlmClient
 from lcp.core.config import Config, LlmConfig
 from lcp.core.errors import (
     EXIT_DEPENDENCY,
@@ -17,7 +18,6 @@ from lcp.core.errors import (
     ExternalServiceError,
     InputValidationError,
 )
-from lcp.adapters.llm.client import ChatResult, LlmClient
 
 SECRET = "sk-supersecret-key-do-not-log-1234567890"
 
@@ -25,6 +25,7 @@ SECRET = "sk-supersecret-key-do-not-log-1234567890"
 # --------------------------------------------------------------------------
 # stub openai client
 # --------------------------------------------------------------------------
+
 
 def _choice(content, finish_reason):
     message = types.SimpleNamespace(content=content)
@@ -61,9 +62,7 @@ class StubOpenAI:
         self._raises = raises
         self.recorder: dict = {}
         self.chat = types.SimpleNamespace(
-            completions=StubCompletions(
-                response=response, raises=raises, recorder=self.recorder
-            )
+            completions=StubCompletions(response=response, raises=raises, recorder=self.recorder)
         )
 
     def factory(self, **kwargs):
@@ -97,6 +96,7 @@ def with_key(monkeypatch):
 # --------------------------------------------------------------------------
 # happy path + finish_reason gate
 # --------------------------------------------------------------------------
+
 
 def test_clean_stop_returns_text(with_key):
     stub = StubOpenAI(response=_response("rewritten body", "stop"))
@@ -137,16 +137,12 @@ def test_finish_reason_content_filter_distinct_from_truncation(with_key):
     # must carry a distinct reviewer-visible signal from a `length` truncation so
     # a human can tell "the model was censored" from "the output ran out of room".
     filtered = StubOpenAI(response=_response("blocked", "content_filter"))
-    res_f = LlmClient(_config(), client_factory=filtered.factory).chat(
-        system="r", user="d"
-    )
+    res_f = LlmClient(_config(), client_factory=filtered.factory).chat(system="r", user="d")
     assert res_f.needs_revision is True
     assert res_f.revision_reason == "filtered:content_filter"
 
     truncated = StubOpenAI(response=_response("cut off", "length"))
-    res_t = LlmClient(_config(), client_factory=truncated.factory).chat(
-        system="r", user="d"
-    )
+    res_t = LlmClient(_config(), client_factory=truncated.factory).chat(system="r", user="d")
     # The two reasons are distinct strings (not both "truncated:<reason>").
     assert res_t.revision_reason == "truncated:length"
     assert res_f.revision_reason != res_t.revision_reason
@@ -180,6 +176,7 @@ def test_no_choices_needs_revision(with_key):
 # dependency errors (exit 3)
 # --------------------------------------------------------------------------
 
+
 def test_missing_base_url_dependency_error(with_key):
     cfg = _config(base_url="")
     client = LlmClient(cfg, client_factory=StubOpenAI().factory)
@@ -211,6 +208,7 @@ def test_missing_api_key_dependency_error(monkeypatch):
 # --------------------------------------------------------------------------
 # external service errors (exit 4)
 # --------------------------------------------------------------------------
+
 
 def _make_openai_error(cls):
     """Construct an openai exception without a real HTTP request/response."""
@@ -272,6 +270,7 @@ def test_external_error_message_redacts_exact_resolved_key(with_key):
 # transport security (R40)
 # --------------------------------------------------------------------------
 
+
 def test_http_non_loopback_rejected(with_key):
     cfg = _config(base_url="http://llm.example.com/v1")
     client = LlmClient(cfg, client_factory=StubOpenAI().factory)
@@ -298,9 +297,7 @@ def test_loopback_http_allowed_only_when_allowlisted(with_key):
     # 127.0.0.1 in allowed_hosts + explicit http allowlist -> permitted.
     cfg = _config(base_url="http://127.0.0.1:8000/v1", allowed_hosts=["127.0.0.1"])
     stub = StubOpenAI(response=_response("ok", "stop"))
-    client = LlmClient(
-        cfg, client_factory=stub.factory, allow_http_hosts=["127.0.0.1"]
-    )
+    client = LlmClient(cfg, client_factory=stub.factory, allow_http_hosts=["127.0.0.1"])
     res = client.chat(system="r", user="d")
     assert res.text == "ok"
 
@@ -342,9 +339,7 @@ def test_ca_bundle_builds_verifying_http_client_not_verify_false(with_key):
 
     bundle = certifi.where()
     stub = StubOpenAI(response=_response("ok", "stop"))
-    client = LlmClient(
-        _config(), client_factory=stub.factory, ca_bundle=bundle
-    )
+    client = LlmClient(_config(), client_factory=stub.factory, ca_bundle=bundle)
     client.chat(system="r", user="d")
     kw = StubOpenAI.last_init_kwargs
     assert "http_client" in kw  # custom CA -> custom httpx client supplied
@@ -359,6 +354,7 @@ def test_ca_bundle_builds_verifying_http_client_not_verify_false(with_key):
 # R40 escape hatch is config-driven (U7a): ca_bundle + allow_http_hosts come
 # from LlmConfig and reach the client the way the pipeline wires them.
 # --------------------------------------------------------------------------
+
 
 def _client_from_config(cfg, *, factory):
     """Build an LlmClient sourcing the escape hatch from config exactly like
@@ -430,6 +426,7 @@ def test_config_http_non_loopback_rejected_even_in_allow_http_hosts(with_key):
 # dry-run: API NOT called
 # --------------------------------------------------------------------------
 
+
 def test_dry_run_does_not_call_api(with_key):
     stub = StubOpenAI(response=_response("should not be used", "stop"))
     client = LlmClient(_config(), dry_run=True, client_factory=stub.factory)
@@ -460,6 +457,7 @@ def test_dry_run_needs_no_api_key(monkeypatch):
 # temperature bounds
 # --------------------------------------------------------------------------
 
+
 def test_temperature_above_ceiling_rejected(with_key):
     client = LlmClient(_config(), client_factory=StubOpenAI().factory)
     with pytest.raises(InputValidationError):
@@ -473,6 +471,7 @@ def test_temperature_above_ceiling_rejected(with_key):
 # cooldown — a sustained-5xx provider is re-hammered on every job re-run. We
 # inject a monotonic clock so these tests drive the window without sleeping.
 # --------------------------------------------------------------------------
+
 
 class FakeMonotonic:
     """A controllable monotonic clock for cooldown tests."""
@@ -524,7 +523,6 @@ class CountingOpenAI:
 
 def _server_error():
     import httpx
-
     from openai import APIStatusError
 
     resp = httpx.Response(503, request=httpx.Request("POST", "https://x/v1"))

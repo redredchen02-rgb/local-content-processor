@@ -152,13 +152,10 @@ def _open_guarded(path: str | Path) -> Image.Image:
             return img
     except Image.DecompressionBombWarning as e:
         raise InputValidationError(
-            f"decompression bomb refused: {p.name} exceeds "
-            f"{SAFE_MAX_IMAGE_PIXELS} pixel cap"
+            f"decompression bomb refused: {p.name} exceeds {SAFE_MAX_IMAGE_PIXELS} pixel cap"
         ) from e
     except Image.DecompressionBombError as e:
-        raise InputValidationError(
-            f"decompression bomb refused: {p.name} ({e})"
-        ) from e
+        raise InputValidationError(f"decompression bomb refused: {p.name} ({e})") from e
     except (OSError, ValueError, SyntaxError) as e:
         raise InputValidationError(f"cannot decode image {p.name}: {e}") from e
 
@@ -220,9 +217,7 @@ def normalize_image(
         out = Path(dst_path)
         out.parent.mkdir(parents=True, exist_ok=True)
         save_img = img if img.mode == "RGB" else img.convert("RGB")
-        save_img.save(
-            out, format="JPEG", quality=quality, optimize=True, progressive=True
-        )
+        save_img.save(out, format="JPEG", quality=quality, optimize=True, progressive=True)
     finally:
         img.close()
 
@@ -294,9 +289,7 @@ def make_cover(
 
         out = Path(dst_path)
         out.parent.mkdir(parents=True, exist_ok=True)
-        canvas.save(
-            out, format="JPEG", quality=quality, optimize=True, progressive=True
-        )
+        canvas.save(out, format="JPEG", quality=quality, optimize=True, progressive=True)
     finally:
         canvas.close()
     return str(out)

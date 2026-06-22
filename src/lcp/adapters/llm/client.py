@@ -98,12 +98,7 @@ def _is_loopback_or_private(host: str) -> bool:
         addr = ipaddress.ip_address(h)
     except ValueError:
         return False
-    return (
-        addr.is_loopback
-        or addr.is_private
-        or addr.is_link_local
-        or addr.is_unspecified
-    )
+    return addr.is_loopback or addr.is_private or addr.is_link_local or addr.is_unspecified
 
 
 def _validate_base_url(
@@ -124,9 +119,7 @@ def _validate_base_url(
     scheme = parts.scheme.lower()
     host = parts.hostname
     if scheme not in ("http", "https"):
-        raise InputValidationError(
-            f"LLM base_url scheme not allowed: {scheme!r} (http/https only)"
-        )
+        raise InputValidationError(f"LLM base_url scheme not allowed: {scheme!r} (http/https only)")
     if not host:
         raise InputValidationError(f"LLM base_url has no host: {base_url!r}")
 
@@ -238,8 +231,7 @@ class LlmClient:
         if not base_url:
             # No endpoint configured -> a missing local dependency (exit 3).
             raise DependencyError(
-                "LLM base_url not configured: set llm.base_url (must end with "
-                "/v1) in config."
+                "LLM base_url not configured: set llm.base_url (must end with /v1) in config."
             )
 
         # Transport safety BEFORE we touch the key — fail fast, no secret needed.
@@ -318,7 +310,7 @@ class LlmClient:
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
-        except Exception as e:  # narrowed below
+        except Exception as e:  # noqa: BLE001 - narrowed below
             exc = self._as_external_error(e)
             # Only a real provider/transport failure counts toward the cooldown;
             # our own DependencyError/InputValidationError (config/usage bugs) are
@@ -383,9 +375,7 @@ class LlmClient:
             # reviewer can tell "the model was censored" from "the output ran out
             # of tokens" — they call for different operator action. Both still
             # route to NEEDS_REVISION; only the reason label differs.
-            prefix = (
-                "filtered" if finish_reason == "content_filter" else "truncated"
-            )
+            prefix = "filtered" if finish_reason == "content_filter" else "truncated"
             return ChatResult(
                 text=text,
                 finish_reason=finish_reason,

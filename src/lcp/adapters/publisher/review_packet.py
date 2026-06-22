@@ -42,6 +42,7 @@ from ...core.draft import Draft
 from ...core.errors import InputValidationError
 from ...core.state import JobState
 from ..processor.sanitizer import escape_html, inert_link, sanitize_draft
+from ..storage._fs import atomic_write_0600 as _write_0600
 from ..storage.audit_log import AuditLog
 from ..storage.job_store import JobStore
 
@@ -51,6 +52,7 @@ TITLE_NAME = "title.txt"
 MESSAGE_NAME = "review_message.txt"
 
 EVENT_REVIEW_PACKET = "REVIEW_PACKET_BUILT"
+
 
 # The body that sign-off binds to is the draft's event_body — the substantive
 # article text. Title and cover are hashed separately so all three are pinned.
@@ -90,31 +92,6 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
     return h.hexdigest()
-
-
-def _write_0600(path: Path, text: str) -> None:
-    """Atomic 0600 write: temp in the same dir + fsync + os.replace (rename is
-    atomic on POSIX, so a crash mid-write never leaves a half-written freeze
-    artifact). chmod the temp BEFORE the replace so the committed file is 0600
-    with no world-readable window."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.tmp.{os.getpid()}")
-    try:
-        with tmp.open("w", encoding="utf-8") as f:
-            f.write(text)
-            f.flush()
-            os.fsync(f.fileno())
-        try:
-            os.chmod(tmp, 0o600)
-        except OSError:
-            pass
-        os.replace(tmp, path)  # atomic
-    finally:
-        if tmp.exists():
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
 
 
 @dataclass(frozen=True)
@@ -181,9 +158,7 @@ def _render_message(draft: Draft, *, source_urls: list[str]) -> str:
     else:
         lines.append("- (none recorded)")
     lines.append("")
-    lines.append(
-        "提醒：簽核僅代表署名負責（attribution），非身分驗證（authentication）。"
-    )
+    lines.append("提醒：簽核僅代表署名負責（attribution），非身分驗證（authentication）。")
     return "\n".join(lines)
 
 
@@ -214,8 +189,7 @@ def build_review_packet(
         raise InputValidationError(f"unknown job: {job_id}")
     if record.state is not JobState.PROCESSED:
         raise InputValidationError(
-            f"review packet requires a PROCESSED job; {job_id} is "
-            f"{record.state.value}"
+            f"review packet requires a PROCESSED job; {job_id} is {record.state.value}"
         )
 
     job_dir = store.ensure_job_dir(job_id)

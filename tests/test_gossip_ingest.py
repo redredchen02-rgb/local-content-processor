@@ -43,7 +43,8 @@ def test_creates_one_new_job_per_item(tmp_path) -> None:
     store = _store(tmp_path)
     report = gi.ingest_items(
         _items("https://s.weibo.com/weibo?q=a", "https://www.douyin.com/search/b"),
-        store, ts=TS,
+        store,
+        ts=TS,
     )
     assert len(report.created) == 2
     assert report.skipped == []
@@ -83,7 +84,9 @@ def test_tampered_internal_url_rejected_by_crawl_guard(tmp_path) -> None:
 
     store = _store(tmp_path)
     store.ensure_job_dir("tampered")
-    gi.write_source(store.job_dir("tampered"), url="http://127.0.0.1/x", platform="weibo", title="t")
+    gi.write_source(
+        store.job_dir("tampered"), url="http://127.0.0.1/x", platform="weibo", title="t"
+    )
     url = gi.read_source_url(store.job_dir("tampered"))
     assert url == "http://127.0.0.1/x"  # read back as-is
     with pytest.raises(Exception):
@@ -111,9 +114,7 @@ def test_skips_invalid_or_empty_url_non_lossy(tmp_path) -> None:
 
 
 def test_skips_missing_required_fields(tmp_path) -> None:
-    report = gi.ingest_items(
-        [{"url": "https://s.weibo.com/x"}], _store(tmp_path), ts=TS
-    )
+    report = gi.ingest_items([{"url": "https://s.weibo.com/x"}], _store(tmp_path), ts=TS)
     assert report.created == []
     assert report.skipped[0]["reason"] == "missing_fields"
 

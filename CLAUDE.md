@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 There is no Makefile or task runner — everything runs through the project venv (`./.venv/bin/...`). Setup: `python3.11 -m venv .venv && ./.venv/bin/pip install -e ".[crawl,media,llm,dedup,dev]"`, then `./.venv/bin/lcp init` (scaffolds `config.yaml` 0600 + seeds an empty `site_index.jsonl`; idempotent, never clobbers). Commands **auto-load `./config.yaml` from cwd** when no `--config` is given (exists-gated — reading where `init` writes; `--config` overrides; no file → built-in defaults). Requires Python 3.11+ and `ffmpeg`/`ffprobe` on `PATH`. A **complete** draft needs `--ai-copy` (the copywriter fills `quick_facts`/`summary`/`faq`; `image_sections` is required only for image-bearing bundles, D9) — `run` defaults `--ai-copy` on; `--dry-run` never calls the LLM so it cannot reach a packet.
 
 ```sh
-./.venv/bin/python -m pytest -q                          # full suite (~750 tests)
+./.venv/bin/python -m pytest -q                          # full suite (~1043 tests)
 ./.venv/bin/python -m pytest tests/test_state_machine.py # one file
 ./.venv/bin/python -m pytest tests/processor -q          # one subdir (mirrors src/)
 ./.venv/bin/python -m pytest -k grounding -q             # by keyword
@@ -26,8 +26,10 @@ CI (`.github/workflows/ci.yml`) is exactly: install `.[crawl,media,llm,dedup,dev
 The single most important structural rule. Read `src/lcp/pipeline.py`'s module docstring before changing pipeline behavior.
 
 - **`src/lcp/core/`** — pure functional core. **No I/O, no framework.** Models, rules (risk/dedup/lint/grounding), draft, and the state machine. All *business judgement* lives here.
-- **`src/lcp/adapters/`** — the imperative shell: `crawler/`, `media/`, `llm/`, `processor/` (Stage-2 gates), `publisher/`, `storage/`. These do I/O and call into the pure core.
-- **`src/lcp/pipeline.py`** — the injection seam. Holds the injected adapters (store, audit, crawler, llm client) + config, runs the stages, drives the state machine. CLI/GUI build a `Pipeline` and call it.
+- **`src/lcp/adapters/`** — the imperative shell: `crawler/`, `media/`, `llm/`, `processor/` (Stage-2 gates), `publisher/`, `storage/`. These do I/O and call into the pure core. Shared primitives: `_fs.py` (atomic writes), `_sqlite_base.py` (DB connection), `llm/_shared.py` (delimiter).
+- **`src/lcp/adapters/container.py`** — typed `Adapters` dataclass for pipeline injection. New adapters are one-line field additions.
+- **`src/lcp/adapters/processor/gate_registry.py`** — declarative Stage-2 gate chain. `PARK_GATES` is an ordered list of `GateSpec(name, run)`. Adding a new uniform park-or-pass gate = one list entry + one wrapper function. Fail-closed order is DATA (list order = gate order).
+- **`src/lcp/pipeline.py`** — the injection seam. Holds the injected adapters (via `Adapters` container or legacy params) + config, runs the stages, drives the state machine. `process_batch()` drives bulk processing with PII-free audit summaries. CLI/GUI build a `Pipeline` and call it.
 - **`src/lcp/cli.py` + `src/lcp/gui.py` + `src/lcp/webserver.py`** — thin shells only (Click / the `Api` bridge / `http.server` glue). `cli.py` and the `Api` bridge in `gui.py` mirror each other 1:1; **any operator action added to one must exist in the other.** Keep them logic-free. `webserver.py` is the transport: a stdlib `ThreadingHTTPServer` bound to **127.0.0.1 only** that `lcp gui` launches; it serves `web/` and exposes each public `Api` method as a `POST /api/<method>` JSON endpoint. Because the API is now a real socket (not the old in-process pywebview bridge), `webserver.authorize` rebuilds the lost network trust boundary as a **fail-closed chain** run before any business logic: Host allowlist (anti DNS-rebinding) → per-launch token (anti local-process) → Origin/Sec-Fetch-Site (anti CSRF). DevTools is intentionally always available (browser); the real XSS defence remains the R41 output escaping + CSP. See `docs/solutions/localhost-http-api-csrf-defense.md`.
 - **`src/lcp/web/`** — the GUI's frontend assets (`index.html`, `app.js`, `lex.js`, `app.css`), served by `webserver.py`. The XSS-defense model lives here: `app.js` renders bridge data with `textContent` (never `innerHTML`), reaches the backend via a `fetch` proxy (`a.foo(x)` → `POST /api/foo {args:[x]}`) carrying the per-launch token from `<meta name="lcp-csrf">`, `index.html` carries a strict CSP (also sent as a response header, with `frame-ancestors 'none'`), and source URLs are inert text. The doc-root is locked to `web/` — `data/jobs/` is **never** served. Keep logic out of it and mirror any new operator action in `cli.py`.
 
@@ -48,11 +50,13 @@ Two invariants that constrain how you write code here:
 
 ## Stage 2 is a fail-closed gate chain
 
-`Pipeline.process` runs gates in a fixed order and **stops at the first one that parks the job** (see `_process_inner`):
+`Pipeline.process` runs gates via a **declarative registry** (`adapters/processor/gate_registry.py`) and **stops at the first one that parks the job** (see `_process_inner`):
 
 ```
 risk → media → dedup → assemble (LLM) → lint + grounding
 ```
+
+The first three gates (risk/media/dedup) are uniform park-or-pass gates driven by the `PARK_GATES` registry — adding a new one is a data edit, not a code change. Assemble + lint stay explicit post-registry calls because they produce/enrich a `Draft` and consume cross-gate reports.
 
 Order matters by design: the cheap terminal risk hard-stop runs first (redline content never spends media/LLM work); media validation runs before the LLM (bad media never spends tokens). Each gate that fails **fail-closed** — it parks the job at a hold state (`BLOCKED`/`DUPLICATE`/`NEEDS_HUMAN_REVIEW`/`NEEDS_REVISION`) for a human rather than auto-passing. `BLOCKED` and `DUPLICATE` have **no automatic exit** — no gate or pipeline path ever moves them onward. The **one** exception (operator decision, 2026-06-18, U8): a deliberate human can recover a *false-terminal* `BLOCKED`/`DUPLICATE` job to `SUPERSEDED` via `signoff.supersede` — never automatically. `SUPERSEDED` stays terminal, so recovery never reopens the job in place; the only way back into review is a brand-new job that re-runs the full gate chain (this asymmetry is what stops the edge from becoming a content-laundering bypass — there is deliberately no `BLOCKED`/`DUPLICATE` → `PROCESSING`/`CRAWLED` edge). A `BLOCKED` (redline) recovery requires an explicit second confirmation (CLI `--redline-override` / a dedicated GUI dialog) and records a distinct `REDLINE_OVERRIDE` audit event carrying the original blocking `RiskCategory` codes; a `DUPLICATE` recovery uses the ordinary single-step supersede. An `ExternalServiceError` (LLM 5xx/timeout) maps to `PROCESS_FAILED` (retriable), never silently left at `CRAWLED`.
 

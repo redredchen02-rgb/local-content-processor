@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 from PIL import Image
 
-from lcp.core.errors import InputValidationError
 from lcp.adapters.media import cover_checks, normalizer
+from lcp.core.errors import InputValidationError
 
 
 def _noise(path, size=(1300, 640)):

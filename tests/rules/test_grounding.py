@@ -10,8 +10,6 @@ from __future__ import annotations
 
 import socket
 
-import pytest
-
 from lcp.core.draft import Draft, FaqItem, SourceQuote
 from lcp.core.rules import grounding
 from lcp.core.rules.grounding import (
@@ -149,7 +147,9 @@ def test_custom_strategy_is_used():
     that entails everything makes even an unsupported claim pass."""
 
     class AlwaysEntails:
-        def is_grounded(self, claim: str, source: str) -> bool:
+        def is_grounded(
+            self, claim: str, source: str, source_grams: frozenset[str] | None = None
+        ) -> bool:
             return True
 
     d = Draft(event_body="完全與來源無關的虛構指控內容文字。", quotes=[])
@@ -159,7 +159,9 @@ def test_custom_strategy_is_used():
 
 def test_strict_strategy_can_fail_a_borderline_claim():
     class AlwaysRejects:
-        def is_grounded(self, claim: str, source: str) -> bool:
+        def is_grounded(
+            self, claim: str, source: str, source_grams: frozenset[str] | None = None
+        ) -> bool:
             return False
 
     d = Draft(event_body="華山文創園區本週末舉辦美食市集。", quotes=[])

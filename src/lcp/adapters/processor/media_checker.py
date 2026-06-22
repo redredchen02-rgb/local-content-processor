@@ -157,6 +157,12 @@ def _validate_videos(
             entries.append(entry)
             needs_revision = True
             continue
+        # File-size check (adapter-level: file stat, not a pure rule).
+        file_size_mb = src.stat().st_size / (1024 * 1024)
+        if file_size_mb > media.max_video_size_mb:
+            reasons_size = [f"video too large: {file_size_mb:.1f} MB > max {media.max_video_size_mb} MB"]
+        else:
+            reasons_size = []
         spec = asset_rules.judge_video(
             codec=info.codec,
             fps=info.fps,
@@ -165,8 +171,10 @@ def _validate_videos(
             height=info.height,
             expected_codec=media.video_codec,
             min_bitrate_mbps=media.min_video_bitrate_mbps,
+            min_fps=media.min_video_fps,
+            max_fps=media.max_video_fps,
         )
-        reasons = list(spec.reasons)
+        reasons = reasons_size + list(spec.reasons)
         try:
             black = ffprobe.detect_black_segments(src)
             reasons.extend(asset_rules.judge_black_segments(black, info.duration_s).reasons)
@@ -174,8 +182,13 @@ def _validate_videos(
             reasons.append(f"blackdetect failed: {e}")
         state = AssetState.OK if not reasons else AssetState.NEEDS_REVISION
         entry.update(
-            state=state.value, reasons=reasons, codec=info.codec, fps=info.fps,
-            bitrate_mbps=info.bitrate_mbps, width=info.width, height=info.height,
+            state=state.value,
+            reasons=reasons,
+            codec=info.codec,
+            fps=info.fps,
+            bitrate_mbps=info.bitrate_mbps,
+            width=info.width,
+            height=info.height,
         )
         entries.append(entry)
         if reasons:
@@ -183,9 +196,7 @@ def _validate_videos(
     return entries, needs_revision
 
 
-def _watermark_body_images(
-    paths: list[str], watermark: WatermarkConfig
-) -> None:
+def _watermark_body_images(paths: list[str], watermark: WatermarkConfig) -> None:
     """Apply the official body watermark in place to each normalized body image.
 
     Runs only when watermarking is enabled and AFTER the cover is composed from
@@ -226,12 +237,10 @@ def run_media_gate(
     videos: list[AssetRef] = []
     if manifest is not None:
         images = [
-            a for a in manifest.assets
-            if a.kind == AssetKind.IMAGE and a.state == AssetState.OK
+            a for a in manifest.assets if a.kind == AssetKind.IMAGE and a.state == AssetState.OK
         ]
         videos = [
-            a for a in manifest.assets
-            if a.kind == AssetKind.VIDEO and a.state == AssetState.OK
+            a for a in manifest.assets if a.kind == AssetKind.VIDEO and a.state == AssetState.OK
         ]
 
     img_entries, ok_outputs, img_needs = _validate_images(images, job_dir, media_config)
@@ -304,7 +313,8 @@ def run_media_gate(
 
     # PII-free audit: counts + status only (never asset paths / reasons text).
     nr_count = sum(
-        1 for e in (img_entries + vid_entries)
+        1
+        for e in (img_entries + vid_entries)
         if e["state"] in (AssetState.NEEDS_REVISION.value, AssetState.FAILED.value)
     )
     audit.append(

@@ -46,6 +46,7 @@ from ...core.draft import Draft
 from ...core.errors import InputValidationError
 from ...core.state import JobState, ReviewReason
 from ..processor.risk_checker import EVENT_RISK_GATE
+from ..storage._fs import atomic_write_0600
 from ..storage.audit_log import (
     EVENT_REDLINE_OVERRIDE,
     EVENT_SIGNOFF_INVALIDATED,
@@ -140,12 +141,12 @@ def observed_os_user() -> str:
         import pwd  # POSIX-only
 
         return pwd.getpwuid(os.getuid()).pw_name
-    except Exception:
+    except Exception:  # noqa: BLE001 - cross-platform fallback chain (pwd → getpass)
         try:
             import getpass
 
             return getpass.getuser()
-        except Exception:
+        except Exception:  # noqa: BLE001 - last-resort; any fallback is acceptable
             return "unknown"
 
 
@@ -163,8 +164,7 @@ def _freeze_hashes(store: JobStore, job_id: str) -> dict[str, Any]:
     manifest = read_review_manifest(store, job_id)
     if manifest is None or "freeze" not in manifest:
         raise InputValidationError(
-            f"no review packet freeze record for job {job_id}; build the review "
-            "packet first"
+            f"no review packet freeze record for job {job_id}; build the review packet first"
         )
     freeze: dict[str, Any] = manifest["freeze"]
     return freeze
@@ -420,17 +420,16 @@ def resolve(
         raise InputValidationError(f"unknown job: {job_id}")
     if record.state is not JobState.NEEDS_HUMAN_REVIEW:
         raise InputValidationError(
-            f"resolve requires a NEEDS_HUMAN_REVIEW job; {job_id} is "
-            f"{record.state.value}"
+            f"resolve requires a NEEDS_HUMAN_REVIEW job; {job_id} is {record.state.value}"
         )
 
     hold = record.review_reason
     mode: str
     if relint and hold is ReviewReason.GROUNDING:
         # Re-lint path: the human cleared grounding; lint must re-run clean.
-        from ..storage.draft_store import _read_source_text, load_draft
         from ..processor.draft_linter import build_lint_config, relint_clears_hold
         from ..processor.media_checker import media_presence
+        from ..storage.draft_store import _read_source_text, load_draft
 
         draft = load_draft(store, job_id)
         if draft is None:
@@ -554,28 +553,12 @@ def backfill_published_url(
 
     freeze = _freeze_hashes(store, job_id)
 
-    # Record the URL to a 0600 operator file (NOT in SQLite/audit text).
-    # Atomic write (temp + os.replace) so a crash mid-write never leaves a
-    # partial URL in the destination file.
-    review_dir = store.job_dir(job_id) / "review"
-    review_dir.mkdir(parents=True, exist_ok=True)
-    url_path = review_dir / "published_url.txt"
-    tmp_path = url_path.with_suffix(".tmp")
-    try:
-        with tmp_path.open("w", encoding="utf-8") as f:
-            f.write(url.strip() + "\n")
-            f.flush()
-            os.fsync(f.fileno())
-        try:
-            os.chmod(tmp_path, 0o600)
-        except OSError:
-            pass
-        os.replace(tmp_path, url_path)
-    finally:
-        try:
-            tmp_path.unlink(missing_ok=True)
-        except OSError:
-            pass
+    # Record the URL to a 0600 operator file (NOT in SQLite/audit text) via the
+    # shared atomic 0600 write (mkstemp -> fsync -> chmod -> os.replace): a crash
+    # mid-write never leaves a partial URL, and the unique mkstemp temp name
+    # avoids the collision a fixed ".tmp" suffix risked on concurrent backfill.
+    url_path = store.job_dir(job_id) / "review" / "published_url.txt"
+    atomic_write_0600(url_path, url.strip() + "\n")
 
     store.set_state(job_id, JobState.PUBLISHED_RECORDED, updated_at=ts)
 

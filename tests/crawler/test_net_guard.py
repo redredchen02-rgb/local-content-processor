@@ -38,15 +38,19 @@ def _resolver(mapping):
 # scheme allowlist
 # --------------------------------------------------------------------------
 
-@pytest.mark.parametrize("url", [
-    "ftp://example.com/x",
-    "file:///etc/passwd",
-    "gopher://example.com/x",
-    "data:text/plain;base64,AAAA",
-    "javascript:alert(1)",
-    "://example.com",
-    "example.com/no-scheme",
-])
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "ftp://example.com/x",
+        "file:///etc/passwd",
+        "gopher://example.com/x",
+        "data:text/plain;base64,AAAA",
+        "javascript:alert(1)",
+        "://example.com",
+        "example.com/no-scheme",
+    ],
+)
 def test_non_http_schemes_rejected(url):
     with pytest.raises(InputValidationError):
         net_guard.validate_url(url, resolver=_resolver({"example.com": ["93.184.216.34"]}))
@@ -63,18 +67,22 @@ def test_http_and_https_allowed():
 # IP classification (pure)
 # --------------------------------------------------------------------------
 
-@pytest.mark.parametrize("ip", [
-    "127.0.0.1",         # loopback
-    "10.0.0.5",          # private A
-    "172.16.0.1",        # private B
-    "192.168.1.1",       # private C
-    "169.254.169.254",   # link-local / cloud metadata
-    "0.0.0.0",           # this-host / unspecified
-    "100.64.0.1",        # CGNAT
-    "::1",               # IPv6 loopback
-    "fe80::1",           # IPv6 link-local
-    "fc00::1",           # IPv6 unique-local
-])
+
+@pytest.mark.parametrize(
+    "ip",
+    [
+        "127.0.0.1",  # loopback
+        "10.0.0.5",  # private A
+        "172.16.0.1",  # private B
+        "192.168.1.1",  # private C
+        "169.254.169.254",  # link-local / cloud metadata
+        "0.0.0.0",  # this-host / unspecified
+        "100.64.0.1",  # CGNAT
+        "::1",  # IPv6 loopback
+        "fe80::1",  # IPv6 link-local
+        "fc00::1",  # IPv6 unique-local
+    ],
+)
 def test_non_global_ips_rejected(ip):
     with pytest.raises(InputValidationError):
         net_guard.assert_global_ip(ip)
@@ -89,14 +97,18 @@ def test_global_ips_accepted(ip):
 # SSRF via DNS resolution to internal IPs
 # --------------------------------------------------------------------------
 
-@pytest.mark.parametrize("ip", [
-    "127.0.0.1",
-    "10.1.2.3",
-    "172.16.5.5",
-    "192.168.0.1",
-    "169.254.169.254",
-    "::1",
-])
+
+@pytest.mark.parametrize(
+    "ip",
+    [
+        "127.0.0.1",
+        "10.1.2.3",
+        "172.16.5.5",
+        "192.168.0.1",
+        "169.254.169.254",
+        "::1",
+    ],
+)
 def test_url_resolving_to_internal_ip_rejected(ip):
     r = _resolver({"evil.example": [ip]})
     with pytest.raises(InputValidationError):
@@ -114,15 +126,19 @@ def test_url_with_any_internal_resolved_ip_rejected():
 # decimal / octal / IPv6-encoded internal IPs in the URL host itself
 # --------------------------------------------------------------------------
 
-@pytest.mark.parametrize("host", [
-    "2130706433",        # decimal 127.0.0.1
-    "0x7f000001",        # hex 127.0.0.1
-    "0177.0.0.1",        # dotted-octal 127.0.0.1
-    "0x7f.0.0.1",        # dotted-hex 127.0.0.1
-    "127.1",             # short-form 127.0.0.1
-    "[::1]",             # IPv6 loopback literal
-    "[::ffff:127.0.0.1]",  # IPv4-mapped loopback
-])
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "2130706433",  # decimal 127.0.0.1
+        "0x7f000001",  # hex 127.0.0.1
+        "0177.0.0.1",  # dotted-octal 127.0.0.1
+        "0x7f.0.0.1",  # dotted-hex 127.0.0.1
+        "127.1",  # short-form 127.0.0.1
+        "[::1]",  # IPv6 loopback literal
+        "[::ffff:127.0.0.1]",  # IPv4-mapped loopback
+    ],
+)
 def test_encoded_internal_ip_literals_rejected(host):
     # Literal-IP hosts must be classified directly (no DNS), and internal ones
     # rejected regardless of encoding.
@@ -141,6 +157,7 @@ def test_nip_io_style_internal_resolution_rejected():
 # --------------------------------------------------------------------------
 # pinned IP defends rebinding / TOCTOU
 # --------------------------------------------------------------------------
+
 
 def test_validated_target_pins_literal_ip_and_keeps_hostname():
     r = _resolver({"example.com": ["93.184.216.34"]})
@@ -163,6 +180,7 @@ def test_literal_global_ip_url_pins_itself():
 # redirect re-validation hook
 # --------------------------------------------------------------------------
 
+
 def test_redirect_to_internal_ip_rejected():
     r = _resolver({"intranet.example": ["10.0.0.7"]})
     with pytest.raises(InputValidationError):
@@ -180,12 +198,16 @@ def test_redirect_to_global_ip_allowed():
 # (pinned-IP-at-connect is a documented residual; this is what actually works)
 # --------------------------------------------------------------------------
 
-@pytest.mark.parametrize("url,resolved", [
-    ("http://169.254.169.254/latest/meta-data/", None),  # literal metadata IP
-    ("http://127.0.0.1/secret", None),                   # literal loopback
-    ("http://10.0.0.1/internal", None),                  # literal private
-    ("http://intranet.example/admin", "10.0.0.7"),       # resolves internal
-])
+
+@pytest.mark.parametrize(
+    "url,resolved",
+    [
+        ("http://169.254.169.254/latest/meta-data/", None),  # literal metadata IP
+        ("http://127.0.0.1/secret", None),  # literal loopback
+        ("http://10.0.0.1/internal", None),  # literal private
+        ("http://intranet.example/admin", "10.0.0.7"),  # resolves internal
+    ],
+)
 def test_validate_url_rejects_internal_targets(url, resolved):
     """The active SSRF defence — reject any target whose (literal or resolved) IP
     is non-global — must hold regardless of the unwired pinned-IP residual."""
@@ -200,6 +222,7 @@ def test_validate_url_rejects_internal_targets(url, resolved):
 # default_resolver bounds it via socket.setdefaulttimeout and maps a timeout to
 # a retriable ExternalServiceError (NOT a hang, NOT exit-5).
 # --------------------------------------------------------------------------
+
 
 def test_default_resolver_times_out_instead_of_hanging(monkeypatch):
     """A getaddrinfo that blocks past the timeout surfaces as a typed
@@ -266,8 +289,7 @@ def test_default_resolver_serializes_concurrent_callers(monkeypatch):
     monkeypatch.setattr(net_guard.socket, "getaddrinfo", fake_getaddrinfo)
 
     threads = [
-        threading.Thread(target=net_guard.default_resolver, args=("example.com",))
-        for _ in range(4)
+        threading.Thread(target=net_guard.default_resolver, args=("example.com",)) for _ in range(4)
     ]
     for t in threads:
         t.start()
@@ -313,6 +335,7 @@ def test_default_resolver_happy_path_unchanged(monkeypatch):
 # path traversal: safe_join
 # --------------------------------------------------------------------------
 
+
 def test_safe_join_happy(tmp_path):
     base = tmp_path / "base"
     base.mkdir()
@@ -321,13 +344,16 @@ def test_safe_join_happy(tmp_path):
     assert p == (base / "sub" / "file.txt").resolve()
 
 
-@pytest.mark.parametrize("evil", [
-    "../escape.txt",
-    "../../etc/passwd",
-    "sub/../../escape.txt",
-    "/etc/passwd",            # absolute escape
-    "/",
-])
+@pytest.mark.parametrize(
+    "evil",
+    [
+        "../escape.txt",
+        "../../etc/passwd",
+        "sub/../../escape.txt",
+        "/etc/passwd",  # absolute escape
+        "/",
+    ],
+)
 def test_safe_join_rejects_traversal(tmp_path, evil):
     base = tmp_path / "base"
     base.mkdir()

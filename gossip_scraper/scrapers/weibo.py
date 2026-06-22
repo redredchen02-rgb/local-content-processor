@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import quote_plus
+
 import httpx
 
 from ..models import GossipItem
@@ -36,7 +38,7 @@ class WeiboScraper:
                     platform=self.platform,
                     rank=i + 1,
                     title=word,
-                    url=f"https://s.weibo.com/weibo?q={word}",
+                    url=f"https://s.weibo.com/weibo?q={quote_plus(word)}",
                     heat=int(raw_heat) if raw_heat else 0,
                     tag=_tag_of(entry),
                 )

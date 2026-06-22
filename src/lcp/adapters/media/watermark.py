@@ -51,9 +51,14 @@ def _anchor_xy(
     if position == "center":
         return (base_w - item_w) // 2, (base_h - item_h) // 2
     parts = position.split("-")
-    if len(parts) != 2 or parts[0] not in ("top", "bottom") or parts[1] not in (
-        "left",
-        "right",
+    if (
+        len(parts) != 2
+        or parts[0] not in ("top", "bottom")
+        or parts[1]
+        not in (
+            "left",
+            "right",
+        )
     ):
         raise InputValidationError(
             f"watermark position must be one of top/bottom-left/right or "
@@ -82,8 +87,7 @@ def _logo_overlay(
     path = config.logo_cover_path if kind == "cover" else config.logo_body_path
     if not path:
         raise InputValidationError(
-            f"watermark mode is 'logo' but no logo asset is configured for "
-            f"kind={kind!r}"
+            f"watermark mode is 'logo' but no logo asset is configured for kind={kind!r}"
         )
     if not Path(path).exists():
         raise InputValidationError(f"watermark logo asset not found: {path}")
@@ -95,9 +99,7 @@ def _logo_overlay(
         max_h = int(base_h * _MAX_LOGO_FRACTION)
         if logo.width > max_w or logo.height > max_h:
             logo.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
-        xy = _anchor_xy(
-            config.position, logo.width, logo.height, base_w, base_h, config.margin
-        )
+        xy = _anchor_xy(config.position, logo.width, logo.height, base_w, base_h, config.margin)
         return logo, xy
     finally:
         # _scaled_opacity_alpha returned a copy; the opened handle can close.
@@ -110,21 +112,15 @@ def _text_overlay(
 ) -> tuple[Image.Image, tuple[int, int]]:
     text = (config.text or "").strip()
     if not text:
-        raise InputValidationError(
-            "watermark mode is 'text' but config.text is empty"
-        )
+        raise InputValidationError("watermark mode is 'text' but config.text is empty")
     font: ImageFont.FreeTypeFont | ImageFont.ImageFont
     if config.font_path:
         if not Path(config.font_path).exists():
-            raise InputValidationError(
-                f"watermark font not found: {config.font_path}"
-            )
+            raise InputValidationError(f"watermark font not found: {config.font_path}")
         try:
             font = ImageFont.truetype(config.font_path, config.font_size)
         except OSError as e:
-            raise InputValidationError(
-                f"cannot load watermark font {config.font_path}: {e}"
-            ) from e
+            raise InputValidationError(f"cannot load watermark font {config.font_path}: {e}") from e
     else:
         font = ImageFont.load_default()
 
@@ -151,9 +147,7 @@ def add_watermark(
     pre-sized logo asset for logo mode.
     """
     if kind not in _KINDS:
-        raise InputValidationError(
-            f"watermark kind must be one of {_KINDS} (got {kind!r})"
-        )
+        raise InputValidationError(f"watermark kind must be one of {_KINDS} (got {kind!r})")
     base = image if image.mode == "RGBA" else image.convert("RGBA")
     base_w, base_h = base.size
 
@@ -162,9 +156,7 @@ def add_watermark(
     elif config.mode == "text":
         item, xy = _text_overlay(config, base_w, base_h)
     else:
-        raise InputValidationError(
-            f"watermark mode must be 'logo' or 'text' (got {config.mode!r})"
-        )
+        raise InputValidationError(f"watermark mode must be 'logo' or 'text' (got {config.mode!r})")
 
     overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
     overlay.paste(item, xy, item)

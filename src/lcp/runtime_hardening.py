@@ -59,7 +59,7 @@ class SecretRedactingFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         try:
             msg = record.getMessage()
-        except Exception:
+        except Exception:  # noqa: BLE001 - logging guard; never crash on format failure
             return True
         record.msg = redact(msg)
         record.args = ()

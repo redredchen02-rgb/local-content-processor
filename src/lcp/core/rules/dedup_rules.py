@@ -31,6 +31,7 @@ import hashlib
 import re
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 from datasketch import MinHash, MinHashLSH
 
@@ -50,7 +51,12 @@ _TITLE_STOPWORDS: frozenset[str] = frozenset(
     {"the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "與", "的", "了"}
 )
 _SITE_SUFFIXES: tuple[str, ...] = (
-    "| ettoday", "- 自由時報", "｜聯合新聞網", "- 中央社", "| 蘋果新聞網", "- youtube",
+    "| ettoday",
+    "- 自由時報",
+    "｜聯合新聞網",
+    "- 中央社",
+    "| 蘋果新聞網",
+    "- youtube",
 )
 _PUNCT_RE = re.compile(r"[^\w\s]", flags=re.UNICODE)
 _WS_RE = re.compile(r"\s+")
@@ -171,11 +177,64 @@ def _shingles(text: str, k: int) -> set[str]:
     return {" ".join(tokens[i : i + k]) for i in range(len(tokens) - k + 1)}
 
 
-def build_minhash(text: str, *, num_perm: int = DEFAULT_NUM_PERM, k: int = DEFAULT_SHINGLE_K) -> MinHash:
+def build_minhash(
+    text: str, *, num_perm: int = DEFAULT_NUM_PERM, k: int = DEFAULT_SHINGLE_K
+) -> MinHash:
     m = MinHash(num_perm=num_perm)
     for sh in _shingles(text, k):
         m.update(sh.encode("utf-8"))
     return m
+
+
+# --- LSH index cache (avoids rebuilding on every dedup call) -------------------
+# A module-level cache keyed by (index_fingerprint, lsh_threshold, num_perm).
+# The fingerprint is a hash of all entry bodies, so the cache invalidates
+# automatically when the index content changes. This eliminates the
+# O(|index| × |shingles|) MinHash rebuild on every dedup call in batch mode.
+
+_lsh_cache: dict[tuple[str, float, int], MinHashLSH] = {}
+_lsh_sigs_cache: dict[tuple[str, float, int], dict[str, MinHash]] = {}
+
+
+def _index_fingerprint(index: DedupIndex) -> str:
+    """Deterministic fingerprint of index content for cache keying."""
+    h = hashlib.sha256()
+    for entry in index.entries:
+        h.update(entry.job_id.encode("utf-8"))
+        h.update(entry.body.encode("utf-8"))
+    return h.hexdigest()[:16]
+
+
+def _get_or_build_lsh(
+    index: DedupIndex,
+    lsh_threshold: float,
+    num_perm: int,
+    k: int,
+) -> tuple[MinHashLSH, dict[str, MinHash]]:
+    """Return (lsh, signatures) from cache or build fresh."""
+    fp = _index_fingerprint(index)
+    key = (fp, lsh_threshold, num_perm)
+    if key in _lsh_cache:
+        return _lsh_cache[key], _lsh_sigs_cache[key]
+
+    lsh = MinHashLSH(threshold=lsh_threshold, num_perm=num_perm)
+    signatures: dict[str, MinHash] = {}
+    for entry in index.entries:
+        if not entry.body.strip():
+            continue
+        sig = build_minhash(entry.body, num_perm=num_perm, k=k)
+        signatures[entry.job_id] = sig
+        if entry.job_id not in lsh:
+            lsh.insert(entry.job_id, sig)
+
+    # Bound the cache to prevent unbounded growth (max 32 recent indices).
+    if len(_lsh_cache) >= 32:
+        oldest = next(iter(_lsh_cache))
+        del _lsh_cache[oldest]
+        del _lsh_sigs_cache[oldest]
+    _lsh_cache[key] = lsh
+    _lsh_sigs_cache[key] = signatures
+    return lsh, signatures
 
 
 def exact_jaccard(a: str, b: str, *, k: int = DEFAULT_SHINGLE_K) -> float:
@@ -251,9 +310,7 @@ def assess_dedup(
     Pure: no disk; `index` is handed in. NEVER auto-reject; `duplicate` is
     advisory (caller maps to the DUPLICATE state)."""
     queries = queries or []
-    reliability = (
-        DedupReliability.HIGH if index.site_index_available else DedupReliability.LOW
-    )
+    reliability = DedupReliability.HIGH if index.site_index_available else DedupReliability.LOW
     warnings: list[str] = []
     if not index.site_index_available:
         warnings.append(
@@ -283,15 +340,7 @@ def assess_dedup(
 
     # --- Stage 2: MinHash/LSH candidate retrieval + exact Jaccard re-verify ---
     if body.strip() and not index.is_empty:
-        lsh = MinHashLSH(threshold=lsh_threshold, num_perm=num_perm)
-        signatures: dict[str, MinHash] = {}
-        for entry in index.entries:
-            if not entry.body.strip():
-                continue
-            sig = build_minhash(entry.body, num_perm=num_perm, k=k)
-            signatures[entry.job_id] = sig
-            if entry.job_id not in lsh:
-                lsh.insert(entry.job_id, sig)
+        lsh, signatures = _get_or_build_lsh(index, lsh_threshold, num_perm, k)
         cand_sig = build_minhash(body, num_perm=num_perm, k=k)
         candidate_ids = lsh.query(cand_sig) if signatures else []
 
@@ -312,9 +361,7 @@ def assess_dedup(
                 status=DedupStatus.DUPLICATE,
                 matched_items=[best],
                 queries=queries,
-                decision_reason=(
-                    f"body MinHash+exact-Jaccard match >= {duplicate_jaccard}"
-                ),
+                decision_reason=(f"body MinHash+exact-Jaccard match >= {duplicate_jaccard}"),
                 reliability=reliability,
                 warnings=warnings,
             )
@@ -338,8 +385,7 @@ def assess_dedup(
             matched_items=[],
             queries=queries,
             decision_reason=(
-                "no match found, but no trustworthy site index to confirm "
-                "uniqueness (fail-loud)"
+                "no match found, but no trustworthy site index to confirm uniqueness (fail-loud)"
             ),
             reliability=DedupReliability.LOW,
             warnings=warnings,

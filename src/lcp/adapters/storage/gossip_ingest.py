@@ -25,7 +25,7 @@ from urllib.parse import urlparse
 
 from ...core.errors import InputValidationError
 from ..crawler.net_guard import ALLOWED_SCHEMES
-from .config_io import _atomic_write_0600
+from ._fs import atomic_write_0600 as _atomic_write_0600
 from .job_store import JobStore
 
 SOURCE_NAME = "source.json"
@@ -143,19 +143,13 @@ def ingest_items(
         platform = str(item.get("platform") or "").strip()
         title = str(item.get("title") or "").strip()
         if not _valid_scheme(url):
-            report.skipped.append(
-                {"reason": "invalid_or_empty_url", "url": url, "title": title}
-            )
+            report.skipped.append({"reason": "invalid_or_empty_url", "url": url, "title": title})
             continue
         if not platform or not title:
-            report.skipped.append(
-                {"reason": "missing_fields", "url": url, "title": title}
-            )
+            report.skipped.append({"reason": "missing_fields", "url": url, "title": title})
             continue
         if url in seen:
-            report.skipped.append(
-                {"reason": "duplicate_in_batch", "url": url, "title": title}
-            )
+            report.skipped.append({"reason": "duplicate_in_batch", "url": url, "title": title})
             continue
         seen.add(url)
         job_id = make_job_id(platform, url)

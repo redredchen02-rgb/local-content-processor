@@ -50,20 +50,20 @@ from pathlib import Path
 from typing import Any
 
 from . import pipeline as pl
-from .core import config as _config
 from .adapters.clock import now as _now
 from .adapters.crawler.base import SourceSpec
 from .adapters.crawler.factory import build_crawler
 from .adapters.crawler.ingest import LocalIngestCrawler
 from .adapters.processor.sanitizer import escape_html, inert_link, sanitize_draft
 from .adapters.publisher import signoff
-from .adapters.storage import gossip_ingest as gi
 from .adapters.publisher.review_packet import build_review_packet
+from .adapters.storage import config_io as _config_io
+from .adapters.storage import gossip_ingest as gi
 from .adapters.storage.audit_aggregate import aggregate_audit, summarize_gaps
 from .adapters.storage.audit_log import AuditLog
 from .adapters.storage.job_store import JobStore
-from .adapters.storage import config_io as _config_io
 from .adapters.storage.source_store import SourceStore
+from .core import config as _config
 from .core.errors import EXIT_INTERNAL, LcpError
 from .core.models import SourceType
 
@@ -172,9 +172,7 @@ class Api:
         blockers (no reviewer whitelist; every clean job parked at dedup)."""
         config_path = Path(self._config_path or "config.yaml")
         if config_path.exists():
-            base_dir = self._base_dir or _config_io.load_config(
-                str(config_path)
-            ).storage.base_dir
+            base_dir = self._base_dir or _config_io.load_config(str(config_path)).storage.base_dir
         else:
             base_dir = self._base_dir or "./data"
         created = _config_io.init_workspace(
@@ -219,9 +217,7 @@ class Api:
         c = self._ctx()
         url = gi.read_source_url(c.store.job_dir(job_id))
         if not url:
-            raise _input_error(
-                f"job {job_id} has no persisted source URL (not gossip-ingested?)"
-            )
+            raise _input_error(f"job {job_id} has no persisted source URL (not gossip-ingested?)")
         crawler = build_crawler(c.config, c.audit, _now)
         spec = SourceSpec(
             job_id=job_id,
@@ -267,10 +263,7 @@ class Api:
         report = p.ingest_gossip(items, ts=_now())
         return {
             "created": [escape_html(j) for j in report.created],
-            "skipped": [
-                {k: escape_html(str(v)) for k, v in rec.items()}
-                for rec in report.skipped
-            ],
+            "skipped": [{k: escape_html(str(v)) for k, v in rec.items()} for rec in report.skipped],
             "created_count": len(report.created),
             "skipped_count": len(report.skipped),
         }
@@ -304,7 +297,9 @@ class Api:
         c = self._ctx()
         p = pl.Pipeline(c.config, c.store, c.audit, dry_run=bool(dry_run))
         res = p.process(
-            job_id, ts=_now(), title=title,
+            job_id,
+            ts=_now(),
+            title=title,
             watermark=watermark,
             template=template or None,
             ai_copy=bool(ai_copy),
@@ -318,6 +313,41 @@ class Api:
             # Mirror the CLI's completion advisory (Unit 5): why a run did not
             # reach a packet, in operator terms.
             "advisory": _completion_advisory(res.final_state, dry_run=res.dry_run),
+        }
+
+    @bridge_safe
+    def process_batch(
+        self,
+        state: str,
+        title: str = "",
+        dry_run: bool = False,
+        watermark: bool | None = None,
+        template: str | None = None,
+        ai_copy: bool = False,
+    ) -> dict:
+        """Mirror `process --all-state`: process every job in a given state
+        independently (parked/failed jobs do not stop the batch). Returns a
+        PII-free per-outcome-state count summary — no job ids/titles cross the
+        bridge."""
+        c = self._ctx()
+        p = pl.Pipeline(c.config, c.store, c.audit, dry_run=bool(dry_run))
+        results = pl.process_batch(
+            p,
+            state,
+            ts=_now(),
+            title=title,
+            ai_copy=bool(ai_copy),
+            watermark=watermark,
+            template=template or None,
+        )
+        summary: dict[str, int] = {}
+        for r in results:
+            summary[r.final_state.value] = summary.get(r.final_state.value, 0) + 1
+        return {
+            "state": escape_html(state),
+            "processed": len(results),
+            "summary": summary,
+            "dry_run": p.dry_run,
         }
 
     # --- Long tasks: background thread + polled status -----------------------
@@ -376,9 +406,7 @@ class Api:
         """Background variant of process (long LLM task)."""
         return self._run_bg(
             job_id,
-            lambda: self.process(
-                job_id, title, dry_run, watermark, template, ai_copy
-            ),
+            lambda: self.process(job_id, title, dry_run, watermark, template, ai_copy),
         )
 
     @bridge_safe
@@ -407,11 +435,7 @@ class Api:
         c = self._ctx()
         draft = pl.load_draft(c.store, job_id)
         if draft is None:
-            return _error_dict(
-                _input_error(
-                    f"no processed draft for {job_id}; run process first"
-                )
-            )
+            return _error_dict(_input_error(f"no processed draft for {job_id}; run process first"))
         packet = build_review_packet(
             job_id=job_id,
             draft=draft,
@@ -436,9 +460,7 @@ class Api:
         c = self._ctx()
         draft = pl.load_draft(c.store, job_id)
         if draft is None:
-            return _error_dict(
-                _input_error(f"no draft for {job_id}")
-            )
+            return _error_dict(_input_error(f"no draft for {job_id}"))
         rec = c.store.get_job(job_id)
         sanitized = sanitize_draft(draft, source_urls=[])
         sanitized["job_id"] = escape_html(job_id)
@@ -495,8 +517,12 @@ class Api:
         # frozen body hash — a draft tampered after freeze must NOT approve.
         draft = pl.load_draft(c.store, job_id)
         rec = signoff.approve(
-            job_id, reviewer,
-            config=c.config, store=c.store, audit=c.audit, ts=_now(),
+            job_id,
+            reviewer,
+            config=c.config,
+            store=c.store,
+            audit=c.audit,
+            ts=_now(),
             draft=draft,
         )
         return {
@@ -513,8 +539,13 @@ class Api:
         """Mirror `reject`: REVIEW_PENDING -> REJECTED (terminal)."""
         c = self._ctx()
         rec = signoff.reject(
-            job_id, reviewer, reason,
-            config=c.config, store=c.store, audit=c.audit, ts=_now(),
+            job_id,
+            reviewer,
+            reason,
+            config=c.config,
+            store=c.store,
+            audit=c.audit,
+            ts=_now(),
         )
         return {
             "job_id": escape_html(job_id),
@@ -537,9 +568,14 @@ class Api:
         (a recorded human override). Reviewer MUST be whitelisted."""
         c = self._ctx()
         rec = signoff.resolve(
-            job_id, reviewer,
-            config=c.config, store=c.store, audit=c.audit, ts=_now(),
-            relint=bool(relint), reason=reason,
+            job_id,
+            reviewer,
+            config=c.config,
+            store=c.store,
+            audit=c.audit,
+            ts=_now(),
+            relint=bool(relint),
+            reason=reason,
         )
         return {
             "job_id": escape_html(job_id),
@@ -555,9 +591,14 @@ class Api:
         The URL is never resolved."""
         c = self._ctx()
         new_state = signoff.backfill_published_url(
-            job_id, url,
-            config=c.config, store=c.store, audit=c.audit, ts=_now(),
-            attested=bool(attested), reviewer=reviewer,
+            job_id,
+            url,
+            config=c.config,
+            store=c.store,
+            audit=c.audit,
+            ts=_now(),
+            attested=bool(attested),
+            reviewer=reviewer,
         )
         return {
             "job_id": escape_html(job_id),
@@ -581,8 +622,13 @@ class Api:
         ordinary button is refused. The actor recorded is the OBSERVED OS user."""
         c = self._ctx()
         new_state = signoff.supersede(
-            job_id, store=c.store, audit=c.audit, ts=_now(), new_job_id=new_job_id,
-            actor=signoff.observed_os_user(), redline_override=bool(redline_override),
+            job_id,
+            store=c.store,
+            audit=c.audit,
+            ts=_now(),
+            new_job_id=new_job_id,
+            actor=signoff.observed_os_user(),
+            redline_override=bool(redline_override),
         )
         return {
             "job_id": escape_html(job_id),
@@ -600,30 +646,21 @@ class Api:
         Used by openJob() to avoid fetching the entire worklist just to find
         one job. Includes the interrupted/exhausted flags from reconcile()."""
         c = self._ctx()
-        interrupted = {
-            i.job_id: i
-            for i in pl.Pipeline(c.config, c.store, c.audit).reconcile()
-        }
+        interrupted = {i.job_id: i for i in pl.Pipeline(c.config, c.store, c.audit).reconcile()}
         rec = c.store.get_job(escape_html(job_id))
         if rec is None:
-            return _error_dict(
-                _input_error(f"unknown job: {job_id}")
-            )
+            return _error_dict(_input_error(f"unknown job: {job_id}"))
         return {
             "job_id": escape_html(rec.job_id),
             "state": rec.state.value,
-            "review_reason": (
-                escape_html(rec.review_reason.value) if rec.review_reason else None
-            ),
+            "review_reason": (escape_html(rec.review_reason.value) if rec.review_reason else None),
             "updated_at": escape_html(rec.updated_at),
             "interrupted": rec.job_id in interrupted,
             "interrupt_attempts": (
                 interrupted[rec.job_id].attempts if rec.job_id in interrupted else 0
             ),
             "interrupt_exhausted": (
-                interrupted[rec.job_id].exhausted
-                if rec.job_id in interrupted
-                else False
+                interrupted[rec.job_id].exhausted if rec.job_id in interrupted else False
             ),
         }
 
@@ -640,27 +677,20 @@ class Api:
         re-process, never auto-run. All flag values are numbers/bools from our own
         vocabulary, so no escaping is needed for them."""
         c = self._ctx()
-        interrupted = {
-            i.job_id: i
-            for i in pl.Pipeline(c.config, c.store, c.audit).reconcile()
-        }
+        interrupted = {i.job_id: i for i in pl.Pipeline(c.config, c.store, c.audit).reconcile()}
         records = pl.list_jobs(c.store, state)
         rows = [
             {
                 "job_id": escape_html(r.job_id),
                 "state": r.state.value,
-                "review_reason": (
-                    escape_html(r.review_reason.value) if r.review_reason else None
-                ),
+                "review_reason": (escape_html(r.review_reason.value) if r.review_reason else None),
                 "updated_at": escape_html(r.updated_at),
                 "interrupted": r.job_id in interrupted,
                 "interrupt_attempts": (
                     interrupted[r.job_id].attempts if r.job_id in interrupted else 0
                 ),
                 "interrupt_exhausted": (
-                    interrupted[r.job_id].exhausted
-                    if r.job_id in interrupted
-                    else False
+                    interrupted[r.job_id].exhausted if r.job_id in interrupted else False
                 ),
             }
             for r in records
@@ -746,9 +776,7 @@ class Api:
         """Persist a reusable source (input reuse). Stored verbatim so it can be
         re-submitted; returned escaped/inert. NEVER writes the plaintext to audit."""
         c = self._ctx()
-        s = c.sources.add_source(
-            label=label, source_ref=source_ref, created_at=_now()
-        )
+        s = c.sources.add_source(label=label, source_ref=source_ref, created_at=_now())
         return {
             "id": escape_html(s.id),
             "label": escape_html(s.label),
@@ -811,9 +839,7 @@ class Api:
         }
 
     @bridge_safe
-    def save_settings(
-        self, base_url: str = "", model: str = "", api_key: str = ""
-    ) -> dict:
+    def save_settings(self, base_url: str = "", model: str = "", api_key: str = "") -> dict:
         """Persist base_url + model to the config file (its host auto-added to
         allowed_hosts) and, when api_key is non-empty, store it in the OS keyring.
 

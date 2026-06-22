@@ -26,10 +26,10 @@ error is treated as not-grounded too (the safe default) — never as grounded.
 from __future__ import annotations
 
 import logging
-import secrets
 from dataclasses import dataclass
 
 from ...core.text_sanitize import sanitize_source
+from ._shared import make_delimiter
 from .client import LlmClient
 
 logger = logging.getLogger(__name__)
@@ -58,12 +58,16 @@ class LlmGroundingStrategy:
     max_tokens: int = 8
     temperature: float = 0.0
 
-    def is_grounded(self, claim: str, source: str) -> bool:
+    def is_grounded(
+        self, claim: str, source: str, source_grams: frozenset[str] | None = None
+    ) -> bool:
+        # source_grams is the overlap baseline's precomputed shingle set; an LLM
+        # judge reasons over the strings directly, so it is ignored here.
         c = (claim or "").strip()
         if not c:
             # An empty claim is vacuously grounded (matches the substring baseline).
             return True
-        delim = f"DATA_{secrets.token_hex(8)}"
+        delim = make_delimiter()
         safe_source = sanitize_source(source or "")
         safe_claim = sanitize_source(c)
         user = (

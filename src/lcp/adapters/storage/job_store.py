@@ -27,7 +27,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ...core.errors import InputValidationError
-from ...core.state import JobState, ReviewReason, TRANSIENT_STATES, validate_transition
+from ...core.state import TRANSIENT_STATES, JobState, ReviewReason, validate_transition
+from ._sqlite_base import SqliteBase
 from .audit_log import EVENT_ERASURE, AuditLog
 
 try:
@@ -43,7 +44,6 @@ PROCESSING_MARKER = ".processing"
 # but carries a small integer (no PII) so a DETERMINISTIC crash surfaces to a
 # human after N reconcile passes instead of looping retry->crash->retry forever.
 INTERRUPT_COUNT_MARKER = ".interrupt_count"
-_BUSY_TIMEOUT_MS = 5000
 
 # Allowed index columns only — see module docstring / pii-inventory.md.
 _SCHEMA = """
@@ -98,9 +98,7 @@ def _row_to_record(row: sqlite3.Row) -> JobRecord:
         source_html_sha256=row["source_html_sha256"],
         source_text_sha256=row["source_text_sha256"],
         error_code=row["error_code"],
-        review_reason=(
-            ReviewReason(row["review_reason"]) if row["review_reason"] else None
-        ),
+        review_reason=(ReviewReason(row["review_reason"]) if row["review_reason"] else None),
     )
 
 
@@ -135,8 +133,10 @@ class BestEffortDeletionResult:
         )
 
 
-class JobStore:
+class JobStore(SqliteBase):
     """SQLite index + folder-per-job blob storage under base_dir/."""
+
+    _SCHEMA = _SCHEMA
 
     def __init__(self, base_dir: str | os.PathLike[str] = "./data"):
         self.base_dir = Path(base_dir)
@@ -145,27 +145,6 @@ class JobStore:
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.jobs_root.mkdir(parents=True, exist_ok=True)
         self._init_db()
-
-    # --- connection management: one fresh connection per call/thread ---
-
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=_BUSY_TIMEOUT_MS / 1000)
-        conn.row_factory = sqlite3.Row
-        # busy_timeout is per-connection, so it MUST be set here. journal_mode=WAL
-        # is a PERSISTENT database property (stored in the file header) set once in
-        # _init_db — re-issuing it on every connection was a wasted round-trip.
-        # The schema has no foreign keys, so PRAGMA foreign_keys was a no-op.
-        conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
-        return conn
-
-    def _init_db(self) -> None:
-        conn = self._connect()
-        try:
-            conn.execute("PRAGMA journal_mode=WAL")  # persistent; set once
-            conn.executescript(_SCHEMA)
-            conn.commit()
-        finally:
-            conn.close()
         _chmod_db_0600(self.db_path)
 
     # --- job directory layout: data/jobs/<job_id>/{raw,processed,review}/ ---
@@ -195,35 +174,26 @@ class JobStore:
         state: JobState = JobState.NEW,
     ) -> JobRecord:
         if state in TRANSIENT_STATES:
-            raise InputValidationError(
-                f"cannot persist transient state {state.value} to SQLite"
-            )
+            raise InputValidationError(f"cannot persist transient state {state.value} to SQLite")
         self.ensure_job_dir(job_id)
         conn = self._connect()
         try:
             try:
                 conn.execute(
-                    "INSERT INTO jobs (job_id, state, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?)",
+                    "INSERT INTO jobs (job_id, state, created_at, updated_at) VALUES (?, ?, ?, ?)",
                     (job_id, state.value, created_at, created_at),
                 )
             except sqlite3.IntegrityError as e:
-                raise InputValidationError(
-                    f"job already exists: {job_id}"
-                ) from e
+                raise InputValidationError(f"job already exists: {job_id}") from e
             conn.commit()
         finally:
             conn.close()
-        return JobRecord(
-            job_id=job_id, state=state, created_at=created_at, updated_at=created_at
-        )
+        return JobRecord(job_id=job_id, state=state, created_at=created_at, updated_at=created_at)
 
     def get_job(self, job_id: str) -> JobRecord | None:
         conn = self._connect()
         try:
-            row = conn.execute(
-                "SELECT * FROM jobs WHERE job_id = ?", (job_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
         finally:
             conn.close()
         return _row_to_record(row) if row else None
@@ -254,9 +224,7 @@ class JobStore:
         conn.isolation_level = None  # manual transaction control (see docstring)
         try:
             conn.execute("BEGIN IMMEDIATE")  # take the WAL write lock before reading
-            row = conn.execute(
-                "SELECT * FROM jobs WHERE job_id = ?", (job_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
             if row is None:
                 raise InputValidationError(f"unknown job: {job_id}")
             current = _row_to_record(row)
@@ -319,16 +287,12 @@ class JobStore:
         and refuses a transient target. Hashes use COALESCE so a None leaves the
         existing value intact."""
         if target in TRANSIENT_STATES:
-            raise InputValidationError(
-                f"cannot persist transient state {target.value} to SQLite"
-            )
+            raise InputValidationError(f"cannot persist transient state {target.value} to SQLite")
         conn = self._connect()
         conn.isolation_level = None  # manual transaction control (mirrors set_state)
         try:
             conn.execute("BEGIN IMMEDIATE")  # take the WAL write lock before reading
-            row = conn.execute(
-                "SELECT * FROM jobs WHERE job_id = ?", (job_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
             if row is None:
                 raise InputValidationError(f"unknown job: {job_id}")
             current = _row_to_record(row)
@@ -355,14 +319,10 @@ class JobStore:
             created_at=current.created_at,
             updated_at=updated_at,
             source_html_sha256=(
-                source_html_sha256
-                if source_html_sha256 is not None
-                else current.source_html_sha256
+                source_html_sha256 if source_html_sha256 is not None else current.source_html_sha256
             ),
             source_text_sha256=(
-                source_text_sha256
-                if source_text_sha256 is not None
-                else current.source_text_sha256
+                source_text_sha256 if source_text_sha256 is not None else current.source_text_sha256
             ),
             error_code=current.error_code,
             review_reason=current.review_reason,
@@ -387,9 +347,7 @@ class JobStore:
         worklist used to do."""
         conn = self._connect()
         try:
-            rows = conn.execute(
-                "SELECT * FROM jobs ORDER BY created_at, job_id"
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM jobs ORDER BY created_at, job_id").fetchall()
         finally:
             conn.close()
         return [_row_to_record(r) for r in rows]
@@ -401,9 +359,7 @@ class JobStore:
         appears. Replaces the per-state fan-out (one COUNT connection per state)."""
         conn = self._connect()
         try:
-            rows = conn.execute(
-                "SELECT state, COUNT(*) AS n FROM jobs GROUP BY state"
-            ).fetchall()
+            rows = conn.execute("SELECT state, COUNT(*) AS n FROM jobs GROUP BY state").fetchall()
         finally:
             conn.close()
         return {r["state"]: r["n"] for r in rows}
@@ -437,16 +393,12 @@ class JobStore:
         therefore stays OUTSIDE the write transaction, so the WAL
         write lock is never held across a touch()/mkdir."""
         if target in TRANSIENT_STATES:
-            raise InputValidationError(
-                f"cannot persist transient state {target.value} to SQLite"
-            )
+            raise InputValidationError(f"cannot persist transient state {target.value} to SQLite")
         conn = self._connect()
         conn.isolation_level = None  # manual transaction control (mirrors set_state)
         try:
             conn.execute("BEGIN IMMEDIATE")  # take the WAL write lock before reading
-            row = conn.execute(
-                "SELECT * FROM jobs WHERE job_id = ?", (job_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
             if row is None:
                 raise InputValidationError(f"unknown job: {job_id}")
             current = _row_to_record(row)
@@ -544,9 +496,7 @@ class JobStore:
         lock_path = path.with_name(f"{INTERRUPT_COUNT_MARKER}.lock")
         # Use a unique tmp name (pid + thread id) to avoid concurrent threads in
         # the same process overwriting each other's temp file.
-        tmp = path.with_name(
-            f".{INTERRUPT_COUNT_MARKER}.tmp.{os.getpid()}.{threading.get_ident()}"
-        )
+        tmp = path.with_name(f".{INTERRUPT_COUNT_MARKER}.tmp.{os.getpid()}.{threading.get_ident()}")
         with lock_path.open("a", encoding="utf-8") as lf:
             if _fcntl is not None:
                 _fcntl.flock(lf.fileno(), _fcntl.LOCK_EX)

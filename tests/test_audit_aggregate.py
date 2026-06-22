@@ -15,6 +15,8 @@ def test_gate_event_constants_match_processor_definitions():
     from lcp.adapters.processor.dedup_checker import EVENT_DEDUP_GATE as DEDUP
     from lcp.adapters.processor.draft_linter import (
         EVENT_GROUNDING_GATE as GROUND,
+    )
+    from lcp.adapters.processor.draft_linter import (
         EVENT_LINT_GATE as LINT,
     )
     from lcp.adapters.processor.media_checker import EVENT_MEDIA_GATE as MEDIA
@@ -28,14 +30,20 @@ def test_gate_event_constants_match_processor_definitions():
     assert agg.EVENT_MEDIA_GATE == MEDIA
 
 
-def _gate(seq, gate, job_id, status, *, ts="2026-06-16T00:00:00Z", stage="risk",
-          review_reason=None):
+def _gate(
+    seq, gate, job_id, status, *, ts="2026-06-16T00:00:00Z", stage="risk", review_reason=None
+):
     extra = {"status": status}
     if review_reason is not None:
         extra["review_reason"] = review_reason
     return {
-        "seq": seq, "ts": ts, "stage": stage, "event": gate,
-        "job_id": job_id, "actor": "machine", "extra": extra,
+        "seq": seq,
+        "ts": ts,
+        "stage": stage,
+        "event": gate,
+        "job_id": job_id,
+        "actor": "machine",
+        "extra": extra,
     }
 
 
@@ -62,8 +70,7 @@ def test_intercept_rates_with_reached_denominator():
 def test_review_reason_counts():
     events = [
         _gate(0, EVENT_RISK_GATE, "j1", "blocked", review_reason="risk"),
-        _gate(1, EVENT_DEDUP_GATE, "j2", "duplicate", stage="dedup",
-              review_reason="dedup"),
+        _gate(1, EVENT_DEDUP_GATE, "j2", "duplicate", stage="dedup", review_reason="dedup"),
         _gate(2, EVENT_RISK_GATE, "j3", "blocked", review_reason="risk"),
     ]
     s = aggregate_audit(events)
@@ -96,8 +103,7 @@ def test_gate_gaps_grouped_per_job_not_cross_job():
     events = [
         _gate(0, EVENT_RISK_GATE, "j1", "pass", ts="2026-06-16T00:00:00Z"),
         _gate(1, EVENT_RISK_GATE, "j2", "pass", ts="2026-06-16T05:00:00Z"),
-        _gate(2, EVENT_GROUNDING_GATE, "j1", "pass", stage="lint",
-              ts="2026-06-16T00:00:30Z"),
+        _gate(2, EVENT_GROUNDING_GATE, "j1", "pass", stage="lint", ts="2026-06-16T00:00:30Z"),
     ]
     s = aggregate_audit(events)
     # only the j1 risk->grounding pair yields a gap; j2 has a single event
@@ -113,8 +119,7 @@ def test_reprocessed_job_yields_no_backward_run_boundary_gap():
     # run 2 (lint->risk) must NOT be reported as a gate interval.
     events = [
         _gate(0, EVENT_RISK_GATE, "j1", "pass", ts="2026-06-16T00:00:00Z", stage="risk"),
-        _gate(1, EVENT_LINT_GATE, "j1", "needs_revision", ts="2026-06-16T00:00:10Z",
-              stage="lint"),
+        _gate(1, EVENT_LINT_GATE, "j1", "needs_revision", ts="2026-06-16T00:00:10Z", stage="lint"),
         # ... operator fixes hours later, re-runs:
         _gate(40, EVENT_RISK_GATE, "j1", "pass", ts="2026-06-16T03:00:00Z", stage="risk"),
         _gate(41, EVENT_LINT_GATE, "j1", "pass", ts="2026-06-16T03:00:10Z", stage="lint"),
@@ -136,8 +141,7 @@ def test_daily_buckets_split_by_date():
     events = [
         _gate(0, EVENT_RISK_GATE, "j1", "pass", ts="2026-06-16T23:59:00Z"),
         _gate(1, EVENT_RISK_GATE, "j2", "pass", ts="2026-06-17T00:01:00Z"),
-        _gate(2, EVENT_LINT_GATE, "j1", "pass", stage="lint",
-              ts="2026-06-16T23:59:30Z"),
+        _gate(2, EVENT_LINT_GATE, "j1", "pass", stage="lint", ts="2026-06-16T23:59:30Z"),
     ]
     s = aggregate_audit(events)
     assert s.daily_jobs == {"2026-06-16": 1, "2026-06-17": 1}
@@ -145,8 +149,13 @@ def test_daily_buckets_split_by_date():
 
 def test_unknown_event_and_missing_fields_are_skipped():
     events = [
-        {"seq": 0, "ts": "2026-06-16T00:00:00Z", "event": "CRAWL_OK",
-         "job_id": "j1", "actor": "m"},  # not a gate
+        {
+            "seq": 0,
+            "ts": "2026-06-16T00:00:00Z",
+            "event": "CRAWL_OK",
+            "job_id": "j1",
+            "actor": "m",
+        },  # not a gate
         {"event": EVENT_RISK_GATE},  # missing job_id/ts
         _gate(2, EVENT_RISK_GATE, "j2", "blocked", review_reason="risk"),
     ]
@@ -176,8 +185,14 @@ def test_summarize_gaps_rolls_up_per_transition_dropping_job_id():
 
 def test_iter_events_skips_torn_trailing_line(tmp_path):
     log = AuditLog(tmp_path / "audit.jsonl")
-    log.append(ts="2026-06-16T00:00:00Z", stage="risk", event=EVENT_RISK_GATE,
-               job_id="j1", actor="m", extra={"status": "pass"})
+    log.append(
+        ts="2026-06-16T00:00:00Z",
+        stage="risk",
+        event=EVENT_RISK_GATE,
+        job_id="j1",
+        actor="m",
+        extra={"status": "pass"},
+    )
     # simulate a concurrent pre-fsync partial write of a second record
     with (tmp_path / "audit.jsonl").open("a", encoding="utf-8") as f:
         f.write('{"seq":1,"ts":"2026-06-16T00:00:01Z","eve')  # torn, no newline

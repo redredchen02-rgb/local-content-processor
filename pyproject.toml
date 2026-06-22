@@ -3,6 +3,22 @@ name = "local-content-processor"
 version = "0.1.0"
 description = "Local content pipeline: crawl -> process -> review packet (MVP)"
 requires-python = ">=3.11"
+authors = [
+    {name = "Eatmelon"},
+]
+license = "MIT"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Text Processing :: General",
+]
 dependencies = [
     "pydantic>=2,<3",
     "pydantic-settings>=2,<3",
@@ -10,6 +26,11 @@ dependencies = [
     "keyring>=25",
     "pyyaml>=6",
 ]
+
+[project.urls]
+Source = "https://github.com/redredchen02-rgb/local-content-processor"
+Issues = "https://github.com/redredchen02-rgb/local-content-processor/issues"
+Changelog = "https://github.com/redredchen02-rgb/local-content-processor/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 crawl = ["scrapy>=2.16,<3"]
@@ -20,7 +41,7 @@ dedup = ["datasketch>=1.6"]
 # `lcp gui` — it needs NO extra dependency. Kept (empty) so existing
 # `pip install '.[...,gui]'` commands keep working; pywebview was removed.
 gui = []
-dev = ["pytest>=8", "mypy>=1.18,<2", "types-PyYAML"]
+dev = ["pytest>=8", "mypy>=1.18,<2", "ruff>=0.11,<1", "types-PyYAML"]
 
 [project.scripts]
 lcp = "lcp.cli:main"
@@ -32,9 +53,33 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+lcp = ["web/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# gossip_scraper is excluded ONLY because it is mid-edit (parallel feature work
+# entangles its tracked files with not-yet-committed modules). plan-003 R10
+# brings it under the ruff + mypy gates once that work lands.
+extend-exclude = ["gossip_scraper"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E741"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
+"spikes/*" = ["E501"]
+"gossip_scraper/*" = ["E501"]
+"src/lcp/pipeline.py" = ["E402"]
+
+[tool.ruff.format]
+docstring-code-format = true
 
 # --- Static type gate (two-tier) -------------------------------------------
 # Global baseline = NON-STRICT but ENFORCED: the whole package is checked and

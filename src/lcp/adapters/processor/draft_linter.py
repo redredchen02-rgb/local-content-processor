@@ -61,6 +61,8 @@ def build_lint_config(content: ContentConfig, categories: dict[str, list[str]]) 
         tag_min_count=content.tag_min_count,
         tag_max_count=content.tag_max_count,
         categories=tuple(categories.keys()),
+        hype_words=tuple(content.hype_words),
+        min_copy_chars=content.min_copy_chars,
     )
 
 
@@ -95,9 +97,7 @@ def run_draft_lint_gate(
     Pure judgement is entirely in the rule modules; this only wires I/O + maps to
     state, exactly like the risk / dedup gates."""
     # --- grounding (verbatim quotes + claims; local-only, no URL parse) ----
-    grounding_result = grounding_rules.verify_grounding(
-        draft, source_text, grounding_strategy
-    )
+    grounding_result = grounding_rules.verify_grounding(draft, source_text, grounding_strategy)
     audit.append(
         ts=ts,
         stage="grounding",
@@ -113,9 +113,7 @@ def run_draft_lint_gate(
                 1 for u in grounding_result.ungrounded_claims if u.kind == "claim"
             ),
             "review_reason": (
-                ReviewReason.GROUNDING.value
-                if grounding_result.needs_human_review
-                else None
+                ReviewReason.GROUNDING.value if grounding_result.needs_human_review else None
             ),
         },
     )
@@ -137,23 +135,26 @@ def run_draft_lint_gate(
 
     # --- lint (structure / quality; local-only, no URL parse) --------------
     lint_result = _run_lint(
-        draft, lint_config, source_text, has_videos, job_id, audit, ts, actor,
+        draft,
+        lint_config,
+        source_text,
+        has_videos,
+        job_id,
+        audit,
+        ts,
+        actor,
         has_images=has_images,
     )
 
     if lint_result.status in (LintStatus.NEEDS_REVISION, LintStatus.BLOCKED):
-        persist_gate_state(
-            store, job_id, JobState.NEEDS_REVISION, updated_at=ts
-        )
+        persist_gate_state(store, job_id, JobState.NEEDS_REVISION, updated_at=ts)
         return DraftLintOutcome(
             lint=lint_result,
             grounding=grounding_result,
             job_state=JobState.NEEDS_REVISION,
         )
 
-    return DraftLintOutcome(
-        lint=lint_result, grounding=grounding_result, job_state=None
-    )
+    return DraftLintOutcome(lint=lint_result, grounding=grounding_result, job_state=None)
 
 
 def relint_after_grounding_cleared(
@@ -183,7 +184,14 @@ def relint_after_grounding_cleared(
     Returns ``job_state=None`` always (no persist here); inspect
     ``outcome.lint`` to decide the next move."""
     lint_result = _run_lint(
-        draft, lint_config, source_text, has_videos, job_id, audit, ts, actor,
+        draft,
+        lint_config,
+        source_text,
+        has_videos,
+        job_id,
+        audit,
+        ts,
+        actor,
         has_images=has_images,
     )
     return DraftLintOutcome(lint=lint_result, grounding=None, job_state=None)

@@ -78,7 +78,7 @@ class CrawlRunner:
         self.actor = actor
         self.python = python_executable or sys.executable
         self._run = subprocess_runner  # injectable for tests
-        self._resolver = resolver      # injectable DNS resolver for tests
+        self._resolver = resolver  # injectable DNS resolver for tests
 
     # --- pre-flight guards (pure-ish, parent process) ---
 
@@ -123,13 +123,21 @@ class CrawlRunner:
 
         legal_basis = self.registry.legal_basis_for(host)
         cmd = [
-            self.python, "-m", SCRAPY_MODULE,
-            "--url", spec.url,
-            "--job-id", spec.job_id,
-            "--job-dir", str(spec.job_dir),
-            "--timeout", str(self.timeout),
-            "--source-domain", host,
-            "--fetched-at", ts,
+            self.python,
+            "-m",
+            SCRAPY_MODULE,
+            "--url",
+            spec.url,
+            "--job-id",
+            spec.job_id,
+            "--job-dir",
+            str(spec.job_dir),
+            "--timeout",
+            str(self.timeout),
+            "--source-domain",
+            host,
+            "--fetched-at",
+            ts,
         ]
         for d in self.registry.domains:
             cmd += ["--allow-domain", d]
@@ -137,8 +145,8 @@ class CrawlRunner:
         try:
             proc = self._run(
                 cmd,
-                timeout=self.timeout + 30,   # outer guard > Scrapy's own timeout
-                env=minimal_env(),           # NO secrets inherited (R40/R44)
+                timeout=self.timeout + 30,  # outer guard > Scrapy's own timeout
+                env=minimal_env(),  # NO secrets inherited (R40/R44)
                 capture_output=True,
                 text=True,
             )
@@ -175,7 +183,10 @@ class CrawlRunner:
                 event=EVENT_CRAWL_DONE,
                 job_id=spec.job_id,
                 actor=self.actor,
-                extra={"status": manifest.crawl_status, "legal_basis": legal_basis or "unspecified"},
+                extra={
+                    "status": manifest.crawl_status,
+                    "legal_basis": legal_basis or "unspecified",
+                },
             )
 
         return RawJobBundle(

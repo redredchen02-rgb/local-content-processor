@@ -3,10 +3,10 @@ import os
 import sys
 
 from lcp.runtime_hardening import (
+    SecretRedactingFilter,
     minimal_env,
     redact,
     set_restrictive_umask,
-    SecretRedactingFilter,
 )
 
 
@@ -18,9 +18,7 @@ def test_redact_masks_secret_assignments():
 
 
 def test_redact_leaves_plain_text():
-    assert redact("hello world, job 20260616-001 done") == (
-        "hello world, job 20260616-001 done"
-    )
+    assert redact("hello world, job 20260616-001 done") == ("hello world, job 20260616-001 done")
 
 
 def test_redact_masks_json_form():
@@ -77,12 +75,14 @@ def test_minimal_env_path_is_pinned_not_forwarded(monkeypatch):
     # U18: the child's PATH must be a vetted minimal set, NOT the operator's
     # PATH wholesale — otherwise an attacker-influenced PATH entry could plant a
     # malicious `ffmpeg`/`python` for the media/crawler subprocess to resolve.
-    poisoned = ":".join([
-        "relative/bin",            # non-absolute -> must be stripped
-        ".",                       # cwd -> must be stripped
-        "/tmp",                    # world-writable -> must be stripped
-        "/opt/evil tools/bin",     # not in the vetted allowlist -> dropped
-    ])
+    poisoned = ":".join(
+        [
+            "relative/bin",  # non-absolute -> must be stripped
+            ".",  # cwd -> must be stripped
+            "/tmp",  # world-writable -> must be stripped
+            "/opt/evil tools/bin",  # not in the vetted allowlist -> dropped
+        ]
+    )
     monkeypatch.setenv("PATH", poisoned)
     env = minimal_env()
     entries = env["PATH"].split(os.pathsep)

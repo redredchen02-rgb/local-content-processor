@@ -10,6 +10,8 @@ it as a sustained failure."""
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 import httpx
 
 from ..models import GossipItem
@@ -46,7 +48,7 @@ class DouyinScraper:
                     title=word,
                     # Hot-search words resolve to a Douyin search page (a
                     # topic/aggregation page, like Weibo) — not a single article.
-                    url=f"https://www.douyin.com/search/{word}",
+                    url=f"https://www.douyin.com/search/{quote(word, safe='')}",
                     heat=int(hot_value) if hot_value else 0,
                     tag=_tag_from_label(entry.get("label", 0)),
                 )

@@ -36,7 +36,7 @@ from .adapters.storage.config_io import (
     load_config,
 )
 from .adapters.storage.job_store import JobStore
-from .core.errors import DependencyError, EXIT_INTERNAL, EXIT_OK, LcpError, UsageError
+from .core.errors import EXIT_INTERNAL, EXIT_OK, DependencyError, LcpError, UsageError
 from .core.models import SourceType
 from .runtime_hardening import apply_hardening
 
@@ -132,9 +132,7 @@ def init(ctx):
     obj = ctx.obj
     config_path = Path(obj.get("config_path") or "config.yaml")
     if config_path.exists():
-        base_dir = obj.get("output_dir") or load_config(
-            str(config_path)
-        ).storage.base_dir
+        base_dir = obj.get("output_dir") or load_config(str(config_path)).storage.base_dir
     else:
         base_dir = obj.get("output_dir") or "./data"
     created = init_workspace(
@@ -144,21 +142,29 @@ def init(ctx):
     )
     parts = []
     parts.append(
-        f"wrote {config_path} (0600)" if created["config_created"]
+        f"wrote {config_path} (0600)"
+        if created["config_created"]
         else f"kept existing {config_path}"
     )
     parts.append(
-        "seeded empty site_index.jsonl" if created["index_created"]
+        "seeded empty site_index.jsonl"
+        if created["index_created"]
         else "site index already present"
     )
     if obj.get("as_json"):
-        click.echo(_json.dumps(
-            {"config_path": str(config_path), **created}, ensure_ascii=False,
-            sort_keys=True,
-        ))
+        click.echo(
+            _json.dumps(
+                {"config_path": str(config_path), **created},
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
     elif not obj.get("quiet"):
-        click.echo("init: " + "; ".join(parts)
-                   + ". Next: edit config.yaml (add a reviewer), then `lcp run`.")
+        click.echo(
+            "init: "
+            + "; ".join(parts)
+            + ". Next: edit config.yaml (add a reviewer), then `lcp run`."
+        )
 
 
 # --- Stage 1: crawl / ingest -------------------------------------------------
@@ -168,7 +174,9 @@ def init(ctx):
 @click.option("--url", default=None, help="Single URL to crawl")
 @click.option("--input", "input_file", default=None, help="URL list file")
 @click.option(
-    "--job-id", "job_id", required=True,
+    "--job-id",
+    "job_id",
+    required=True,
     help="New job id (a failed crawl can be retried in place; re-crawling an "
     "already-crawled job is refused — delete it first or use a fresh id)",
 )
@@ -179,8 +187,9 @@ def crawl(ctx, url, input_file, job_id):
     if not url and not input_file:
         raise UsageError("crawl requires --url or --input")
     if input_file:
-        # MVP: the URL-list path is read by the operator; we crawl the first URL
-        # entry here and leave batch fan-out to repeated invocations / cron.
+        # The URL-list file holds one URL per line. crawl creates exactly ONE
+        # job (--job-id is single), so a multi-URL file is a footgun, not a
+        # batch — fail loud instead of silently crawling only the first.
         urls = [
             ln.strip()
             for ln in Path(input_file).read_text(encoding="utf-8").splitlines()
@@ -188,6 +197,12 @@ def crawl(ctx, url, input_file, job_id):
         ]
         if not urls:
             raise UsageError(f"no URLs in {input_file}")
+        if len(urls) > 1:
+            raise UsageError(
+                f"{input_file} has {len(urls)} URLs but crawl creates one job "
+                "(--job-id is single). Crawl one URL per call, or use "
+                "`ingest-gossip` for batch injection."
+            )
         url = urls[0]
 
     # Route the URL crawl through Pipeline.stage1 (the single owner of the
@@ -205,8 +220,7 @@ def crawl(ctx, url, input_file, job_id):
     p = pl.Pipeline(c.config, c.store, c.audit, dry_run=c.dry_run, crawler=crawler)
     res = p.stage1(spec, ts=_now())
     c.emit(
-        {"job_id": job_id, "crawl_status": res.crawl_status,
-         "state": res.record.state.value},
+        {"job_id": job_id, "crawl_status": res.crawl_status, "state": res.record.state.value},
         human=f"crawled {job_id}: {res.crawl_status}",
     )
 
@@ -214,7 +228,9 @@ def crawl(ctx, url, input_file, job_id):
 @cli.command()
 @click.option("--dir", "directory", required=True, help="Local material folder")
 @click.option(
-    "--job-id", "job_id", required=True,
+    "--job-id",
+    "job_id",
+    required=True,
     help="New job id (re-ingesting an existing job is refused; "
     "delete/supersede it first or use a fresh id)",
 )
@@ -241,7 +257,9 @@ def ingest(ctx, directory, job_id):
 
 @cli.command(name="ingest-gossip")
 @click.option(
-    "--input", "input_file", default=None,
+    "--input",
+    "input_file",
+    default=None,
     help="GossipItem JSON array file (reads stdin if omitted)",
 )
 @click.pass_context
@@ -253,19 +271,13 @@ def ingest_gossip(ctx, input_file):
     later `run --job-id` (no --url) can deep-crawl it. Invalid/duplicate items
     are skipped with a reason (non-lossy report); an oversized batch is refused."""
     c = Ctx(ctx.obj)
-    raw = (
-        Path(input_file).read_text(encoding="utf-8")
-        if input_file else sys.stdin.read()
-    )
+    raw = Path(input_file).read_text(encoding="utf-8") if input_file else sys.stdin.read()
     items = gi.parse_payload(raw)
     p = pl.Pipeline(c.config, c.store, c.audit, dry_run=c.dry_run)
     report = p.ingest_gossip(items, ts=_now())
     c.emit(
         report.to_dict(),
-        human=(
-            f"ingest-gossip: created {len(report.created)}, "
-            f"skipped {len(report.skipped)}"
-        ),
+        human=(f"ingest-gossip: created {len(report.created)}, skipped {len(report.skipped)}"),
     )
 
 
@@ -273,54 +285,103 @@ def ingest_gossip(ctx, input_file):
 
 
 @cli.command()
-@click.option("--job-id", "job_id", required=True)
+@click.option("--job-id", "job_id", default=None, help="Single job to process")
+@click.option("--all-state", "all_state", default=None, help="Process ALL jobs in this state")
 @click.option("--title", default="", help="Working title (lint/risk input)")
 @click.option(
-    "--watermark/--no-watermark", "watermark", default=None,
+    "--watermark/--no-watermark",
+    "watermark",
+    default=None,
     help="Apply (or skip) the official watermark; default follows config",
 )
 @click.option(
-    "--template", "template", default=None,
+    "--template",
+    "template",
+    default=None,
     help="Per-栏目 prompt template to apply (category name)",
 )
 @click.option(
-    "--ai-copy", "ai_copy", is_flag=True, default=False,
+    "--ai-copy",
+    "ai_copy",
+    is_flag=True,
+    default=False,
     help="Also generate AI captions/FAQ/subheads (all need human review)",
 )
 @click.pass_context
-def process(ctx, job_id, title, watermark, template, ai_copy):
+def process(ctx, job_id, all_state, title, watermark, template, ai_copy):
     """Stage 2: risk gate, media validation/normalization, dedup gate, assemble,
     lint + ground.
 
     Honours --dry-run: the LLM is NOT called and no external system is mutated
     (the draft is marked not-executed; deterministic local stages incl. media
     still run). Stops at the first gate that parks the job (BLOCKED / DUPLICATE /
-    NEEDS_*). --watermark/--template/--ai-copy are process-time inputs."""
+    NEEDS_*). --watermark/--template/--ai-copy are process-time inputs.
+
+    Use --all-state <state> to batch-process every job in a given state
+    (e.g. --all-state crawled). Each job is independent; parked/failed jobs
+    do not stop the batch."""
+    if not job_id and not all_state:
+        raise click.UsageError("either --job-id or --all-state is required")
+    if job_id and all_state:
+        raise click.UsageError("cannot use both --job-id and --all-state")
+
     c = Ctx(ctx.obj)
     p = pl.Pipeline(c.config, c.store, c.audit, dry_run=c.dry_run)
-    res = p.process(
-        job_id, ts=_now(), title=title,
-        watermark=watermark, template=template, ai_copy=ai_copy,
-    )
-    c.emit(
-        {
-            "job_id": job_id,
-            "state": res.final_state.value,
-            "stopped_at": res.stopped_at,
-            "dry_run": res.dry_run,
-            "notes": res.notes,
-        },
-        human=(
-            f"processed {job_id}: {res.final_state.value}"
-            + (f" (stopped at {res.stopped_at})" if res.stopped_at else "")
-            + (" [dry-run]" if res.dry_run else "")
-            + (
-                f"\n  → {adv}"
-                if (adv := _completion_advisory(res.final_state, dry_run=res.dry_run))
-                else ""
-            )
-        ),
-    )
+
+    if all_state:
+        results = pl.process_batch(
+            p,
+            all_state,
+            ts=_now(),
+            title=title,
+            ai_copy=ai_copy,
+            watermark=watermark,
+            template=template,
+        )
+        summary = {}
+        for r in results:
+            summary[r.final_state.value] = summary.get(r.final_state.value, 0) + 1
+        c.emit(
+            {
+                "state": all_state,
+                "processed": len(results),
+                "summary": summary,
+                "dry_run": p.dry_run,
+            },
+            human=(
+                f"batch: processed {len(results)} jobs in state {all_state!r}: "
+                + ", ".join(f"{k}={v}" for k, v in sorted(summary.items()))
+                + (" [dry-run]" if p.dry_run else "")
+            ),
+        )
+    else:
+        res = p.process(
+            job_id,
+            ts=_now(),
+            title=title,
+            watermark=watermark,
+            template=template,
+            ai_copy=ai_copy,
+        )
+        c.emit(
+            {
+                "job_id": job_id,
+                "state": res.final_state.value,
+                "stopped_at": res.stopped_at,
+                "dry_run": res.dry_run,
+                "notes": res.notes,
+            },
+            human=(
+                f"processed {job_id}: {res.final_state.value}"
+                + (f" (stopped at {res.stopped_at})" if res.stopped_at else "")
+                + (" [dry-run]" if res.dry_run else "")
+                + (
+                    f"\n  → {adv}"
+                    if (adv := _completion_advisory(res.final_state, dry_run=res.dry_run))
+                    else ""
+                )
+            ),
+        )
 
 
 # --- Stage 4: review packet (freeze) + sign-off ------------------------------
@@ -328,8 +389,12 @@ def process(ctx, job_id, title, watermark, template, ai_copy):
 
 @cli.command(name="review-packet")
 @click.option("--job-id", "job_id", required=True)
-@click.option("--source-url", "source_urls", multiple=True,
-              help="Source URL(s) rendered as inert text in the packet")
+@click.option(
+    "--source-url",
+    "source_urls",
+    multiple=True,
+    help="Source URL(s) rendered as inert text in the packet",
+)
 @click.pass_context
 def review_packet(ctx, job_id, source_urls):
     """Build the sanitized review packet and FREEZE the draft (PROCESSED ->
@@ -340,9 +405,7 @@ def review_packet(ctx, job_id, source_urls):
     # bind the reviewed artifact.
     draft = pl.load_draft(c.store, job_id)
     if draft is None:
-        raise UsageError(
-            f"no processed draft for {job_id}; run `process` (or `run`) first"
-        )
+        raise UsageError(f"no processed draft for {job_id}; run `process` (or `run`) first")
     packet = build_review_packet(
         job_id=job_id,
         draft=draft,
@@ -360,8 +423,7 @@ def review_packet(ctx, job_id, source_urls):
             "cover_sha256": packet.cover_sha256,
             "review_dir": str(packet.review_dir),
         },
-        human=f"review packet built for {job_id}: REVIEW_PENDING "
-        f"(body {packet.body_sha256[:12]}…)",
+        human=f"review packet built for {job_id}: REVIEW_PENDING (body {packet.body_sha256[:12]}…)",
     )
 
 
@@ -380,8 +442,13 @@ def approve(ctx, job_id, reviewer):
     # frozen body hash — a draft tampered after freeze must NOT approve.
     draft = pl.load_draft(c.store, job_id)
     rec = signoff.approve(
-        job_id, reviewer,
-        config=c.config, store=c.store, audit=c.audit, ts=_now(), draft=draft,
+        job_id,
+        reviewer,
+        config=c.config,
+        store=c.store,
+        audit=c.audit,
+        ts=_now(),
+        draft=draft,
     )
     c.emit(
         {
@@ -406,12 +473,16 @@ def reject(ctx, job_id, reviewer, reason):
     """Reject a REVIEW_PENDING job: REVIEW_PENDING -> REJECTED (terminal)."""
     c = Ctx(ctx.obj)
     rec = signoff.reject(
-        job_id, reviewer, reason,
-        config=c.config, store=c.store, audit=c.audit, ts=_now(),
+        job_id,
+        reviewer,
+        reason,
+        config=c.config,
+        store=c.store,
+        audit=c.audit,
+        ts=_now(),
     )
     c.emit(
-        {"job_id": job_id, "state": rec.new_state.value,
-         "reviewer_stated": rec.reviewer_stated},
+        {"job_id": job_id, "state": rec.new_state.value, "reviewer_stated": rec.reviewer_stated},
         human=f"rejected {job_id} by {rec.reviewer_stated}",
     )
 
@@ -419,11 +490,15 @@ def reject(ctx, job_id, reviewer, reason):
 @cli.command()
 @click.option("--job-id", "job_id", required=True)
 @click.option("--reviewer", required=True, help="Reviewer (must be whitelisted)")
-@click.option("--relint", is_flag=True,
-              help="Re-run lint to clear a grounding hold (the human vouched for "
-                   "grounding); only a clean lint promotes to PROCESSED")
-@click.option("--reason", default=None,
-              help="Required for a risk/dedup human override (recorded, audited)")
+@click.option(
+    "--relint",
+    is_flag=True,
+    help="Re-run lint to clear a grounding hold (the human vouched for "
+    "grounding); only a clean lint promotes to PROCESSED",
+)
+@click.option(
+    "--reason", default=None, help="Required for a risk/dedup human override (recorded, audited)"
+)
 @click.pass_context
 def resolve(ctx, job_id, reviewer, relint, reason):
     """Drive a NEEDS_HUMAN_REVIEW job out of the hold: -> PROCESSED.
@@ -433,13 +508,17 @@ def resolve(ctx, job_id, reviewer, relint, reason):
     required — this is a recorded human override (state machine allows it)."""
     c = Ctx(ctx.obj)
     rec = signoff.resolve(
-        job_id, reviewer,
-        config=c.config, store=c.store, audit=c.audit, ts=_now(),
-        relint=relint, reason=reason,
+        job_id,
+        reviewer,
+        config=c.config,
+        store=c.store,
+        audit=c.audit,
+        ts=_now(),
+        relint=relint,
+        reason=reason,
     )
     c.emit(
-        {"job_id": job_id, "state": rec.new_state.value,
-         "reviewer_stated": rec.reviewer_stated},
+        {"job_id": job_id, "state": rec.new_state.value, "reviewer_stated": rec.reviewer_stated},
         human=f"resolved {job_id} by {rec.reviewer_stated}: {rec.new_state.value}",
     )
 
@@ -448,8 +527,11 @@ def resolve(ctx, job_id, reviewer, relint, reason):
 @click.option("--job-id", "job_id", required=True)
 @click.option("--reviewer", required=True, help="Reviewer (must be whitelisted)")
 @click.option("--url", required=True, help="The published URL you pasted")
-@click.option("--attest/--no-attest", default=False,
-              help="Confirm the published version IS the signed-off version")
+@click.option(
+    "--attest/--no-attest",
+    default=False,
+    help="Confirm the published version IS the signed-off version",
+)
 @click.pass_context
 def backfill(ctx, job_id, reviewer, url, attest):
     """Record a publish: APPROVED -> PUBLISHED_RECORDED (responsibility loop).
@@ -459,9 +541,14 @@ def backfill(ctx, job_id, reviewer, url, attest):
     STAYS APPROVED (the loop is open, R37)."""
     c = Ctx(ctx.obj)
     new_state = signoff.backfill_published_url(
-        job_id, url,
-        config=c.config, store=c.store, audit=c.audit, ts=_now(),
-        attested=attest, reviewer=reviewer,
+        job_id,
+        url,
+        config=c.config,
+        store=c.store,
+        audit=c.audit,
+        ts=_now(),
+        attested=attest,
+        reviewer=reviewer,
     )
     c.emit(
         {"job_id": job_id, "state": new_state.value, "attested": attest},
@@ -471,13 +558,17 @@ def backfill(ctx, job_id, reviewer, url, attest):
 
 @cli.command()
 @click.option("--job-id", "job_id", required=True)
-@click.option("--new-job-id", "new_job_id", default=None,
-              help="Back-link to the replacement job, if created")
-@click.option("--redline-override/--no-redline-override", "redline_override",
-              default=False,
-              help="REQUIRED second confirmation to recover a BLOCKED (redline) "
-                   "job. Without it a BLOCKED supersede is refused. Records a "
-                   "distinct REDLINE_OVERRIDE audit event (mirrors --attest).")
+@click.option(
+    "--new-job-id", "new_job_id", default=None, help="Back-link to the replacement job, if created"
+)
+@click.option(
+    "--redline-override/--no-redline-override",
+    "redline_override",
+    default=False,
+    help="REQUIRED second confirmation to recover a BLOCKED (redline) "
+    "job. Without it a BLOCKED supersede is refused. Records a "
+    "distinct REDLINE_OVERRIDE audit event (mirrors --attest).",
+)
 @click.pass_context
 def supersede(ctx, job_id, new_job_id, redline_override):
     """Supersede a supersede-able job: -> SUPERSEDED (also the recovery seam).
@@ -490,12 +581,21 @@ def supersede(ctx, job_id, new_job_id, redline_override):
     The actor recorded is the OBSERVED OS user, not a literal default."""
     c = Ctx(ctx.obj)
     new_state = signoff.supersede(
-        job_id, store=c.store, audit=c.audit, ts=_now(), new_job_id=new_job_id,
-        actor=signoff.observed_os_user(), redline_override=redline_override,
+        job_id,
+        store=c.store,
+        audit=c.audit,
+        ts=_now(),
+        new_job_id=new_job_id,
+        actor=signoff.observed_os_user(),
+        redline_override=redline_override,
     )
     c.emit(
-        {"job_id": job_id, "state": new_state.value, "new_job_id": new_job_id,
-         "redline_override": bool(redline_override)},
+        {
+            "job_id": job_id,
+            "state": new_state.value,
+            "new_job_id": new_job_id,
+            "redline_override": bool(redline_override),
+        },
         human=f"superseded {job_id}: {new_state.value}",
     )
 
@@ -504,8 +604,9 @@ def supersede(ctx, job_id, new_job_id, redline_override):
 
 
 @cli.command(name="list")
-@click.option("--state", default=None,
-              help="Filter: pending|blocked|needs-review|duplicate|approved|…")
+@click.option(
+    "--state", default=None, help="Filter: pending|blocked|needs-review|duplicate|approved|…"
+)
 @click.option("--summary", is_flag=True, help="Show counts-by-state summary")
 @click.pass_context
 def list_cmd(ctx, state, summary):
@@ -525,21 +626,23 @@ def list_cmd(ctx, state, summary):
         )
         return
     interrupted = {
-        i.job_id: i
-        for i in pl.Pipeline(
-            c.config, c.store, c.audit, dry_run=c.dry_run
-        ).reconcile()
+        i.job_id: i for i in pl.Pipeline(c.config, c.store, c.audit, dry_run=c.dry_run).reconcile()
     }
     records = pl.list_jobs(c.store, state)
     rows = [
-        {"job_id": r.job_id, "state": r.state.value,
-         "review_reason": r.review_reason.value if r.review_reason else None,
-         "updated_at": r.updated_at,
-         "interrupted": r.job_id in interrupted,
-         "interrupt_attempts": (
-             interrupted[r.job_id].attempts if r.job_id in interrupted else 0),
-         "interrupt_exhausted": (
-             interrupted[r.job_id].exhausted if r.job_id in interrupted else False)}
+        {
+            "job_id": r.job_id,
+            "state": r.state.value,
+            "review_reason": r.review_reason.value if r.review_reason else None,
+            "updated_at": r.updated_at,
+            "interrupted": r.job_id in interrupted,
+            "interrupt_attempts": (
+                interrupted[r.job_id].attempts if r.job_id in interrupted else 0
+            ),
+            "interrupt_exhausted": (
+                interrupted[r.job_id].exhausted if r.job_id in interrupted else False
+            ),
+        }
         for r in records
     ]
     c.emit(
@@ -552,7 +655,8 @@ def list_cmd(ctx, state, summary):
                     "\t[INTERRUPTED"
                     + (" needs-human" if r["interrupt_exhausted"] else "")
                     + f" x{r['interrupt_attempts']}]"
-                    if r["interrupted"] else ""
+                    if r["interrupted"]
+                    else ""
                 )
                 for r in rows
             )
@@ -568,16 +672,27 @@ def list_cmd(ctx, state, summary):
 @click.option("--url", default=None, help="URL to crawl (Stage 1)")
 @click.option("--input", "input_dir", default=None, help="Local folder to ingest")
 @click.option("--job-id", "job_id", required=True)
-@click.option("--until", "target", type=click.Choice([pl.TARGET_DRAFT, pl.TARGET_REVIEW]),
-              default=pl.TARGET_DRAFT, help="Run up to draft or review")
+@click.option(
+    "--until",
+    "target",
+    type=click.Choice([pl.TARGET_DRAFT, pl.TARGET_REVIEW]),
+    default=pl.TARGET_DRAFT,
+    help="Run up to draft or review",
+)
 @click.option("--title", default="", help="Working title")
-@click.option("--source-url", "source_urls", multiple=True,
-              help="Source URL(s) for the review packet (inert text)")
-@click.option("--ai-copy/--no-ai-copy", default=True,
-              help="Generate structural copy (captions/FAQ/quick-facts/summary/"
-                   "tags). ON by default — a complete draft needs it (D2).")
-@click.option("--template", default=None,
-              help="Per-栏目 prompt template to apply (category name)")
+@click.option(
+    "--source-url",
+    "source_urls",
+    multiple=True,
+    help="Source URL(s) for the review packet (inert text)",
+)
+@click.option(
+    "--ai-copy/--no-ai-copy",
+    default=True,
+    help="Generate structural copy (captions/FAQ/quick-facts/summary/"
+    "tags). ON by default — a complete draft needs it (D2).",
+)
+@click.option("--template", default=None, help="Per-栏目 prompt template to apply (category name)")
 @click.pass_context
 def run(ctx, url, input_dir, job_id, target, title, source_urls, ai_copy, template):
     """End-to-end run up to a target: Stage 1 -> Stage 2 (-> review packet).
@@ -602,27 +717,39 @@ def run(ctx, url, input_dir, job_id, target, title, source_urls, ai_copy, templa
     if url:
         crawler = build_crawler(c.config, c.audit, _now)
         spec = SourceSpec(
-            job_id=job_id, source_type=SourceType.URL,
-            job_dir=c.store.job_dir(job_id), url=url,
+            job_id=job_id,
+            source_type=SourceType.URL,
+            job_dir=c.store.job_dir(job_id),
+            url=url,
             max_assets=c.config.crawler.max_assets_per_job,
         )
     else:
         crawler = LocalIngestCrawler()
         spec = SourceSpec(
-            job_id=job_id, source_type=SourceType.LOCAL_DIR,
-            job_dir=c.store.job_dir(job_id), local_dir=Path(input_dir),
+            job_id=job_id,
+            source_type=SourceType.LOCAL_DIR,
+            job_dir=c.store.job_dir(job_id),
+            local_dir=Path(input_dir),
             max_assets=c.config.crawler.max_assets_per_job,
         )
 
     p = pl.Pipeline(c.config, c.store, c.audit, dry_run=c.dry_run, crawler=crawler)
     res = p.run_until(
-        spec, target=target, ts=_now(), title=title,
-        source_urls=list(source_urls), ai_copy=ai_copy, template=template,
+        spec,
+        target=target,
+        ts=_now(),
+        title=title,
+        source_urls=list(source_urls),
+        ai_copy=ai_copy,
+        template=template,
     )
     c.emit(
         {
-            "job_id": job_id, "state": res.final_state.value,
-            "target": res.target, "dry_run": res.dry_run, "notes": res.notes,
+            "job_id": job_id,
+            "state": res.final_state.value,
+            "target": res.target,
+            "dry_run": res.dry_run,
+            "notes": res.notes,
             "body_sha256": res.packet.body_sha256 if res.packet else None,
         },
         human=f"run {job_id} --until {target}: {res.final_state.value}"
@@ -637,7 +764,9 @@ def run(ctx, url, input_dir, job_id, target, title, source_urls, ai_copy, templa
 
 @cli.command()
 @click.option("--port", type=int, default=None, help="Port to bind on 127.0.0.1 (default 8765).")
-@click.option("--no-browser", is_flag=True, help="Do not auto-open the browser; just print the URL.")
+@click.option(
+    "--no-browser", is_flag=True, help="Do not auto-open the browser; just print the URL."
+)
 @click.pass_context
 def gui(ctx, port, no_browser):
     """Launch the local webui: a 127.0.0.1 HTTP service serving the operator UI.

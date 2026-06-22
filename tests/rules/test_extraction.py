@@ -75,9 +75,7 @@ def test_body_prefers_article_then_p():
 
 
 def test_media_de_duped():
-    resp = _FakeResponse(
-        {"title::text": ["T"], "img::attr(src)": ["https://ex.com/a.jpg"] * 2}
-    )
+    resp = _FakeResponse({"title::text": ["T"], "img::attr(src)": ["https://ex.com/a.jpg"] * 2})
     out = extract_content(resp, is_media_url_safe=_always_safe)
     assert out["image_urls"] == ["https://ex.com/a.jpg"]
 
