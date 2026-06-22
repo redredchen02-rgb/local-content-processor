@@ -21,7 +21,8 @@ classifiers = [
 license = "MIT"
 dependencies = [
     "pydantic>=2,<3",
-    "pydantic-settings>=2,<3",
+    # Floor remediates GHSA-4xgf-cpjx-pc3j (surfaced by the pip-audit CI gate).
+    "pydantic-settings>=2.14.2,<3",
     "click>=8,<9",
     "keyring>=25",
     "pyyaml>=6",
@@ -41,7 +42,7 @@ dedup = ["datasketch>=1.6"]
 # `lcp gui` — it needs NO extra dependency. Kept (empty) so existing
 # `pip install '.[...,gui]'` commands keep working; pywebview was removed.
 gui = []
-dev = ["pytest>=8", "mypy>=1.18,<2", "ruff>=0.11,<1", "types-PyYAML"]
+dev = ["pytest>=8", "pytest-cov>=5", "mypy>=1.18,<2", "ruff>=0.11,<1", "types-PyYAML"]
 
 [project.scripts]
 lcp = "lcp.cli:main"
@@ -59,6 +60,24 @@ lcp = ["web/*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+# Coverage is collected only when `--cov` is passed (the CI `test` job); a plain
+# `pytest` run is unaffected. The floor is a deliberately LOW soft gate (baseline
+# was 93%): it catches a whole-module regression without red-building ordinary
+# refactors. Ratchet upward over time, never down to mask a drop.
+[tool.coverage.run]
+source = ["lcp"]
+branch = true
+omit = ["*/tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 85
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@(abc\\.)?abstractmethod",
+]
 
 [tool.ruff]
 line-length = 100
