@@ -144,25 +144,42 @@ def _validate_videos(
     for a in videos:
         entry: dict[str, Any] = {"kind": "video", "path": a.path}
         src = job_dir / a.path
-        if not src.exists():
+        # ONE guarded stat drives both the missing-file and unreadable-file
+        # decisions so each fails closed at the asset level — a present-but-
+        # unstattable file must PARK, never crash the whole Stage-2 run (a bare
+        # OSError would escape Pipeline.process, which catches only
+        # ExternalServiceError/DependencyError). Size is a fact the pure rule
+        # never sees (it judges PROBED facts); max_video_size_mb was previously
+        # unenforced, so an oversized video passed the gate silently.
+        try:
+            st = src.stat()
+        except FileNotFoundError:
             entry.update(state=AssetState.FAILED.value, reasons=["file missing on disk"])
             entries.append(entry)
             needs_revision = True
             continue
+        except OSError:
+            entry.update(state=AssetState.NEEDS_REVISION.value, reasons=["video size unreadable"])
+            entries.append(entry)
+            needs_revision = True
+            continue
+        size_reasons: list[str] = []
+        size_mb = st.st_size / (1024 * 1024)  # MiB (1024-based), mirrors max_video_size_mb
+        if size_mb > media.max_video_size_mb:
+            size_reasons.append(
+                f"video too large: {size_mb:.1f}MB > max {media.max_video_size_mb}MB"
+            )
         try:
             info = ffprobe.probe(src)
         except ExternalServiceError as e:
             # A hostile/corrupt video (probe fail / timeout) -> flag, don't crash.
-            entry.update(state=AssetState.NEEDS_REVISION.value, reasons=[f"probe failed: {e}"])
+            entry.update(
+                state=AssetState.NEEDS_REVISION.value,
+                reasons=[*size_reasons, f"probe failed: {e}"],
+            )
             entries.append(entry)
             needs_revision = True
             continue
-        # File-size check (adapter-level: file stat, not a pure rule).
-        file_size_mb = src.stat().st_size / (1024 * 1024)
-        if file_size_mb > media.max_video_size_mb:
-            reasons_size = [f"video too large: {file_size_mb:.1f} MB > max {media.max_video_size_mb} MB"]
-        else:
-            reasons_size = []
         spec = asset_rules.judge_video(
             codec=info.codec,
             fps=info.fps,
@@ -174,7 +191,7 @@ def _validate_videos(
             min_fps=media.min_video_fps,
             max_fps=media.max_video_fps,
         )
-        reasons = reasons_size + list(spec.reasons)
+        reasons = [*size_reasons, *spec.reasons]
         try:
             black = ffprobe.detect_black_segments(src)
             reasons.extend(asset_rules.judge_black_segments(black, info.duration_s).reasons)

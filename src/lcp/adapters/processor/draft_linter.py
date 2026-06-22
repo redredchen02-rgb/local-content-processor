@@ -31,7 +31,13 @@ from ...core.draft import Draft
 from ...core.rules import grounding as grounding_rules
 from ...core.rules import lint_rules
 from ...core.rules.grounding import GroundingResult, GroundingStrategy
-from ...core.rules.lint_rules import LintConfig, LintResult, LintStatus
+from ...core.rules.lint_rules import (
+    DEFAULT_HYPE_WORDS,
+    DEFAULT_MIN_COPY_CHARS,
+    LintConfig,
+    LintResult,
+    LintStatus,
+)
 from ...core.state import JobState, ReviewReason
 from ...core.text_sanitize import sanitize_source
 from ..storage.audit_log import AuditLog
@@ -54,15 +60,22 @@ class DraftLintOutcome:
 
 def build_lint_config(content: ContentConfig, categories: dict[str, list[str]]) -> LintConfig:
     """Project the loaded :class:`ContentConfig` (+ the config categories dict)
-    into the pure :class:`LintConfig` value object the rule module consumes."""
+    into the pure :class:`LintConfig` value object the rule module consumes.
+
+    ``hype_words``/``min_copy_chars`` are operator-tunable; an empty/zero value
+    falls back to the rule's calibrated default, so this projection is behavior-
+    preserving until an operator overrides them (they were previously dropped —
+    the rule's defaults always governed regardless of config)."""
     return LintConfig(
         title_min_chars=content.title_min_chars,
         title_max_chars=content.title_max_chars,
         tag_min_count=content.tag_min_count,
         tag_max_count=content.tag_max_count,
+        hype_words=tuple(content.hype_words) if content.hype_words else DEFAULT_HYPE_WORDS,
+        min_copy_chars=(
+            content.min_copy_chars if content.min_copy_chars > 0 else DEFAULT_MIN_COPY_CHARS
+        ),
         categories=tuple(categories.keys()),
-        hype_words=tuple(content.hype_words),
-        min_copy_chars=content.min_copy_chars,
     )
 
 

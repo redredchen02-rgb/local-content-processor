@@ -19,8 +19,12 @@ media:
   cover_height: 640
   video_codec: "h264"
   video_fps: 30
+  # Acceptance band: a probed video outside [min_video_fps, max_video_fps]
+  # (inclusive) parks at NEEDS_REVISION.
+  min_video_fps: 24.0
+  max_video_fps: 61.0
   min_video_bitrate_mbps: 1.5
-  max_video_size_mb: 500
+  max_video_size_mb: 500  # MiB (1024-based); over this, the video parks
 
 content:
   title_min_chars: 25
@@ -28,6 +32,11 @@ content:
   tag_min_count: 3
   tag_max_count: 5
   uncertainty_terms: ["網傳", "疑似", "被曝", "據傳"]
+  # Lint tunables. Omit / leave empty to use the linter's calibrated defaults.
+  # hype_words: clickbait/hype tags the linter rejects (objective tags only).
+  # min_copy_chars: paragraph-length floor for the copied-too-much check.
+  hype_words: []
+  min_copy_chars: 0
 
 llm:
   base_url: ""             # company OpenAI-compatible endpoint, must include /v1

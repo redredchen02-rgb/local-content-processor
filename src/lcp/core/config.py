@@ -32,10 +32,13 @@ class MediaConfig(BaseModel):
     cover_height: int = 640
     video_codec: str = "h264"
     video_fps: int = 30
+    # Acceptance band forwarded to asset_rules.judge_video. Defaults mirror the
+    # rule's own DEFAULT_MIN/MAX_VIDEO_FPS so behavior is unchanged until tuned;
+    # previously the gate ignored config and always used those rule defaults.
     min_video_fps: float = 24.0
-    max_video_fps: float = 60.0
+    max_video_fps: float = 61.0
     min_video_bitrate_mbps: float = 1.5
-    max_video_size_mb: int = 500
+    max_video_size_mb: int = 500  # MiB (1024-based); a larger video parks
 
 
 class WatermarkConfig(BaseModel):
@@ -62,13 +65,13 @@ class ContentConfig(BaseModel):
     tag_min_count: int = 3
     tag_max_count: int = 5
     uncertainty_terms: list[str] = Field(default_factory=lambda: ["網傳", "疑似", "被曝", "據傳"])
-    hype_words: list[str] = Field(
-        default_factory=lambda: [
-            "獨家", "首發", "震撼", "震驚", "重大突破", "史無前例",
-            "全球首例", "世紀", "革命性", "顛覆", "爆料", "揭秘",
-        ]
-    )
-    min_copy_chars: int = 40
+    # Lint tunables projected into LintConfig by build_lint_config. An empty list
+    # / 0 means "use the rule's calibrated default" (DEFAULT_HYPE_WORDS /
+    # DEFAULT_MIN_COPY_CHARS), so behavior is unchanged until an operator sets
+    # them. hype_words: clickbait/hype tags the linter rejects; min_copy_chars:
+    # the paragraph-length floor for the copied-too-much (plagiarism) check.
+    hype_words: list[str] = Field(default_factory=list)
+    min_copy_chars: int = 0
 
 
 class LlmConfig(BaseModel):

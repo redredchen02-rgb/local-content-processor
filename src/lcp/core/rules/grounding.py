@@ -102,15 +102,9 @@ class GroundingStrategy(Protocol):
     cleaned ``source`` — ONLY by local comparison (no URL parsing/fetch). U1's
     chosen strength implements THIS protocol; :func:`verify_grounding` and the
     adapter never change. The baseline is substring/overlap; an NLI strategy
-    (MiniCheck/SummaC) would return entailment instead, behind the same call.
+    (MiniCheck/SummaC) would return entailment instead, behind the same call."""
 
-    ``source_grams`` is an OPTIONAL precomputed char-shingle set of the source
-    (the overlap baseline uses it to avoid re-shingling the source per claim).
-    Strategies that don't shingle (e.g. NLI) ignore it."""
-
-    def is_grounded(
-        self, claim: str, source: str, source_grams: frozenset[str] | None = None
-    ) -> bool: ...
+    def is_grounded(self, claim: str, source: str) -> bool: ...
 
 
 def _normalize(text: str) -> str:
@@ -123,11 +117,12 @@ def _char_shingles(text: str, n: int = _OVERLAP_NGRAM) -> frozenset[str]:
     """Character n-grams of the normalized text. Works for CJK (no word
     boundaries) AND space-delimited text without a tokenizer/segmenter.
 
-    Returns a frozenset so the value is immutable (callers only ever read it).
-    No module-global cache: :func:`verify_grounding` computes the source shingles
-    ONCE per call and threads them into the strategy via ``source_grams`` (so the
-    full source is shingled once, not once per claim), and no source text is
-    retained across calls/jobs."""
+    NOT memoized with a module-global cache: the key would be the raw source /
+    claim TEXT (PII-bearing), so an LRU would retain it in process memory ACROSS
+    jobs — unacceptable for a compliance-first pipeline. verify_grounding instead
+    shingles the cleaned source ONCE per call and reuses it across claims (see
+    below), so the former O(claims x |source|) cost is avoided with NO cross-job
+    retention. Returns a frozenset (callers only ever read it)."""
     s = _normalize(text)
     if len(s) < n:
         return frozenset({s}) if s else frozenset()
@@ -148,9 +143,15 @@ class SubstringOverlapStrategy:
 
     overlap_threshold: float = DEFAULT_OVERLAP_THRESHOLD
 
-    def is_grounded(
-        self, claim: str, source: str, source_grams: frozenset[str] | None = None
-    ) -> bool:
+    def is_grounded(self, claim: str, source: str) -> bool:
+        """Protocol seam: shingles the source itself. verify_grounding uses the
+        precomputed-source fast path (``_is_grounded``) to shingle the source
+        ONCE and reuse it across every claim instead of re-shingling per claim."""
+        return self._is_grounded(claim, source, _char_shingles(source))
+
+    def _is_grounded(self, claim: str, source: str, source_grams: frozenset[str]) -> bool:
+        """Overlap check against an ALREADY-shingled source (shared across the
+        claims of one verify_grounding call — see _char_shingles' cache note)."""
         c = claim.strip()
         if not c:
             return True
@@ -159,10 +160,7 @@ class SubstringOverlapStrategy:
         claim_grams = _char_shingles(c)
         if not claim_grams:
             return True
-        # Use the source shingles precomputed once by verify_grounding when
-        # available; fall back to computing them for standalone callers.
-        src_grams = source_grams if source_grams is not None else _char_shingles(source)
-        present = sum(1 for g in claim_grams if g in src_grams)
+        present = sum(1 for g in claim_grams if g in source_grams)
         return present / len(claim_grams) >= self.overlap_threshold
 
 
@@ -171,9 +169,8 @@ class SubstringOverlapStrategy:
 #     @dataclass(frozen=True)
 #     class NliStrategy:
 #         model: "MiniCheckModel"
-#         def is_grounded(self, claim, source, source_grams=None) -> bool:
+#         def is_grounded(self, claim, source) -> bool:
 #             return self.model.entails(premise=source, hypothesis=claim)
-#             # (source_grams ignored: NLI reasons over the strings directly)
 #
 # It would be passed to verify_grounding(...) unchanged. Still local-only —
 # the model reasons over the strings, it does not resolve any URL.
@@ -244,10 +241,6 @@ def verify_grounding(
     Any ungrounded quote/claim -> ``needs_human_review`` (reason=grounding)."""
     cleaned = sanitize_source(source_text or "")
     strat = strategy if strategy is not None else SubstringOverlapStrategy()
-    # Shingle the source ONCE per call and thread it into the strategy, instead
-    # of re-shingling the full source for every claim (O(claims) -> O(1) source
-    # shingling). Strategies that don't use shingles ignore it.
-    source_grams = _char_shingles(cleaned)
     ungrounded: list[UngroundedClaim] = []
 
     # (a) verbatim quotes MUST be substrings of the cleaned source.
@@ -262,9 +255,23 @@ def verify_grounding(
                 )
             )
 
-    # (b) narrative claims checked via the pluggable strategy.
+    # (b) narrative claims checked via the pluggable strategy. The baseline
+    # shingles the cleaned source ONCE here and reuses it across every claim (no
+    # module-global cache — the PII-bearing source must not persist past this
+    # call). An injected (e.g. NLI) strategy uses the plain Protocol seam.
+    # Exact-type (not isinstance): the precompute fast-path is valid ONLY for the
+    # baseline itself. A subclass that overrides is_grounded must reach its
+    # override via the Protocol seam below — never be silently routed through the
+    # parent's _is_grounded. (No subclasses exist today; this is defensive.)
+    baseline = strat if type(strat) is SubstringOverlapStrategy else None
+    source_grams = _char_shingles(cleaned) if baseline is not None else frozenset()
     for claim in _split_claims(draft):
-        if not strat.is_grounded(claim, cleaned, source_grams):
+        grounded = (
+            baseline._is_grounded(claim, cleaned, source_grams)
+            if baseline is not None
+            else strat.is_grounded(claim, cleaned)
+        )
+        if not grounded:
             ungrounded.append(
                 UngroundedClaim(
                     kind="claim",
