@@ -19,8 +19,7 @@ from lcp.core.errors import InputValidationError
 def _write_config(path, *, reviewers=("alice",), base_dir):
     path.write_text(
         yaml.safe_dump(
-            {"storage": {"base_dir": base_dir},
-             "publisher": {"reviewers": list(reviewers)}}
+            {"storage": {"base_dir": base_dir}, "publisher": {"reviewers": list(reviewers)}}
         ),
         encoding="utf-8",
     )
@@ -29,8 +28,7 @@ def _write_config(path, *, reviewers=("alice",), base_dir):
 def test_ctx_auto_loads_cwd_config_when_no_config_flag(tmp_path, monkeypatch):
     # The regression: a cwd config.yaml must be read when no --config is given.
     monkeypatch.chdir(tmp_path)
-    _write_config(tmp_path / "config.yaml", reviewers=["alice"],
-                  base_dir=str(tmp_path / "data"))
+    _write_config(tmp_path / "config.yaml", reviewers=["alice"], base_dir=str(tmp_path / "data"))
     ctx = Ctx({})  # no config_path -> must pick up ./config.yaml, not defaults
     assert ctx.config.publisher.reviewers == ["alice"]
 
@@ -53,8 +51,7 @@ def test_explicit_config_path_is_honoured(tmp_path, monkeypatch):
 
 def test_explicit_beats_cwd_config(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    _write_config(tmp_path / "config.yaml", reviewers=["alice"],
-                  base_dir=str(tmp_path / "data"))
+    _write_config(tmp_path / "config.yaml", reviewers=["alice"], base_dir=str(tmp_path / "data"))
     custom = tmp_path / "custom.yaml"
     _write_config(custom, reviewers=["bob"], base_dir=str(tmp_path / "data"))
     ctx = Ctx({"config_path": str(custom)})

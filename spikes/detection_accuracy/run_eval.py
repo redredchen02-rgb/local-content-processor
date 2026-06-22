@@ -323,7 +323,9 @@ def print_decision_table(
     print("  NOTE: synthetic data validates MECHANICS only. The real grounding-strength")
     print("        decision (substring-only vs +NLI/MiniCheck) awaits a real labeled corpus.")
     print("=" * 100)
-    print("  detector   strategy                 metrics                                      recommendation")
+    print(
+        "  detector   strategy                 metrics                                      recommendation"
+    )
     print("-" * 100)
 
     g = eval_grounding(rows, strategies)
@@ -340,7 +342,9 @@ def print_decision_table(
     print("    grounding: positive = needs_human_review (not grounded)")
     print("    risk.flag_any: positive = blocked or needs_human_review (not clean)")
     print("    risk.block_only: positive = blocked (hard-stop tier)")
-    print("    dedup.not_unique: positive = duplicate or uncertain (R36: only confident unique passes)")
+    print(
+        "    dedup.not_unique: positive = duplicate or uncertain (R36: only confident unique passes)"
+    )
     print("  FN (false negative) = unsafe item wrongly cleared — the dangerous error.")
     print("=" * 100)
 
@@ -426,9 +430,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.with_nli and config_path is None:
         default_cfg = _REPO_ROOT / "config.yaml"
         config_path = str(default_cfg) if default_cfg.exists() else None
-    strategies = build_grounding_strategies(
-        with_nli=args.with_nli, config_path=config_path
-    )
+    strategies = build_grounding_strategies(with_nli=args.with_nli, config_path=config_path)
 
     if args.json:
         print(json.dumps(build_report(rows, strategies), ensure_ascii=False, indent=2))

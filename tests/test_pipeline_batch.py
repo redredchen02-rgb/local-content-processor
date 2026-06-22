@@ -57,30 +57,42 @@ class FakeCrawler:
         raw.mkdir(parents=True, exist_ok=True)
         (raw / "source.txt").write_text(self.source_text, encoding="utf-8")
         manifest = build_manifest(
-            job_id=spec.job_id, source_type=SourceType.LOCAL_DIR,
-            source_domain=None, fetched_at=None, assets=[],
-            source_html=None, source_text=self.source_text,
+            job_id=spec.job_id,
+            source_type=SourceType.LOCAL_DIR,
+            source_domain=None,
+            fetched_at=None,
+            assets=[],
+            source_html=None,
+            source_text=self.source_text,
             crawl_status=STATUS_CRAWLED,
         )
         from lcp.adapters.storage.manifest import write_manifest
 
         write_manifest(spec.job_dir, manifest, create_only=True)
         return RawJobBundle(
-            job_id=spec.job_id, raw_dir=raw, manifest=manifest,
+            job_id=spec.job_id,
+            raw_dir=raw,
+            manifest=manifest,
             job_status=STATUS_CRAWLED,
         )
 
 
 def _spec(store, job_id):
     return SourceSpec(
-        job_id=job_id, source_type=SourceType.LOCAL_DIR,
-        job_dir=store.job_dir(job_id), local_dir=Path("/unused"),
+        job_id=job_id,
+        source_type=SourceType.LOCAL_DIR,
+        job_dir=store.job_dir(job_id),
+        local_dir=Path("/unused"),
     )
 
 
 def _pipeline(store, audit, *, dry_run=False, source=CLEAN_SOURCE):
     return pl.Pipeline(
-        Config(), store, audit, dry_run=dry_run, crawler=FakeCrawler(source),
+        Config(),
+        store,
+        audit,
+        dry_run=dry_run,
+        crawler=FakeCrawler(source),
     )
 
 
@@ -204,7 +216,8 @@ def test_process_stops_at_risk_block(store, audit):
     p.stage1(_spec(store, "jr"), ts=TS)
     # Force a redline by handing the gate a RiskInput a redline keyword matches.
     res = p.process(
-        "jr", ts=TS,
+        "jr",
+        ts=TS,
         risk_input=RiskInput(title="未成年 18歲以下 兒童 色情", body="未成年色情內容"),
     )
     # Either BLOCKED (redline) or NEEDS_HUMAN_REVIEW (daily/uncertain) — both are
@@ -231,8 +244,9 @@ def test_process_stops_at_dedup_without_index(store, audit):
 
 def test_run_until_draft_reports_gate_stop(store, audit):
     p = _pipeline(store, audit)
-    res = p.run_until(_spec(store, "ju"), target=pl.TARGET_DRAFT, ts=TS,
-                      title="台北華山美食市集週末熱鬧登場")
+    res = p.run_until(
+        _spec(store, "ju"), target=pl.TARGET_DRAFT, ts=TS, title="台北華山美食市集週末熱鬧登場"
+    )
     # No index -> dedup parks the job; run_until returns that resting state.
     assert res.final_state is JobState.NEEDS_HUMAN_REVIEW
     assert res.target == pl.TARGET_DRAFT
@@ -255,13 +269,20 @@ def test_run_until_review_builds_packet_from_processed(store, audit):
     from lcp.core.draft import Draft, FaqItem, SourceQuote
 
     draft = Draft(
-        title="台北華山美食市集週末熱鬧登場", intro="引言。",
-        quick_facts=["週末"], event_body=CLEAN_SOURCE,
-        faq=[FaqItem(question="Q", answer="A")], summary="結尾。",
+        title="台北華山美食市集週末熱鬧登場",
+        intro="引言。",
+        quick_facts=["週末"],
+        event_body=CLEAN_SOURCE,
+        faq=[FaqItem(question="Q", answer="A")],
+        summary="結尾。",
         quotes=[SourceQuote(text="華山文創園區本週末舉辦美食市集。")],
     )
     packet = build_review_packet(
-        job_id="jp", draft=draft, store=store, audit=audit, submitted_at=TS,
+        job_id="jp",
+        draft=draft,
+        store=store,
+        audit=audit,
+        submitted_at=TS,
     )
     assert store.get_job("jp").state is JobState.REVIEW_PENDING
     assert packet.body_sha256
@@ -461,7 +482,9 @@ def test_process_retry_after_crash_bumps_and_clears_counter(store, audit):
 
     # A redline body parks at BLOCKED with no LLM call -> a clean process() return.
     res = p.process(
-        "j1", ts=TS, risk_input=RiskInput(title="某新聞", body="涉及未成年的私密內容"),
+        "j1",
+        ts=TS,
+        risk_input=RiskInput(title="某新聞", body="涉及未成年的私密內容"),
     )
     assert res.final_state is JobState.BLOCKED
 
@@ -563,12 +586,19 @@ def test_process_truncated_draft_short_circuits_needs_revision(store, audit, mon
 
     _clean_index(store)
     truncated = ChatResult(
-        text="partial...", finish_reason="length", model="fake-model",
-        needs_revision=True, revision_reason="truncated:length", executed=True,
+        text="partial...",
+        finish_reason="length",
+        model="fake-model",
+        needs_revision=True,
+        revision_reason="truncated:length",
+        executed=True,
     )
     p = pl.Pipeline(
-        Config(), store, audit,
-        crawler=FakeCrawler(), llm_client=_FakeChatClient(result=truncated),
+        Config(),
+        store,
+        audit,
+        crawler=FakeCrawler(),
+        llm_client=_FakeChatClient(result=truncated),
     )
     p.stage1(_spec(store, "jt"), ts=TS)
 
@@ -596,12 +626,19 @@ def test_reprocess_needs_revision_job_via_widened_entry_guard(store, audit):
     _clean_index(store)
     # First pass: a truncated draft parks the job at NEEDS_REVISION.
     truncated = ChatResult(
-        text="partial...", finish_reason="length", model="fake-model",
-        needs_revision=True, revision_reason="truncated:length", executed=True,
+        text="partial...",
+        finish_reason="length",
+        model="fake-model",
+        needs_revision=True,
+        revision_reason="truncated:length",
+        executed=True,
     )
     p1 = pl.Pipeline(
-        Config(), store, audit,
-        crawler=FakeCrawler(), llm_client=_FakeChatClient(result=truncated),
+        Config(),
+        store,
+        audit,
+        crawler=FakeCrawler(),
+        llm_client=_FakeChatClient(result=truncated),
     )
     p1.stage1(_spec(store, "jrev"), ts=TS)
     res1 = p1.process("jrev", ts=TS, title="台北華山美食市集週末熱鬧登場")
@@ -615,8 +652,11 @@ def test_reprocess_needs_revision_job_via_widened_entry_guard(store, audit):
     # It actually entered Stage 2 (a legal resting state was reached), not the
     # entry-guard refusal — and never left a .processing marker.
     assert res2.final_state in (
-        JobState.PROCESSED, JobState.NEEDS_HUMAN_REVIEW, JobState.NEEDS_REVISION,
-        JobState.BLOCKED, JobState.DUPLICATE,
+        JobState.PROCESSED,
+        JobState.NEEDS_HUMAN_REVIEW,
+        JobState.NEEDS_REVISION,
+        JobState.BLOCKED,
+        JobState.DUPLICATE,
     )
     assert not store.is_processing("jrev")
 
@@ -634,7 +674,11 @@ def test_process_external_error_lands_process_failed_and_retries(store, audit):
     _clean_index(store)
     failing = _FakeChatClient(raises=ExternalServiceError("LLM call failed (503)"))
     p = pl.Pipeline(
-        Config(), store, audit, crawler=FakeCrawler(), llm_client=failing,
+        Config(),
+        store,
+        audit,
+        crawler=FakeCrawler(),
+        llm_client=failing,
     )
     p.stage1(_spec(store, "je"), ts=TS)
 
@@ -646,20 +690,28 @@ def test_process_external_error_lands_process_failed_and_retries(store, audit):
 
     # Retry from PROCESS_FAILED with a now-healthy client -> reaches a normal
     # resting state (here a clean draft passes to PROCESSED).
-    from lcp.core.draft import DraftStatus
 
     ok = ChatResult(
-        text="重寫後的完整內文，足夠長度。", finish_reason="stop", model="fake-model",
-        needs_revision=False, revision_reason=None, executed=True,
+        text="重寫後的完整內文，足夠長度。",
+        finish_reason="stop",
+        model="fake-model",
+        needs_revision=False,
+        revision_reason=None,
+        executed=True,
     )
     p2 = pl.Pipeline(
-        Config(), store, audit, crawler=FakeCrawler(),
+        Config(),
+        store,
+        audit,
+        crawler=FakeCrawler(),
         llm_client=_FakeChatClient(result=ok),
     )
     res2 = p2.process("je", ts=TS, title="台北華山美食市集週末熱鬧登場")
     # The retry runs the gates again (no longer stuck at CRAWLED/PROCESS_FAILED).
     assert res2.final_state in (
-        JobState.PROCESSED, JobState.NEEDS_HUMAN_REVIEW, JobState.NEEDS_REVISION,
+        JobState.PROCESSED,
+        JobState.NEEDS_HUMAN_REVIEW,
+        JobState.NEEDS_REVISION,
     )
     assert store.get_job("je").state is not JobState.PROCESS_FAILED
 
@@ -703,19 +755,20 @@ def test_dry_run_forces_injected_client_to_dry_mode(store, audit):
     class _BoomClient:
         def __init__(self, **kwargs):
             import types as _t
+
             self.chat = _t.SimpleNamespace(completions=_BoomCompletions())
 
     cfg = Config(
         llm=LlmConfig(
-            base_url="https://llm.example.com/v1", model="m",
+            base_url="https://llm.example.com/v1",
+            model="m",
             allowed_hosts=["llm.example.com"],
         )
     )
     live = LlmClient(cfg, dry_run=False, client_factory=lambda **k: _BoomClient(**k))
 
     # Pipeline is dry-run but a LIVE client was injected -> must be forced dry.
-    p = pl.Pipeline(cfg, store, audit, dry_run=True,
-                    crawler=FakeCrawler(), llm_client=live)
+    p = pl.Pipeline(cfg, store, audit, dry_run=True, crawler=FakeCrawler(), llm_client=live)
     p.stage1(_spec(store, "jdry"), ts=TS)
     res = p.process("jdry", ts=TS, title="台北華山美食市集週末熱鬧登場")
 
@@ -745,8 +798,11 @@ def test_dependency_error_from_llm_lands_process_failed(tmp_path):
     audit = AuditLog(tmp_path / "data" / "audit.jsonl")
     seed_clean_index = _make_seed_clean_index(store)
     p = pl.Pipeline(
-        Config(), store, audit,
-        crawler=FakeCrawler(), llm_client=_DependencyErrorLlm(),
+        Config(),
+        store,
+        audit,
+        crawler=FakeCrawler(),
+        llm_client=_DependencyErrorLlm(),
     )
     store.create_job("jd", created_at=TS)
     store.set_state("jd", JobState.CRAWLED, updated_at=TS)
@@ -801,6 +857,7 @@ class _ExternalServiceErrorLlm:
 
     def chat(self, **kwargs: object) -> object:  # type: ignore[override]
         from lcp.core.errors import ExternalServiceError
+
         raise ExternalServiceError("LLM 5xx")
 
 
@@ -814,8 +871,11 @@ def test_interrupt_count_preserved_after_external_service_error(tmp_path):
     idx.parent.mkdir(parents=True, exist_ok=True)
     idx.write_text("", encoding="utf-8")
     p = pl.Pipeline(
-        Config(), store, audit,
-        crawler=FakeCrawler(), llm_client=_ExternalServiceErrorLlm(),
+        Config(),
+        store,
+        audit,
+        crawler=FakeCrawler(),
+        llm_client=_ExternalServiceErrorLlm(),
     )
     store.create_job("jx", created_at=TS)
     store.set_state("jx", JobState.CRAWLED, updated_at=TS)

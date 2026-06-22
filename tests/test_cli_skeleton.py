@@ -17,8 +17,17 @@ def test_help_lists_commands(capsys):
     # Original Stage-1 commands still present...
     assert "crawl" in out and "ingest" in out
     # ...plus the Unit 8 operator actions (CLI/GUI parity surface).
-    for cmd in ("process", "review-packet", "approve", "reject", "backfill",
-                "list", "run", "supersede", "resolve"):
+    for cmd in (
+        "process",
+        "review-packet",
+        "approve",
+        "reject",
+        "backfill",
+        "list",
+        "run",
+        "supersede",
+        "resolve",
+    ):
         assert cmd in out
 
 
@@ -33,10 +42,17 @@ def test_crawl_empty_allowlist_allows_all_domains(tmp_path, monkeypatch, capsys)
     # rejection). The crawl may still fail for network/timeout reasons, but it
     # must NOT be rejected at the domain allowlist gate.
     monkeypatch.chdir(tmp_path)
-    rc = main([
-        "--output-dir", str(tmp_path),
-        "crawl", "--url", "https://example.com/p/1", "--job-id", "j1",
-    ])
+    rc = main(
+        [
+            "--output-dir",
+            str(tmp_path),
+            "crawl",
+            "--url",
+            "https://example.com/p/1",
+            "--job-id",
+            "j1",
+        ]
+    )
     assert rc != EXIT_INPUT
 
 
@@ -63,9 +79,12 @@ def _processed_job_with_draft(base, job_id="j1"):
     raw.mkdir(parents=True, exist_ok=True)
     (raw / "source.txt").write_text("華山文創園區本週末舉辦美食市集。", encoding="utf-8")
     draft = Draft(
-        title="台北華山美食市集週末熱鬧登場活動", intro="引言。",
-        quick_facts=["週末"], event_body="華山文創園區本週末舉辦美食市集。",
-        faq=[FaqItem(question="Q", answer="A")], summary="結尾。",
+        title="台北華山美食市集週末熱鬧登場活動",
+        intro="引言。",
+        quick_facts=["週末"],
+        event_body="華山文創園區本週末舉辦美食市集。",
+        faq=[FaqItem(question="Q", answer="A")],
+        summary="結尾。",
         quotes=[SourceQuote(text="華山文創園區本週末舉辦美食市集。")],
     )
     save_draft(store, job_id, draft)
@@ -79,9 +98,7 @@ def test_full_signoff_loop_via_cli(tmp_path):
     base = str(tmp_path)
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
-        yaml.safe_dump(
-            {"storage": {"base_dir": base}, "publisher": {"reviewers": ["alice"]}}
-        ),
+        yaml.safe_dump({"storage": {"base_dir": base}, "publisher": {"reviewers": ["alice"]}}),
         encoding="utf-8",
     )
     store = _processed_job_with_draft(base, "j1")
@@ -93,25 +110,55 @@ def test_full_signoff_loop_via_cli(tmp_path):
     assert store.get_job("j1").state is JobState.REVIEW_PENDING
 
     # 2. non-whitelisted reviewer -> input error, no transition.
-    assert main(["--config", str(cfg), "approve", "--job-id", "j1",
-                 "--reviewer", "mallory"]) == EXIT_INPUT
+    assert (
+        main(["--config", str(cfg), "approve", "--job-id", "j1", "--reviewer", "mallory"])
+        == EXIT_INPUT
+    )
     assert store.get_job("j1").state is JobState.REVIEW_PENDING
 
     # 3. whitelisted approve -> APPROVED.
-    assert main(["--config", str(cfg), "approve", "--job-id", "j1",
-                 "--reviewer", "alice"]) == EXIT_OK
+    assert (
+        main(["--config", str(cfg), "approve", "--job-id", "j1", "--reviewer", "alice"]) == EXIT_OK
+    )
     assert store.get_job("j1").state is JobState.APPROVED
 
     # 4. backfill without --attest stays APPROVED (loop open).
-    assert main(["--config", str(cfg), "backfill", "--job-id", "j1",
-                 "--reviewer", "alice",
-                 "--url", "https://site.example/x"]) == EXIT_INPUT
+    assert (
+        main(
+            [
+                "--config",
+                str(cfg),
+                "backfill",
+                "--job-id",
+                "j1",
+                "--reviewer",
+                "alice",
+                "--url",
+                "https://site.example/x",
+            ]
+        )
+        == EXIT_INPUT
+    )
     assert store.get_job("j1").state is JobState.APPROVED
 
     # 5. backfill with --attest -> PUBLISHED_RECORDED.
-    assert main(["--config", str(cfg), "backfill", "--job-id", "j1",
-                 "--reviewer", "alice",
-                 "--url", "https://site.example/x", "--attest"]) == EXIT_OK
+    assert (
+        main(
+            [
+                "--config",
+                str(cfg),
+                "backfill",
+                "--job-id",
+                "j1",
+                "--reviewer",
+                "alice",
+                "--url",
+                "https://site.example/x",
+                "--attest",
+            ]
+        )
+        == EXIT_OK
+    )
     assert store.get_job("j1").state is JobState.PUBLISHED_RECORDED
 
 
@@ -127,9 +174,7 @@ def test_cli_approve_rejects_body_tampered_after_freeze(tmp_path):
     base = str(tmp_path)
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
-        yaml.safe_dump(
-            {"storage": {"base_dir": base}, "publisher": {"reviewers": ["alice"]}}
-        ),
+        yaml.safe_dump({"storage": {"base_dir": base}, "publisher": {"reviewers": ["alice"]}}),
         encoding="utf-8",
     )
     store = _processed_job_with_draft(base, "jt")
@@ -139,16 +184,18 @@ def test_cli_approve_rejects_body_tampered_after_freeze(tmp_path):
 
     # Tamper: overwrite the persisted draft.json with a different body.
     tampered = Draft(
-        title="台北華山美食市集週末熱鬧登場活動", intro="引言。",
-        quick_facts=["週末"], event_body="完全不同的正文，已被竄改。",
-        faq=[FaqItem(question="Q", answer="A")], summary="結尾。",
+        title="台北華山美食市集週末熱鬧登場活動",
+        intro="引言。",
+        quick_facts=["週末"],
+        event_body="完全不同的正文，已被竄改。",
+        faq=[FaqItem(question="Q", answer="A")],
+        summary="結尾。",
         quotes=[SourceQuote(text="華山文創園區本週末舉辦美食市集。")],
     )
     save_draft(store, "jt", tampered)
 
     # Approve must FAIL (hash mismatch) and NOT transition.
-    rc = main(["--config", str(cfg), "approve", "--job-id", "jt",
-               "--reviewer", "alice"])
+    rc = main(["--config", str(cfg), "approve", "--job-id", "jt", "--reviewer", "alice"])
     assert rc == EXIT_INPUT
     assert store.get_job("jt").state is JobState.REVIEW_PENDING
 
@@ -163,26 +210,41 @@ def test_cli_resolve_drives_nhr_to_processed(tmp_path):
     base = str(tmp_path)
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
-        yaml.safe_dump(
-            {"storage": {"base_dir": base}, "publisher": {"reviewers": ["alice"]}}
-        ),
+        yaml.safe_dump({"storage": {"base_dir": base}, "publisher": {"reviewers": ["alice"]}}),
         encoding="utf-8",
     )
     ts = "2026-06-16T00:00:00Z"
     store = JobStore(base_dir=base)
     store.create_job("jn", created_at=ts)
     store.set_state("jn", JobState.CRAWLED, updated_at=ts)
-    persist_gate_state(store, "jn", JobState.NEEDS_HUMAN_REVIEW, updated_at=ts,
-                       review_reason=ReviewReason.RISK)
+    persist_gate_state(
+        store, "jn", JobState.NEEDS_HUMAN_REVIEW, updated_at=ts, review_reason=ReviewReason.RISK
+    )
 
     # override without a reason -> input error (honest: override needs a reason)
-    assert main(["--config", str(cfg), "resolve", "--job-id", "jn",
-                 "--reviewer", "alice"]) == EXIT_INPUT
+    assert (
+        main(["--config", str(cfg), "resolve", "--job-id", "jn", "--reviewer", "alice"])
+        == EXIT_INPUT
+    )
     assert store.get_job("jn").state is JobState.NEEDS_HUMAN_REVIEW
 
     # override with a reason -> PROCESSED
-    assert main(["--config", str(cfg), "resolve", "--job-id", "jn",
-                 "--reviewer", "alice", "--reason", "false positive"]) == EXIT_OK
+    assert (
+        main(
+            [
+                "--config",
+                str(cfg),
+                "resolve",
+                "--job-id",
+                "jn",
+                "--reviewer",
+                "alice",
+                "--reason",
+                "false positive",
+            ]
+        )
+        == EXIT_OK
+    )
     assert store.get_job("jn").state is JobState.PROCESSED
 
 
@@ -197,9 +259,7 @@ def test_cli_blocked_recovery_requires_redline_override(tmp_path):
     base = str(tmp_path)
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
-        yaml.safe_dump(
-            {"storage": {"base_dir": base}, "publisher": {"reviewers": ["alice"]}}
-        ),
+        yaml.safe_dump({"storage": {"base_dir": base}, "publisher": {"reviewers": ["alice"]}}),
         encoding="utf-8",
     )
     ts = "2026-06-16T00:00:00Z"
@@ -213,8 +273,9 @@ def test_cli_blocked_recovery_requires_redline_override(tmp_path):
     assert main(["--config", str(cfg), "supersede", "--job-id", "jb"]) == EXIT_INPUT
     assert store.get_job("jb").state is JobState.BLOCKED
     # BLOCKED with --redline-override -> recovered.
-    assert main(["--config", str(cfg), "supersede", "--job-id", "jb",
-                 "--redline-override"]) == EXIT_OK
+    assert (
+        main(["--config", str(cfg), "supersede", "--job-id", "jb", "--redline-override"]) == EXIT_OK
+    )
     assert store.get_job("jb").state is JobState.SUPERSEDED
     # DUPLICATE needs only the ordinary single-step supersede.
     assert main(["--config", str(cfg), "supersede", "--job-id", "jd"]) == EXIT_OK

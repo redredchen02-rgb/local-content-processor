@@ -139,16 +139,10 @@ def judge_image(
     blur check (e.g. caller did not measure it)."""
     reasons: list[str] = []
     if is_too_small(width, height, min_width, min_height):
+        reasons.append(f"image too small: {width}x{height} (min {min_width}x{min_height})")
+    if laplacian_variance is not None and is_blurry(laplacian_variance, blur_threshold):
         reasons.append(
-            f"image too small: {width}x{height} "
-            f"(min {min_width}x{min_height})"
-        )
-    if laplacian_variance is not None and is_blurry(
-        laplacian_variance, blur_threshold
-    ):
-        reasons.append(
-            f"image blurry: laplacian variance "
-            f"{laplacian_variance:.1f} < {blur_threshold:.1f}"
+            f"image blurry: laplacian variance {laplacian_variance:.1f} < {blur_threshold:.1f}"
         )
     return _needs_revision(reasons) if reasons else _passed()
 
@@ -186,16 +180,12 @@ def judge_video(
     if bitrate_mbps is None:
         reasons.append("video bitrate unknown")
     elif bitrate_mbps < min_bitrate_mbps:
-        reasons.append(
-            f"video bitrate {bitrate_mbps:.2f} Mbps < min {min_bitrate_mbps:.2f}"
-        )
+        reasons.append(f"video bitrate {bitrate_mbps:.2f} Mbps < min {min_bitrate_mbps:.2f}")
 
     if width is None or height is None:
         reasons.append("video resolution unknown")
     elif width < min_width or height < min_height:
-        reasons.append(
-            f"video too small: {width}x{height} (min {min_width}x{min_height})"
-        )
+        reasons.append(f"video too small: {width}x{height} (min {min_width}x{min_height})")
 
     return _needs_revision(reasons) if reasons else _passed()
 
@@ -332,10 +322,7 @@ def judge_black_segments(
         ratio = total_black / duration
         if ratio > max_black_ratio:
             return _needs_revision(
-                [
-                    f"video {ratio * 100:.0f}% black "
-                    f"({total_black:.1f}s of {duration:.1f}s)"
-                ]
+                [f"video {ratio * 100:.0f}% black ({total_black:.1f}s of {duration:.1f}s)"]
             )
         return _passed()
     # Unknown duration but black detected -> flag for a human to look.

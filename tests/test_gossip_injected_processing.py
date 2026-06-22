@@ -48,7 +48,8 @@ def test_injected_job_reaches_review_pending(tmp_path):
     store, audit = _setup(tmp_path)
     report = gi.ingest_items(
         [{"platform": "weibo", "title": "市集", "url": "https://s.weibo.com/weibo?q=市集"}],
-        store, ts=TS,
+        store,
+        ts=TS,
     )
     jid = report.created[0]
     assert store.get_job(jid).state is JobState.NEW
@@ -59,8 +60,11 @@ def test_injected_job_reaches_review_pending(tmp_path):
     # GENERATION (gossip hot-search phrases are too short for lint's 25-35 char
     # title — the copywriter must expand them; that is a U6 Eatmelon-prompt task).
     res = p.run_until(
-        _spec_from_ingest(store, jid), target=pl.TARGET_REVIEW, ts=TS,
-        title=TITLE, ai_copy=True,
+        _spec_from_ingest(store, jid),
+        target=pl.TARGET_REVIEW,
+        ts=TS,
+        title=TITLE,
+        ai_copy=True,
     )
 
     assert res.final_state is JobState.REVIEW_PENDING, res.notes
@@ -74,11 +78,15 @@ def test_injected_job_runs_real_gate_chain_to_processed(tmp_path):
     store, audit = _setup(tmp_path)
     jid = gi.ingest_items(
         [{"platform": "douyin", "title": "瓜", "url": "https://www.douyin.com/search/瓜"}],
-        store, ts=TS,
+        store,
+        ts=TS,
     ).created[0]
     p = build_pipeline(store, audit, config=Config(publisher=PublisherConfig(reviewers=["alice"])))
     res = p.run_until(
-        _spec_from_ingest(store, jid), target=pl.TARGET_DRAFT, ts=TS,
-        title=TITLE, ai_copy=True,
+        _spec_from_ingest(store, jid),
+        target=pl.TARGET_DRAFT,
+        ts=TS,
+        title=TITLE,
+        ai_copy=True,
     )
     assert res.final_state is JobState.PROCESSED, res.notes

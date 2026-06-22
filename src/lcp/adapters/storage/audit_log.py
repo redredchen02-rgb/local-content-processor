@@ -64,8 +64,19 @@ EVENT_INTERRUPTED_DETECTED = "INTERRUPTED_DETECTED"
 
 # Keys that would smuggle PII into the audit. Rejected by append().
 _PROHIBITED_KEYS = frozenset(
-    {"title", "body", "text", "source_url", "url", "author", "domain",
-     "review_message", "name", "email", "phone"}
+    {
+        "title",
+        "body",
+        "text",
+        "source_url",
+        "url",
+        "author",
+        "domain",
+        "review_message",
+        "name",
+        "email",
+        "phone",
+    }
 )
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -102,9 +113,7 @@ def _canonical(obj: dict[str, Any]) -> str:
 
 
 def _line_hash(prev_hash: str, payload: dict[str, Any]) -> str:
-    return hashlib.sha256(
-        (prev_hash + _canonical(payload)).encode("utf-8")
-    ).hexdigest()
+    return hashlib.sha256((prev_hash + _canonical(payload)).encode("utf-8")).hexdigest()
 
 
 class AuditLog:
@@ -173,7 +182,7 @@ class AuditLog:
                 stripped = data.rstrip(b"\r\n")
                 nl = stripped.rfind(b"\n")
                 if nl != -1:
-                    return stripped[nl + 1:].decode("utf-8")
+                    return stripped[nl + 1 :].decode("utf-8")
             stripped = data.rstrip(b"\r\n")
             return stripped.decode("utf-8") if stripped else None
 
@@ -210,9 +219,7 @@ class AuditLog:
                 f"audit event may not carry PII fields: {sorted(prohibited)}"
             )
         if artifact_sha256 is not None and not _SHA256_RE.match(artifact_sha256):
-            raise InputValidationError(
-                "artifact_sha256 must be a lowercase hex sha256 digest"
-            )
+            raise InputValidationError("artifact_sha256 must be a lowercase hex sha256 digest")
 
         # Fail loud on a non-POSIX host: without fcntl the LOCK_EX serialization
         # below is a NO-OP, so concurrent appends could silently corrupt the

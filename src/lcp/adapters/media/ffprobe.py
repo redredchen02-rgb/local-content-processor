@@ -37,9 +37,7 @@ _FFPROBE = "ffprobe"
 _FFMPEG = "ffmpeg"
 
 # ffmpeg blackdetect emits: black_start:1.0 black_end:2.0 black_duration:1.0
-_BLACK_RE = re.compile(
-    r"black_start:(?P<start>[\d.]+)\s+black_end:(?P<end>[\d.]+)"
-)
+_BLACK_RE = re.compile(r"black_start:(?P<start>[\d.]+)\s+black_end:(?P<end>[\d.]+)")
 # silencedetect emits silence_start / silence_end on separate lines.
 _SILENCE_START_RE = re.compile(r"silence_start:\s*(?P<start>-?[\d.]+)")
 _SILENCE_END_RE = re.compile(r"silence_end:\s*(?P<end>-?[\d.]+)")
@@ -62,9 +60,7 @@ class VideoInfo:
 def _require(binary: str) -> str:
     path = shutil.which(binary)
     if path is None:
-        raise DependencyError(
-            f"required media tool {binary!r} not found on PATH (install ffmpeg)"
-        )
+        raise DependencyError(f"required media tool {binary!r} not found on PATH (install ffmpeg)")
     return path
 
 
@@ -85,9 +81,7 @@ def _run(argv: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(argv, proc.returncode, out, err)
     except subprocess.TimeoutExpired:
         _kill_group(proc)
-        raise ExternalServiceError(
-            f"media tool timed out after {timeout}s: {argv[0]}"
-        ) from None
+        raise ExternalServiceError(f"media tool timed out after {timeout}s: {argv[0]}") from None
     except BaseException:
         _kill_group(proc)
         raise
@@ -105,7 +99,7 @@ def _kill_group(proc: subprocess.Popen[str]) -> None:
             pass
     try:
         proc.wait(timeout=5)
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort child reap cleanup
         pass
 
 
@@ -130,9 +124,7 @@ def _parse_rational_fps(value: str | None) -> float | None:
         return None
 
 
-def _first_stream(
-    streams: list[dict[str, Any]], codec_type: str
-) -> dict[str, Any] | None:
+def _first_stream(streams: list[dict[str, Any]], codec_type: str) -> dict[str, Any] | None:
     """Return the first stream of the given codec_type (don't assume index 0
     is video)."""
     for s in streams:
@@ -165,8 +157,7 @@ def probe(
     result = _run(argv, timeout)
     if result.returncode != 0:
         raise ExternalServiceError(
-            f"ffprobe failed (rc={result.returncode}): "
-            f"{(result.stderr or '').strip()[:300]}"
+            f"ffprobe failed (rc={result.returncode}): {(result.stderr or '').strip()[:300]}"
         )
     try:
         data = json.loads(result.stdout or "{}")

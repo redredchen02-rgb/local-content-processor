@@ -140,12 +140,12 @@ def observed_os_user() -> str:
         import pwd  # POSIX-only
 
         return pwd.getpwuid(os.getuid()).pw_name
-    except Exception:
+    except Exception:  # noqa: BLE001 - cross-platform fallback chain (pwd → getpass)
         try:
             import getpass
 
             return getpass.getuser()
-        except Exception:
+        except Exception:  # noqa: BLE001 - last-resort; any fallback is acceptable
             return "unknown"
 
 
@@ -163,8 +163,7 @@ def _freeze_hashes(store: JobStore, job_id: str) -> dict[str, Any]:
     manifest = read_review_manifest(store, job_id)
     if manifest is None or "freeze" not in manifest:
         raise InputValidationError(
-            f"no review packet freeze record for job {job_id}; build the review "
-            "packet first"
+            f"no review packet freeze record for job {job_id}; build the review packet first"
         )
     freeze: dict[str, Any] = manifest["freeze"]
     return freeze
@@ -420,17 +419,16 @@ def resolve(
         raise InputValidationError(f"unknown job: {job_id}")
     if record.state is not JobState.NEEDS_HUMAN_REVIEW:
         raise InputValidationError(
-            f"resolve requires a NEEDS_HUMAN_REVIEW job; {job_id} is "
-            f"{record.state.value}"
+            f"resolve requires a NEEDS_HUMAN_REVIEW job; {job_id} is {record.state.value}"
         )
 
     hold = record.review_reason
     mode: str
     if relint and hold is ReviewReason.GROUNDING:
         # Re-lint path: the human cleared grounding; lint must re-run clean.
-        from ..storage.draft_store import _read_source_text, load_draft
         from ..processor.draft_linter import build_lint_config, relint_clears_hold
         from ..processor.media_checker import media_presence
+        from ..storage.draft_store import _read_source_text, load_draft
 
         draft = load_draft(store, job_id)
         if draft is None:

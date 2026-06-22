@@ -147,9 +147,7 @@ def test_interrupt_count_tolerates_corrupt_file(tmp_path):
 # --- U7 / plan-004 deferred: clear-after-COMMIT failure must not corrupt row ---
 
 
-def test_persist_from_processing_commit_survives_marker_clear_failure(
-    tmp_path, monkeypatch
-):
+def test_persist_from_processing_commit_survives_marker_clear_failure(tmp_path, monkeypatch):
     """plan-004 deferred 'marker-touch-failure rollback' test.
 
     persist_from_processing commits the resting state FIRST, then clears the marker
@@ -190,9 +188,7 @@ def test_review_reason_stored_as_code(tmp_path):
     # NEEDS_HUMAN_REVIEW needs to come from PROCESSING resting path; emulate by
     # validating reason persistence on a legal edge that allows resting.
     # CRAWLED -> CRAWLED_WARN is legal and resting.
-    rec = s.set_state(
-        "j1", JobState.CRAWLED_WARN, updated_at=TS, review_reason=ReviewReason.DEDUP
-    )
+    rec = s.set_state("j1", JobState.CRAWLED_WARN, updated_at=TS, review_reason=ReviewReason.DEDUP)
     assert rec.review_reason is ReviewReason.DEDUP
     assert s.get_job("j1").review_reason is ReviewReason.DEDUP
 
@@ -215,13 +211,9 @@ def test_concurrent_connections_no_corruption(tmp_path):
     c1 = s._connect()
     c2 = s._connect()
     try:
-        c1.execute(
-            "UPDATE jobs SET error_code = ? WHERE job_id = ?", ("E1", "j1")
-        )
+        c1.execute("UPDATE jobs SET error_code = ? WHERE job_id = ?", ("E1", "j1"))
         c1.commit()
-        row = c2.execute(
-            "SELECT error_code FROM jobs WHERE job_id = ?", ("j1",)
-        ).fetchone()
+        row = c2.execute("SELECT error_code FROM jobs WHERE job_id = ?", ("j1",)).fetchone()
         assert row[0] == "E1"
     finally:
         c1.close()
@@ -270,8 +262,9 @@ def test_persist_from_processing_validates_and_persists(tmp_path):
     s = _store(tmp_path)
     s.create_job("j", created_at=TS)
     s.set_state("j", JobState.CRAWLED, updated_at=TS)  # legal PROCESSING predecessor
-    rec = s.persist_from_processing("j", JobState.BLOCKED, updated_at=TS,
-                                    review_reason=ReviewReason.RISK)
+    rec = s.persist_from_processing(
+        "j", JobState.BLOCKED, updated_at=TS, review_reason=ReviewReason.RISK
+    )
     assert rec.state is JobState.BLOCKED
     assert s.get_job("j").state is JobState.BLOCKED
     assert not s.is_processing("j")  # marker cleared
@@ -321,7 +314,8 @@ def test_set_state_does_not_touch_processing_marker(tmp_path, monkeypatch):
         s, "mark_processing", lambda *a, **k: seen.__setitem__("mark", seen["mark"] + 1)
     )
     monkeypatch.setattr(
-        s, "clear_processing",
+        s,
+        "clear_processing",
         lambda *a, **k: seen.__setitem__("clear", seen["clear"] + 1),
     )
     s.set_state("j1", JobState.CRAWLED, updated_at=TS)
@@ -437,8 +431,11 @@ def test_persist_crawl_result_lands_state_and_hashes_atomically(tmp_path):
     s = _store(tmp_path)
     s.create_job("j1", created_at=TS)  # NEW
     rec = s.persist_crawl_result(
-        "j1", JobState.CRAWLED, updated_at=TS,
-        source_html_sha256="h" * 64, source_text_sha256="t" * 64,
+        "j1",
+        JobState.CRAWLED,
+        updated_at=TS,
+        source_html_sha256="h" * 64,
+        source_text_sha256="t" * 64,
     )
     assert rec.state is JobState.CRAWLED
     assert rec.source_html_sha256 == "h" * 64
@@ -461,8 +458,11 @@ def test_persist_crawl_result_illegal_transition_writes_nothing(tmp_path):
     # CRAWLED -> CRAWLED is not a legal edge -> refuse.
     with pytest.raises(InputValidationError):
         s.persist_crawl_result(
-            "j1", JobState.CRAWLED, updated_at=TS,
-            source_html_sha256="h" * 64, source_text_sha256="t" * 64,
+            "j1",
+            JobState.CRAWLED,
+            updated_at=TS,
+            source_html_sha256="h" * 64,
+            source_text_sha256="t" * 64,
         )
     got = s.get_job("j1")
     assert got.state is JobState.CRAWLED
@@ -496,9 +496,7 @@ def test_persist_crawl_result_uses_single_connection(tmp_path, monkeypatch):
         return orig()
 
     monkeypatch.setattr(s, "_connect", counting)
-    s.persist_crawl_result(
-        "j1", JobState.CRAWLED, updated_at=TS, source_text_sha256="t" * 64
-    )
+    s.persist_crawl_result("j1", JobState.CRAWLED, updated_at=TS, source_text_sha256="t" * 64)
     assert n["calls"] == 1
 
 
@@ -514,8 +512,7 @@ def test_persist_crawl_result_concurrent_one_winner(tmp_path):
     def worker(name, target):
         barrier.wait()
         try:
-            s.persist_crawl_result("j1", target, updated_at=TS,
-                                   source_text_sha256="t" * 64)
+            s.persist_crawl_result("j1", target, updated_at=TS, source_text_sha256="t" * 64)
             results[name] = "ok"
         except InputValidationError:
             results[name] = "illegal"
@@ -548,8 +545,12 @@ def test_persist_crawl_result_concurrent_one_winner(tmp_path):
 def _erasure_events(audit_path):
     """All ERASURE events in file order (external audit log)."""
     return [
-        e for e in (json.loads(line) for line in
-                    audit_path.read_text(encoding="utf-8").splitlines() if line.strip())
+        e
+        for e in (
+            json.loads(line)
+            for line in audit_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
         if e["event"] == EVENT_ERASURE
     ]
 

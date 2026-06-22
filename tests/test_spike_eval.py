@@ -64,9 +64,16 @@ def test_build_report_has_expected_shape(run_eval):
     for detector in ("grounding", "risk", "dedup"):
         for strategy, m in report[detector].items():
             for field in (
-                "tp", "fp", "tn", "fn", "total",
-                "precision", "recall",
-                "false_positive_rate", "false_negative_rate", "accuracy",
+                "tp",
+                "fp",
+                "tn",
+                "fn",
+                "total",
+                "precision",
+                "recall",
+                "false_positive_rate",
+                "false_negative_rate",
+                "accuracy",
             ):
                 assert field in m, f"{detector}/{strategy} missing {field}"
             assert m["total"] == m["tp"] + m["fp"] + m["tn"] + m["fn"]

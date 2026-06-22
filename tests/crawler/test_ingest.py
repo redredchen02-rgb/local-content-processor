@@ -114,8 +114,7 @@ def test_create_only_refusal_is_side_effect_free(tmp_path):
     src2 = tmp_path / "material2"
     src2.mkdir()
     (src2 / "title.txt").write_text("second title", encoding="utf-8")
-    (src2 / "body.txt").write_text("TAMPERED BODY THAT MUST NOT BE WRITTEN",
-                                   encoding="utf-8")
+    (src2 / "body.txt").write_text("TAMPERED BODY THAT MUST NOT BE WRITTEN", encoding="utf-8")
     with pytest.raises(InputValidationError):
         LocalIngestCrawler().crawl(_spec(job_dir, src2))
 

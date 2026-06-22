@@ -10,8 +10,6 @@ from __future__ import annotations
 
 import socket
 
-import pytest
-
 from lcp.core.draft import Draft, FaqItem, SourceQuote
 from lcp.core.rules import grounding
 from lcp.core.rules.grounding import (

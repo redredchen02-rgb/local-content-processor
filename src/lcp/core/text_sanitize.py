@@ -34,9 +34,17 @@ _ZERO_WIDTH = {
 
 # Bidi / directional controls — can be abused to visually reorder hidden text.
 _BIDI_CONTROLS = {
-    "‪", "‫", "‬", "‭", "‮",
-    "⁦", "⁧", "⁨", "⁩",
-    "‎", "‏",
+    "‪",
+    "‫",
+    "‬",
+    "‭",
+    "‮",
+    "⁦",
+    "⁧",
+    "⁨",
+    "⁩",
+    "‎",
+    "‏",
 }
 
 

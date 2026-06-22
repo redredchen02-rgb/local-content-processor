@@ -155,8 +155,9 @@ def test_api_resolve_nhr_via_override(tmp_path):
     ts = "2026-06-16T00:00:00Z"
     store.create_job("jn", created_at=ts)
     store.set_state("jn", JobState.CRAWLED, updated_at=ts)
-    persist_gate_state(store, "jn", JobState.NEEDS_HUMAN_REVIEW, updated_at=ts,
-                       review_reason=ReviewReason.DEDUP)
+    persist_gate_state(
+        store, "jn", JobState.NEEDS_HUMAN_REVIEW, updated_at=ts, review_reason=ReviewReason.DEDUP
+    )
 
     api = _api(tmp_path, base)
     res = api.resolve("jn", "alice")  # no reason -> override refused
@@ -180,8 +181,13 @@ def test_api_reject_nhr_reaches_rejected(tmp_path):
     ts = "2026-06-16T00:00:00Z"
     store.create_job("jrn", created_at=ts)
     store.set_state("jrn", JobState.CRAWLED, updated_at=ts)
-    persist_gate_state(store, "jrn", JobState.NEEDS_HUMAN_REVIEW, updated_at=ts,
-                       review_reason=ReviewReason.GROUNDING)
+    persist_gate_state(
+        store,
+        "jrn",
+        JobState.NEEDS_HUMAN_REVIEW,
+        updated_at=ts,
+        review_reason=ReviewReason.GROUNDING,
+    )
 
     api = _api(tmp_path, base)
     res = api.reject("jrn", "alice", "not suitable")
@@ -266,9 +272,12 @@ def test_api_approve_rejects_body_tampered_after_freeze(tmp_path):
     assert store.get_job("jt").state is JobState.REVIEW_PENDING
 
     tampered = Draft(
-        title="台北華山美食市集週末熱鬧登場活動", intro="引言。",
-        quick_facts=["週末"], event_body="完全不同的正文，已被竄改。",
-        faq=[FaqItem(question="Q", answer="A")], summary="結尾。",
+        title="台北華山美食市集週末熱鬧登場活動",
+        intro="引言。",
+        quick_facts=["週末"],
+        event_body="完全不同的正文，已被竄改。",
+        faq=[FaqItem(question="Q", answer="A")],
+        summary="結尾。",
         quotes=[SourceQuote(text="華山文創園區本週末舉辦美食市集。")],
     )
     save_draft(store, "jt", tampered)
@@ -322,7 +331,6 @@ def test_get_packet_escapes_xss(tmp_path):
 
 def test_get_packet_source_urls_are_inert(tmp_path):
     """Source URLs must come back as inert escaped text (never an anchor)."""
-    base = str(tmp_path)
     from lcp.adapters.processor.sanitizer import inert_link
 
     # inert_link is the escape used; assert javascript: URI is neutralised.
@@ -394,10 +402,8 @@ def test_list_jobs_surfaces_interrupted_job(tmp_path):
     """CLI/GUI parity (U7): a crash-interrupted job (.processing marker on a
     CRAWLED job) is flagged ``interrupted`` through the GUI worklist, just like the
     CLI `list` command — the marker's consumer exists on BOTH shells."""
-    from lcp.adapters.storage.job_store import JobStore
+    from lcp.adapters.storage.job_store import PROCESSING_MARKER, JobStore
     from lcp.core.state import JobState
-
-    from lcp.adapters.storage.job_store import PROCESSING_MARKER
 
     base = str(tmp_path)
     s = JobStore(base_dir=base)
@@ -499,14 +505,20 @@ def test_create_and_crawl_unknown_status_defaults_to_crawl_failed(tmp_path, monk
 
         def crawl_url(self, spec, *, ts):
             manifest = build_manifest(
-                job_id=spec.job_id, source_type=SourceType.URL,
-                source_domain="example.com", fetched_at=ts, assets=[],
-                source_html="<html></html>", source_text="b",
+                job_id=spec.job_id,
+                source_type=SourceType.URL,
+                source_domain="example.com",
+                fetched_at=ts,
+                assets=[],
+                source_html="<html></html>",
+                source_text="b",
                 crawl_status="weird-unknown-status",
             )
             return RawJobBundle(
-                job_id=spec.job_id, raw_dir=spec.job_dir / "raw",
-                manifest=manifest, job_status="weird-unknown-status",
+                job_id=spec.job_id,
+                raw_dir=spec.job_dir / "raw",
+                manifest=manifest,
+                job_status="weird-unknown-status",
             )
 
     # build_crawler (U3) constructs the runner/registry now, so patch the factory.
@@ -568,8 +580,9 @@ def test_index_html_has_strict_csp():
 # --- Unit 3: dashboard_stats + saved_sources bridge methods -----------------
 
 
-def _emit_gate(base, *, seq, gate, job_id, status, stage, review_reason=None,
-               ts="2026-06-17T00:00:00Z"):
+def _emit_gate(
+    base, *, seq, gate, job_id, status, stage, review_reason=None, ts="2026-06-17T00:00:00Z"
+):
     from lcp.adapters.storage.audit_log import AuditLog
 
     extra = {"status": status}
@@ -595,8 +608,15 @@ def test_dashboard_stats_with_jobs_and_audit(tmp_path):
     base = str(tmp_path)
     _processed_job_with_draft(base, "j1")  # creates a persisted job + gate events
     # add explicit interceptions so rates are non-trivial
-    _emit_gate(base, seq=0, gate="RISK_GATE", job_id="j2", status="blocked",
-               stage="risk", review_reason="risk")
+    _emit_gate(
+        base,
+        seq=0,
+        gate="RISK_GATE",
+        job_id="j2",
+        status="blocked",
+        stage="risk",
+        review_reason="risk",
+    )
     api = _api(tmp_path, base)
     res = api.dashboard_stats()
     assert "error" not in res
@@ -615,7 +635,7 @@ def test_saved_sources_crud_and_escaping(tmp_path):
     # empty first
     assert api.saved_sources() == {"sources": [], "count": 0}
     # add with an XSS-shaped label and URL
-    added = api.add_saved_source('<script>alert(1)</script>', "https://e.com/<b>")
+    added = api.add_saved_source("<script>alert(1)</script>", "https://e.com/<b>")
     assert added["saved"] is True
     assert "<script>" not in added["label"]  # escaped
     assert "&lt;script&gt;" in added["label"]
@@ -794,24 +814,41 @@ def test_every_public_api_method_returns_dict_under_injected_fault(tmp_path, mon
     monkeypatch.setattr(Api, "_ctx", _ctx_boom)
     # save_settings reads _settings_path; make it fail-closed too.
     monkeypatch.setattr(
-        Api, "_settings_path",
+        Api,
+        "_settings_path",
         lambda self: (_ for _ in ()).throw(InputValidationError("boom")),
     )
 
     # Dummy args by name — enough to reach each method body. Background variants
     # delegate to _run_bg (always returns a 'running' dict) so they need no fault.
     dummy = {
-        "job_id": "j", "url": "https://e.example/x", "directory": str(tmp_path),
+        "job_id": "j",
+        "url": "https://e.example/x",
+        "directory": str(tmp_path),
         "items_json": "[]",
-        "title": "t", "reviewer": "alice", "reason": "r", "new_job_id": None,
-        "attested": True, "state": None, "label": "l", "source_ref": "https://e.example/y",
-        "source_id": "sid", "base_url": "", "model": "", "api_key": "",
-        "dry_run": False, "watermark": None, "template": None, "ai_copy": False,
-        "relint": False, "redline_override": False,
+        "title": "t",
+        "reviewer": "alice",
+        "reason": "r",
+        "new_job_id": None,
+        "attested": True,
+        "state": None,
+        "label": "l",
+        "source_ref": "https://e.example/y",
+        "source_id": "sid",
+        "base_url": "",
+        "model": "",
+        "api_key": "",
+        "dry_run": False,
+        "watermark": None,
+        "template": None,
+        "ai_copy": False,
+        "relint": False,
+        "redline_override": False,
     }
 
     public = [
-        name for name, m in inspect.getmembers(Api, predicate=inspect.isfunction)
+        name
+        for name, m in inspect.getmembers(Api, predicate=inspect.isfunction)
         if not name.startswith("_")
     ]
     # Sanity: the introspection actually found the surface we expect to guard.

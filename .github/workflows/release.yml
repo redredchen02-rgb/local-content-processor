@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # PyPI Trusted Publishing (OIDC)
+      contents: write   # GitHub Release
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install build
+
+      - name: Build wheel + sdist
+        run: python -m build
+
+      - name: Verify wheel contains web assets
+        run: |
+          unzip -l dist/*.whl | grep "lcp/web/index.html" || {
+            echo "ERROR: web assets missing from wheel"
+            exit 1
+          }
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Extract version tag
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          # Extract the section for this version from CHANGELOG.md
+          VERSION="${{ steps.version.outputs.version }}"
+          awk -v ver="## [$VERSION" '
+            $0 ~ "^## \\[" ver { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > _release_notes.md || true
+          # If no matching section found, use the Unreleased section
+          if [ ! -s _release_notes.md ]; then
+            awk '
+              /^## \[Unreleased\]/ { found=1; next }
+              found && /^## / { exit }
+              found { print }
+            ' CHANGELOG.md > _release_notes.md
+          fi
+          echo "path=_release_notes.md" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: ${{ steps.notes.outputs.path }}
+          files: dist/*

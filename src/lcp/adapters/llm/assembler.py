@@ -34,6 +34,7 @@ import logging
 import secrets
 
 from ...core.draft import Draft, DraftStatus, SourceQuote
+
 # sanitize_source now lives in core/ (the single source of truth used by both
 # this adapter and the pure rule layer). Re-exported here so the public name
 # lcp.adapters.llm.assembler.sanitize_source (and the llm package export) is

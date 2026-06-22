@@ -13,7 +13,6 @@ from lcp.core.rules.risk_rules import (
     is_category_enabled,
 )
 
-
 # --- Happy path --------------------------------------------------------------
 
 
@@ -55,17 +54,13 @@ def test_redline_beats_daily_check_precedence():
 
 
 def test_unclear_source_is_redline():
-    r = assess_risk(
-        RiskInput(title="某事件", body="內容", has_source=False)
-    )
+    r = assess_risk(RiskInput(title="某事件", body="內容", has_source=False))
     assert r.blocked
     assert any("unclear_source" in br for br in r.blocking_reasons)
 
 
 def test_unsupported_serious_claim_redline():
-    r = assess_risk(
-        RiskInput(title="x", body="y", has_source=False, contains_serious_claim=True)
-    )
+    r = assess_risk(RiskInput(title="x", body="y", has_source=False, contains_serious_claim=True))
     assert r.blocked
     assert any("unsupported_claim" in br for br in r.blocking_reasons)
 
@@ -106,7 +101,9 @@ def test_real_minor_redline_still_blocks_via_specific_keyword():
 def test_clean_text_with_no_footgun_still_passes():
     """No footgun, no redline, has source -> PASS (footgun mechanism must not
     over-fire on innocuous content)."""
-    r = assess_risk(RiskInput(title="台北華山美食市集週末登場", body="現場有樂團表演", has_source=True))
+    r = assess_risk(
+        RiskInput(title="台北華山美食市集週末登場", body="現場有樂團表演", has_source=True)
+    )
     assert r.status == RiskStatus.PASS
 
 

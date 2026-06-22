@@ -32,16 +32,20 @@ class _Stub:
 
 
 def _config():
-    return Config(llm=LlmConfig(
-        base_url="https://llm.example.com/v1", model="m",
-        allowed_hosts=["llm.example.com"],
-    ))
+    return Config(
+        llm=LlmConfig(
+            base_url="https://llm.example.com/v1",
+            model="m",
+            allowed_hosts=["llm.example.com"],
+        )
+    )
 
 
 @pytest.fixture
 def with_key(monkeypatch):
     monkeypatch.setenv("LCP_LLM_API_KEY", SECRET)
     import lcp.adapters.storage.config_io as cfg
+
     monkeypatch.setattr(cfg, "KEYRING_SERVICE", "lcp-test-copywriter")
     return SECRET
 
@@ -101,7 +105,9 @@ def test_truncated_completion_is_needs_revision(with_key):
 def test_apply_copy_to_draft_enriches_without_mutation():
     draft = Draft(title="t", intro="i", event_body="b")
     res = copywriter.CopyResult(
-        captions=["cap1"], subheads=["sub1"], title_candidates=["c1"],
+        captions=["cap1"],
+        subheads=["sub1"],
+        title_candidates=["c1"],
     )
     out = copywriter.apply_copy_to_draft(draft, res, asset_refs=["images/a.jpg"])
     assert out.image_sections[0].caption == "cap1"
@@ -169,8 +175,8 @@ def test_summary_lines_stay_separate_claims_for_grounding(with_key):
     # Two SUMMARY lines WITHOUT sentence terminators must not merge into one
     # claim (adversarial review): join with a newline so grounding's sentence
     # split keeps them separate and grounds each individually.
-    from lcp.core.rules.grounding import _split_claims
     from lcp.core.draft import Draft
+    from lcp.core.rules.grounding import _split_claims
 
     out = "SUMMARY: 當事人上週離開現場\nSUMMARY: 警方已介入調查此事\n"
     client = LlmClient(_config(), client_factory=_Stub(out).factory)
@@ -183,7 +189,9 @@ def test_summary_lines_stay_separate_claims_for_grounding(with_key):
 def test_apply_copy_populates_quick_facts_summary_tags():
     draft = Draft(title="t", intro="i", event_body="b")
     res = copywriter.CopyResult(
-        quick_facts=["qf1", "qf2"], summary="结尾段落", tags=["a", "b", "c"],
+        quick_facts=["qf1", "qf2"],
+        summary="结尾段落",
+        tags=["a", "b", "c"],
     )
     out = copywriter.apply_copy_to_draft(draft, res)
     assert out.quick_facts == ["qf1", "qf2"]

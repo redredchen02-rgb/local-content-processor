@@ -59,9 +59,7 @@ class ContentConfig(BaseModel):
     title_max_chars: int = 35
     tag_min_count: int = 3
     tag_max_count: int = 5
-    uncertainty_terms: list[str] = Field(
-        default_factory=lambda: ["網傳", "疑似", "被曝", "據傳"]
-    )
+    uncertainty_terms: list[str] = Field(default_factory=lambda: ["網傳", "疑似", "被曝", "據傳"])
 
 
 class LlmConfig(BaseModel):
@@ -125,9 +123,7 @@ def validate_llm_base_url(base_url: str) -> str:
     scheme = parts.scheme.lower()
     host = parts.hostname
     if scheme not in ("http", "https"):
-        raise InputValidationError(
-            f"base_url scheme must be http/https (got {scheme!r})"
-        )
+        raise InputValidationError(f"base_url scheme must be http/https (got {scheme!r})")
     if not host:
         raise InputValidationError(f"base_url has no host: {base_url!r}")
     if not s.rstrip("/").endswith("/v1"):
@@ -142,7 +138,6 @@ def validate_llm_base_url(base_url: str) -> str:
             internal = False
         if not internal:
             raise InputValidationError(
-                f"plain http is only allowed for a loopback endpoint "
-                f"(got {host!r}); use https"
+                f"plain http is only allowed for a loopback endpoint (got {host!r}); use https"
             )
     return host

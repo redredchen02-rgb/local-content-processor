@@ -50,7 +50,8 @@ class _FakeClient:
 
 def _patch(monkeypatch, payload: dict, status: int = 200) -> None:
     monkeypatch.setattr(
-        douyin.httpx, "AsyncClient",
+        douyin.httpx,
+        "AsyncClient",
         lambda *a, **k: _FakeClient(payload, status),
     )
 
@@ -75,7 +76,7 @@ def test_parses_hot_search(monkeypatch) -> None:
     assert items[0].url.startswith("https://www.douyin.com/search/")
     assert items[0].tag == "热"  # label 3
     assert items[1].tag == "新"  # label 1
-    assert items[2].tag == ""    # label 0 -> untagged
+    assert items[2].tag == ""  # label 0 -> untagged
 
 
 def test_empty_word_list_returns_empty(monkeypatch) -> None:

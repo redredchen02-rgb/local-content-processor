@@ -9,8 +9,8 @@ import pytest
 
 from lcp.adapters.llm.client import ChatResult
 from lcp.adapters.llm.nli_grounding import LlmGroundingStrategy
+from lcp.core.draft import Draft
 from lcp.core.rules.grounding import GroundingStrategy, verify_grounding
-from lcp.core.draft import Draft, SourceQuote
 
 
 class _FakeClient:
@@ -21,8 +21,7 @@ class _FakeClient:
 
     def chat(self, *, system, user, max_tokens, temperature):
         self.calls.append(
-            {"system": system, "user": user, "max_tokens": max_tokens,
-             "temperature": temperature}
+            {"system": system, "user": user, "max_tokens": max_tokens, "temperature": temperature}
         )
         if self._raises is not None:
             raise self._raises
@@ -47,7 +46,7 @@ def test_satisfies_grounding_strategy_protocol():
         ("NO", False),
         ("no", False),
         ("Not supported", False),
-        ("", False),       # empty completion text -> not grounded
+        ("", False),  # empty completion text -> not grounded
         ("maybe", False),  # anything that is not exactly YES -> fail closed
         # Exact-match guard (Unit 15): a prefix-YES that is NOT the bare word must
         # fail closed. startswith("YES") used to read these as grounded.
@@ -70,8 +69,11 @@ def test_empty_claim_is_grounded_without_calling_llm():
 
 def test_truncated_completion_fails_closed():
     truncated = ChatResult(
-        text="YE", finish_reason="length", model="m",
-        needs_revision=True, revision_reason="truncated:length",
+        text="YE",
+        finish_reason="length",
+        model="m",
+        needs_revision=True,
+        revision_reason="truncated:length",
     )
     strat = LlmGroundingStrategy(client=_FakeClient(result=truncated))
     # needs_revision -> not grounded, even though text starts with "YE".

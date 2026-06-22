@@ -19,9 +19,7 @@ def test_caption_free_draft_hash_unchanged_by_new_fields():
 
 
 def test_caption_edit_changes_freeze_hash():
-    before = _base().model_copy(
-        update={"image_sections": [MediaSection(caption="原始图说")]}
-    )
+    before = _base().model_copy(update={"image_sections": [MediaSection(caption="原始图说")]})
     after = _base().model_copy(
         update={"image_sections": [MediaSection(caption="被偷偷改过的图说")]}
     )

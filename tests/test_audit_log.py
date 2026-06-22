@@ -17,9 +17,7 @@ def _log(tmp_path):
 
 def _append_n(log, n):
     for i in range(n):
-        log.append(
-            ts=TS, stage="crawl", event=f"E{i}", job_id="j1", actor="machine"
-        )
+        log.append(ts=TS, stage="crawl", event=f"E{i}", job_id="j1", actor="machine")
 
 
 def test_append_and_verify_chain(tmp_path):
@@ -49,8 +47,12 @@ def test_artifact_sha256_recorded(tmp_path):
     log = _log(tmp_path)
     h = hashlib.sha256(b"draft-content").hexdigest()
     rec = log.append(
-        ts=TS, stage="assemble", event="DRAFT", job_id="j1",
-        actor="machine", artifact_sha256=h,
+        ts=TS,
+        stage="assemble",
+        event="DRAFT",
+        job_id="j1",
+        actor="machine",
+        artifact_sha256=h,
     )
     assert rec["artifact_sha256"] == h
     assert log.verify_chain()
@@ -60,12 +62,20 @@ def test_pii_keys_rejected(tmp_path):
     log = _log(tmp_path)
     with pytest.raises(InputValidationError):
         log.append(
-            ts=TS, stage="crawl", event="X", job_id="j1", actor="m",
+            ts=TS,
+            stage="crawl",
+            event="X",
+            job_id="j1",
+            actor="m",
             extra={"title": "leaked headline"},
         )
     with pytest.raises(InputValidationError):
         log.append(
-            ts=TS, stage="crawl", event="X", job_id="j1", actor="m",
+            ts=TS,
+            stage="crawl",
+            event="X",
+            job_id="j1",
+            actor="m",
             extra={"source_url": "https://x.com/u"},
         )
 
@@ -74,7 +84,11 @@ def test_bad_artifact_hash_rejected(tmp_path):
     log = _log(tmp_path)
     with pytest.raises(InputValidationError):
         log.append(
-            ts=TS, stage="x", event="X", job_id="j1", actor="m",
+            ts=TS,
+            stage="x",
+            event="X",
+            job_id="j1",
+            actor="m",
             artifact_sha256="not-a-hash",
         )
 
@@ -99,9 +113,7 @@ def test_concurrent_appends_keep_seq_unique_and_chain_valid(tmp_path):
 
     def _worker(i):
         barrier.wait()  # maximise contention on the read-tail/write window
-        log.append(
-            ts=TS, stage="crawl", event=f"E{i}", job_id="j1", actor="machine"
-        )
+        log.append(ts=TS, stage="crawl", event=f"E{i}", job_id="j1", actor="machine")
 
     threads = [threading.Thread(target=_worker, args=(i,)) for i in range(n)]
     for t in threads:
@@ -129,8 +141,7 @@ def test_append_fails_loud_without_fcntl(tmp_path, monkeypatch):
     with pytest.raises(DependencyError):
         log.append(ts=TS, stage="crawl", event="E0", job_id="j1", actor="m")
     # Nothing was written: refusing loud must not leave a lock-free tail line.
-    assert not (tmp_path / "audit.jsonl").exists() or \
-        (tmp_path / "audit.jsonl").read_text() == ""
+    assert not (tmp_path / "audit.jsonl").exists() or (tmp_path / "audit.jsonl").read_text() == ""
 
 
 def test_append_fsyncs_parent_dir(tmp_path, monkeypatch):
@@ -197,8 +208,7 @@ def test_tail_handles_record_larger_than_block(tmp_path):
     correctly (multi-block backward read), and the chain must keep going."""
     log = _log(tmp_path)
     big = "x" * 9000  # > 4096 -> forces the backward read to expand
-    log.append(ts=TS, stage="crawl", event="E0", job_id="j1", actor="m",
-               extra={"pad": big})
+    log.append(ts=TS, stage="crawl", event="E0", job_id="j1", actor="m", extra={"pad": big})
     log.append(ts=TS, stage="crawl", event="E1", job_id="j1", actor="m")
     assert log.verify_chain() is True
     seq, _ = log._tail()

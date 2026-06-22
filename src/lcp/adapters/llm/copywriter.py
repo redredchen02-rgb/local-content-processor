@@ -200,9 +200,7 @@ def generate_structural_copy(
     if not result.executed:
         return CopyResult(executed=False, review_reason="not_executed:dry_run")
     if result.needs_revision:
-        return CopyResult(
-            executed=True, needs_revision=True, review_reason=result.revision_reason
-        )
+        return CopyResult(executed=True, needs_revision=True, review_reason=result.revision_reason)
     return _parse(result.text or "")
 
 

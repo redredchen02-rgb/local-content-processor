@@ -25,10 +25,12 @@ def _crawled_job(base, job_id="jw"):
 def _config(tmp_path, base):
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
-        yaml.safe_dump({
-            "storage": {"base_dir": base},
-            "templates": {"网红黑料": "为 {category} 栏目写作"},
-        }),
+        yaml.safe_dump(
+            {
+                "storage": {"base_dir": base},
+                "templates": {"网红黑料": "为 {category} 栏目写作"},
+            }
+        ),
         encoding="utf-8",
     )
     return str(cfg)
@@ -38,10 +40,20 @@ def test_process_accepts_template_watermark_aicopy_flags_dry_run(tmp_path):
     base = str(tmp_path)
     cfg = _config(tmp_path, base)
     _crawled_job(base, "jw")
-    rc = main([
-        "--config", cfg, "--dry-run", "process", "--job-id", "jw",
-        "--template", "网红黑料", "--watermark", "--ai-copy",
-    ])
+    rc = main(
+        [
+            "--config",
+            cfg,
+            "--dry-run",
+            "process",
+            "--job-id",
+            "jw",
+            "--template",
+            "网红黑料",
+            "--watermark",
+            "--ai-copy",
+        ]
+    )
     assert rc == EXIT_OK
 
 
@@ -49,9 +61,17 @@ def test_no_watermark_flag_accepted(tmp_path):
     base = str(tmp_path)
     cfg = _config(tmp_path, base)
     _crawled_job(base, "jw2")
-    rc = main([
-        "--config", cfg, "--dry-run", "process", "--job-id", "jw2", "--no-watermark",
-    ])
+    rc = main(
+        [
+            "--config",
+            cfg,
+            "--dry-run",
+            "process",
+            "--job-id",
+            "jw2",
+            "--no-watermark",
+        ]
+    )
     assert rc == EXIT_OK
 
 
@@ -60,8 +80,16 @@ def test_unknown_template_is_tolerated(tmp_path):
     base = str(tmp_path)
     cfg = _config(tmp_path, base)
     _crawled_job(base, "jw3")
-    rc = main([
-        "--config", cfg, "--dry-run", "process", "--job-id", "jw3",
-        "--template", "不存在的栏目",
-    ])
+    rc = main(
+        [
+            "--config",
+            cfg,
+            "--dry-run",
+            "process",
+            "--job-id",
+            "jw3",
+            "--template",
+            "不存在的栏目",
+        ]
+    )
     assert rc == EXIT_OK

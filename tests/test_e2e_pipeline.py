@@ -91,8 +91,14 @@ def test_packet_freeze_then_approve_then_backfill(store, audit, config):
     assert rec.new_state is JobState.APPROVED
 
     final = signoff.backfill_published_url(
-        "e2e", SOURCE_URL, config=config, store=store, audit=audit, ts=TS,
-        attested=True, reviewer="alice",
+        "e2e",
+        SOURCE_URL,
+        config=config,
+        store=store,
+        audit=audit,
+        ts=TS,
+        attested=True,
+        reviewer="alice",
     )
     assert final is JobState.PUBLISHED_RECORDED
 
@@ -116,7 +122,10 @@ def test_run_until_review_defaults_ai_copy_on(store, audit, config):
     seed_clean_index(store)
     p = build_pipeline(store, audit, config=config)
     res = p.run_until(
-        spec_for(store, "r1"), target="review", ts=TS, title=TITLE,
+        spec_for(store, "r1"),
+        target="review",
+        ts=TS,
+        title=TITLE,
         source_urls=[SOURCE_URL],
     )
     assert res.final_state is JobState.REVIEW_PENDING, res.notes
@@ -129,7 +138,11 @@ def test_run_until_review_no_ai_copy_dead_ends(store, audit, config):
     seed_clean_index(store)
     p = build_pipeline(store, audit, config=config)
     res = p.run_until(
-        spec_for(store, "r2"), target="review", ts=TS, title=TITLE, ai_copy=False,
+        spec_for(store, "r2"),
+        target="review",
+        ts=TS,
+        title=TITLE,
+        ai_copy=False,
     )
     assert res.final_state is not JobState.REVIEW_PENDING
 
@@ -139,9 +152,7 @@ def test_job_matching_site_index_is_detected_duplicate(store, audit, config):
     the index is parked DUPLICATE by the real dedup gate (proves the gate runs,
     not that it is bypassed)."""
     # Seed the index WITH this job's body+title -> the dedup gate must match it.
-    entry = json.dumps(
-        {"job_id": "prior", "title": TITLE, "body": SOURCE}, ensure_ascii=False
-    )
+    entry = json.dumps({"job_id": "prior", "title": TITLE, "body": SOURCE}, ensure_ascii=False)
     (store.base_dir).mkdir(parents=True, exist_ok=True)
     (store.base_dir / "site_index.jsonl").write_text(entry + "\n", encoding="utf-8")
 

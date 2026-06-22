@@ -29,9 +29,7 @@ def _api_headers(**overrides):
 
 
 def _authz(path, headers):
-    return webserver.authorize(
-        path=path, headers=headers, token=GOOD_TOKEN, port=PORT
-    )
+    return webserver.authorize(path=path, headers=headers, token=GOOD_TOKEN, port=PORT)
 
 
 # --- happy paths -----------------------------------------------------------

@@ -77,8 +77,11 @@ def _api_headers(port, **overrides):
 def _post(port, name, args, **header_overrides):
     body = json.dumps({"args": args})
     return _request(
-        port, "POST", f"/api/{name}",
-        headers=_api_headers(port, **header_overrides), body=body,
+        port,
+        "POST",
+        f"/api/{name}",
+        headers=_api_headers(port, **header_overrides),
+        body=body,
     )
 
 
@@ -129,8 +132,11 @@ def test_typed_exit_code_crosses_the_wire(server):
 
 def test_malformed_body_is_typed_not_500(server):
     resp, data = _request(
-        server.public_port, "POST", "/api/summary",
-        headers=_api_headers(server.public_port), body="not json",
+        server.public_port,
+        "POST",
+        "/api/summary",
+        headers=_api_headers(server.public_port),
+        body="not json",
     )
     assert resp.status == 200
     body = json.loads(data)
@@ -152,7 +158,9 @@ def test_async_over_arity_typed_error_crosses_wire(server):
     # The dispatch seam's arity guard + LcpError mapping must hold for the
     # UN-@bridge_safe async kickoff methods too: an over-long args array to
     # process_async returns a typed exit_code:2 on the synchronous kickoff, not a 500.
-    resp, data = _post(server.public_port, "process_async", ["j1", "t", False, None, None, False, "EXTRA"])
+    resp, data = _post(
+        server.public_port, "process_async", ["j1", "t", False, None, None, False, "EXTRA"]
+    )
     assert resp.status == 200
     body = json.loads(data)
     assert "error" in body and body["exit_code"] == 2
@@ -248,9 +256,7 @@ def test_async_process_blocks_concurrent_sync_process(server, monkeypatch):
 def test_missing_token_401(server):
     h = _api_headers(server.public_port)
     del h["Authorization"]
-    resp, _ = _request(
-        server.public_port, "POST", "/api/summary", headers=h, body='{"args":[]}'
-    )
+    resp, _ = _request(server.public_port, "POST", "/api/summary", headers=h, body='{"args":[]}')
     assert resp.status == 401
 
 
@@ -266,7 +272,9 @@ def test_cross_site_403(server):
 
 def test_get_on_api_405(server):
     resp, _ = _request(
-        server.public_port, "GET", "/api/summary",
+        server.public_port,
+        "GET",
+        "/api/summary",
         headers={"Host": f"127.0.0.1:{server.public_port}"},
     )
     assert resp.status == 405
@@ -284,7 +292,9 @@ def test_private_and_unknown_routes_404(server):
 def test_path_traversal_blocked(server):
     for path in ("/../config.yaml", "/../../config.yaml"):
         resp, _ = _request(
-            server.public_port, "GET", path,
+            server.public_port,
+            "GET",
+            path,
             headers={"Host": f"127.0.0.1:{server.public_port}"},
         )
         assert resp.status == 404, path
@@ -295,7 +305,9 @@ def test_path_traversal_blocked(server):
 
 def test_index_served_with_token_injected_and_headers(server):
     resp, data = _request(
-        server.public_port, "GET", "/",
+        server.public_port,
+        "GET",
+        "/",
         headers={"Host": f"127.0.0.1:{server.public_port}", "Sec-Fetch-Site": "none"},
     )
     assert resp.status == 200
@@ -310,7 +322,9 @@ def test_index_served_with_token_injected_and_headers(server):
 
 def test_app_js_served(server):
     resp, data = _request(
-        server.public_port, "GET", "/app.js",
+        server.public_port,
+        "GET",
+        "/app.js",
         headers={"Host": f"127.0.0.1:{server.public_port}"},
     )
     assert resp.status == 200
@@ -322,16 +336,39 @@ def test_app_js_served(server):
 # Hand-maintained: the public Api operator surface. Independent of the server's
 # dir(Api) introspection, so adding/removing an Api method (or a route) without
 # updating this list FAILS — the test is falsifiable, not a tautology.
-EXPECTED_ROUTES = frozenset({
-    "init_workspace", "create_and_crawl", "crawl_ingested", "ingest_dir",
-    "ingest_gossip", "templates", "process",
-    "create_and_crawl_async", "process_async", "job_status", "get_job",
-    "make_review_packet",
-    "get_packet", "cover_report", "approve", "reject", "resolve", "backfill",
-    "supersede", "list_jobs", "summary", "dashboard_stats", "saved_sources",
-    "add_saved_source", "delete_saved_source", "reviewers", "disclaimer",
-    "get_settings", "save_settings",
-})
+EXPECTED_ROUTES = frozenset(
+    {
+        "init_workspace",
+        "create_and_crawl",
+        "crawl_ingested",
+        "ingest_dir",
+        "ingest_gossip",
+        "templates",
+        "process",
+        "create_and_crawl_async",
+        "process_async",
+        "job_status",
+        "get_job",
+        "make_review_packet",
+        "get_packet",
+        "cover_report",
+        "approve",
+        "reject",
+        "resolve",
+        "backfill",
+        "supersede",
+        "list_jobs",
+        "summary",
+        "dashboard_stats",
+        "saved_sources",
+        "add_saved_source",
+        "delete_saved_source",
+        "reviewers",
+        "disclaimer",
+        "get_settings",
+        "save_settings",
+    }
+)
 
 
 def test_route_table_matches_independent_expected_list():
