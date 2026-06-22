@@ -34,6 +34,14 @@ jobs:
             exit 1
           }
 
+      - name: Install package + benchmark deps
+        run: |
+          pip install -e ".[crawl,media,llm,dedup,dev]"
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Run performance benchmark
+        run: python spikes/benchmark/run.py --json | tee _benchmark.json
+
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
 
