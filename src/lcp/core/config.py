@@ -32,8 +32,13 @@ class MediaConfig(BaseModel):
     cover_height: int = 640
     video_codec: str = "h264"
     video_fps: int = 30
+    # Acceptance band forwarded to asset_rules.judge_video. Defaults mirror the
+    # rule's own DEFAULT_MIN/MAX_VIDEO_FPS so behavior is unchanged until tuned;
+    # previously the gate ignored config and always used those rule defaults.
+    min_video_fps: float = 24.0
+    max_video_fps: float = 61.0
     min_video_bitrate_mbps: float = 1.5
-    max_video_size_mb: int = 500
+    max_video_size_mb: int = 500  # MiB (1024-based); a larger video parks
 
 
 class WatermarkConfig(BaseModel):
