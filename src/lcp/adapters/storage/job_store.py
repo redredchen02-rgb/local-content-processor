@@ -28,6 +28,7 @@ from pathlib import Path
 
 from ...core.errors import InputValidationError
 from ...core.state import TRANSIENT_STATES, JobState, ReviewReason, validate_transition
+from ._sqlite_base import SqliteBase
 from .audit_log import EVENT_ERASURE, AuditLog
 
 try:
@@ -43,7 +44,6 @@ PROCESSING_MARKER = ".processing"
 # but carries a small integer (no PII) so a DETERMINISTIC crash surfaces to a
 # human after N reconcile passes instead of looping retry->crash->retry forever.
 INTERRUPT_COUNT_MARKER = ".interrupt_count"
-_BUSY_TIMEOUT_MS = 5000
 
 # Allowed index columns only — see module docstring / pii-inventory.md.
 _SCHEMA = """
@@ -133,8 +133,10 @@ class BestEffortDeletionResult:
         )
 
 
-class JobStore:
+class JobStore(SqliteBase):
     """SQLite index + folder-per-job blob storage under base_dir/."""
+
+    _SCHEMA = _SCHEMA
 
     def __init__(self, base_dir: str | os.PathLike[str] = "./data"):
         self.base_dir = Path(base_dir)
@@ -143,27 +145,6 @@ class JobStore:
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.jobs_root.mkdir(parents=True, exist_ok=True)
         self._init_db()
-
-    # --- connection management: one fresh connection per call/thread ---
-
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=_BUSY_TIMEOUT_MS / 1000)
-        conn.row_factory = sqlite3.Row
-        # busy_timeout is per-connection, so it MUST be set here. journal_mode=WAL
-        # is a PERSISTENT database property (stored in the file header) set once in
-        # _init_db — re-issuing it on every connection was a wasted round-trip.
-        # The schema has no foreign keys, so PRAGMA foreign_keys was a no-op.
-        conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
-        return conn
-
-    def _init_db(self) -> None:
-        conn = self._connect()
-        try:
-            conn.execute("PRAGMA journal_mode=WAL")  # persistent; set once
-            conn.executescript(_SCHEMA)
-            conn.commit()
-        finally:
-            conn.close()
         _chmod_db_0600(self.db_path)
 
     # --- job directory layout: data/jobs/<job_id>/{raw,processed,review}/ ---

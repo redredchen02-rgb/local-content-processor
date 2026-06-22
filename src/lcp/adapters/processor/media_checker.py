@@ -157,6 +157,12 @@ def _validate_videos(
             entries.append(entry)
             needs_revision = True
             continue
+        # File-size check (adapter-level: file stat, not a pure rule).
+        file_size_mb = src.stat().st_size / (1024 * 1024)
+        if file_size_mb > media.max_video_size_mb:
+            reasons_size = [f"video too large: {file_size_mb:.1f} MB > max {media.max_video_size_mb} MB"]
+        else:
+            reasons_size = []
         spec = asset_rules.judge_video(
             codec=info.codec,
             fps=info.fps,
@@ -165,8 +171,10 @@ def _validate_videos(
             height=info.height,
             expected_codec=media.video_codec,
             min_bitrate_mbps=media.min_video_bitrate_mbps,
+            min_fps=media.min_video_fps,
+            max_fps=media.max_video_fps,
         )
-        reasons = list(spec.reasons)
+        reasons = reasons_size + list(spec.reasons)
         try:
             black = ffprobe.detect_black_segments(src)
             reasons.extend(asset_rules.judge_black_segments(black, info.duration_s).reasons)

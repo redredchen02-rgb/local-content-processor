@@ -32,6 +32,8 @@ class MediaConfig(BaseModel):
     cover_height: int = 640
     video_codec: str = "h264"
     video_fps: int = 30
+    min_video_fps: float = 24.0
+    max_video_fps: float = 60.0
     min_video_bitrate_mbps: float = 1.5
     max_video_size_mb: int = 500
 
@@ -60,6 +62,13 @@ class ContentConfig(BaseModel):
     tag_min_count: int = 3
     tag_max_count: int = 5
     uncertainty_terms: list[str] = Field(default_factory=lambda: ["網傳", "疑似", "被曝", "據傳"])
+    hype_words: list[str] = Field(
+        default_factory=lambda: [
+            "獨家", "首發", "震撼", "震驚", "重大突破", "史無前例",
+            "全球首例", "世紀", "革命性", "顛覆", "爆料", "揭秘",
+        ]
+    )
+    min_copy_chars: int = 40
 
 
 class LlmConfig(BaseModel):

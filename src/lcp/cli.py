@@ -278,7 +278,8 @@ def ingest_gossip(ctx, input_file):
 
 
 @cli.command()
-@click.option("--job-id", "job_id", required=True)
+@click.option("--job-id", "job_id", default=None, help="Single job to process")
+@click.option("--all-state", "all_state", default=None, help="Process ALL jobs in this state")
 @click.option("--title", default="", help="Working title (lint/risk input)")
 @click.option(
     "--watermark/--no-watermark",
@@ -300,43 +301,80 @@ def ingest_gossip(ctx, input_file):
     help="Also generate AI captions/FAQ/subheads (all need human review)",
 )
 @click.pass_context
-def process(ctx, job_id, title, watermark, template, ai_copy):
+def process(ctx, job_id, all_state, title, watermark, template, ai_copy):
     """Stage 2: risk gate, media validation/normalization, dedup gate, assemble,
     lint + ground.
 
     Honours --dry-run: the LLM is NOT called and no external system is mutated
     (the draft is marked not-executed; deterministic local stages incl. media
     still run). Stops at the first gate that parks the job (BLOCKED / DUPLICATE /
-    NEEDS_*). --watermark/--template/--ai-copy are process-time inputs."""
+    NEEDS_*). --watermark/--template/--ai-copy are process-time inputs.
+
+    Use --all-state <state> to batch-process every job in a given state
+    (e.g. --all-state crawled). Each job is independent; parked/failed jobs
+    do not stop the batch."""
+    if not job_id and not all_state:
+        raise click.UsageError("either --job-id or --all-state is required")
+    if job_id and all_state:
+        raise click.UsageError("cannot use both --job-id and --all-state")
+
     c = Ctx(ctx.obj)
     p = pl.Pipeline(c.config, c.store, c.audit, dry_run=c.dry_run)
-    res = p.process(
-        job_id,
-        ts=_now(),
-        title=title,
-        watermark=watermark,
-        template=template,
-        ai_copy=ai_copy,
-    )
-    c.emit(
-        {
-            "job_id": job_id,
-            "state": res.final_state.value,
-            "stopped_at": res.stopped_at,
-            "dry_run": res.dry_run,
-            "notes": res.notes,
-        },
-        human=(
-            f"processed {job_id}: {res.final_state.value}"
-            + (f" (stopped at {res.stopped_at})" if res.stopped_at else "")
-            + (" [dry-run]" if res.dry_run else "")
-            + (
-                f"\n  → {adv}"
-                if (adv := _completion_advisory(res.final_state, dry_run=res.dry_run))
-                else ""
-            )
-        ),
-    )
+
+    if all_state:
+        results = pl.process_batch(
+            p,
+            all_state,
+            ts=_now(),
+            title=title,
+            ai_copy=ai_copy,
+            watermark=watermark,
+            template=template,
+        )
+        summary = {}
+        for r in results:
+            summary[r.final_state.value] = summary.get(r.final_state.value, 0) + 1
+        c.emit(
+            {
+                "state": all_state,
+                "processed": len(results),
+                "summary": summary,
+                "dry_run": p.dry_run,
+            },
+            human=(
+                f"batch: processed {len(results)} jobs in state {all_state!r}: "
+                + ", ".join(f"{k}={v}" for k, v in sorted(summary.items()))
+                + (" [dry-run]" if p.dry_run else "")
+            ),
+        )
+    else:
+        res = p.process(
+            job_id,
+            ts=_now(),
+            title=title,
+            watermark=watermark,
+            template=template,
+            ai_copy=ai_copy,
+        )
+        c.emit(
+            {
+                "job_id": job_id,
+                "state": res.final_state.value,
+                "stopped_at": res.stopped_at,
+                "dry_run": res.dry_run,
+                "notes": res.notes,
+            },
+            human=(
+                f"processed {job_id}: {res.final_state.value}"
+                + (f" (stopped at {res.stopped_at})" if res.stopped_at else "")
+                + (" [dry-run]" if res.dry_run else "")
+                + (
+                    f"\n  → {adv}"
+                    if (adv := _completion_advisory(res.final_state, dry_run=res.dry_run))
+                    else ""
+                )
+            ),
+        )
 
 
 # --- Stage 4: review packet (freeze) + sign-off ------------------------------

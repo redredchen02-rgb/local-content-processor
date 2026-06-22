@@ -39,9 +39,10 @@ from .adapters.crawler.base import (
     RawJobBundle,
     SourceSpec,
 )
+from .adapters.container import Adapters as Adapters
 from .adapters.llm.assembler import assemble
 from .adapters.llm.client import LlmClient
-from .adapters.processor import dedup_checker, media_checker, risk_checker
+
 from .adapters.processor.draft_linter import build_lint_config, run_draft_lint_gate
 from .adapters.publisher.review_packet import ReviewPacket, build_review_packet
 from .adapters.storage.audit_log import EVENT_INTERRUPTED_DETECTED, AuditLog
@@ -185,27 +186,51 @@ from .adapters.storage.draft_store import (
 
 
 class Pipeline:
-    """Orchestrates the stages with injected adapters (functional core / shell)."""
+    """Orchestrates the stages with injected adapters (functional core / shell).
+
+    Accepts either a typed ``Adapters`` container (preferred) or individual
+    adapter parameters (backward-compatible). The ``dry_run`` coercion/refusal
+    (force-on or refuse) runs here at construction time — the ``Adapters``
+    container is a data holder, not a policy enforcer."""
 
     def __init__(
         self,
         config: Config,
-        store: JobStore,
-        audit: AuditLog,
+        store_or_adapters: JobStore | None = None,
+        audit: AuditLog | None = None,
         *,
         dry_run: bool = False,
         crawler: CrawlerProtocol | None = None,
         llm_client: LlmClient | None = None,
+        adapters: Adapters | None = None,
     ) -> None:
-        self.config = config
-        self.store = store
-        self.audit = audit
+        _llm_client: LlmClient | None
+        # Unpack from container or legacy positional parameters.
+        if adapters is not None:
+            self.config = config
+            self.store = adapters.store
+            self.audit = adapters.audit
+            self.crawler = adapters.crawler
+            _llm_client = adapters.llm_client
+        else:
+            # Legacy call site: Pipeline(config, store, audit, ...)
+            if store_or_adapters is None or audit is None:
+                raise InputValidationError(
+                    "Pipeline requires either an Adapters container or "
+                    "(config, store, audit) positional arguments"
+                )
+            self.config = config
+            self.store = store_or_adapters
+            self.audit = audit
+            self.crawler = crawler
+            _llm_client = llm_client
+
         self.dry_run = dry_run
-        self.crawler = crawler
+
         # dry_run is threaded into the client: in dry-run it never calls the API.
         # The R40 escape hatch (private-CA bundle / explicit http hosts) is
         # config-driven, so it is wired from config here, not just programmatic.
-        if llm_client is None:
+        if _llm_client is None:
             self.llm_client = LlmClient(
                 config,
                 dry_run=dry_run,
@@ -218,14 +243,14 @@ class Pipeline:
             # client exposes the dry-run flag we force it on; if it cannot be
             # forced and is not already dry, refuse (fail loud, never call live).
             if dry_run:
-                if hasattr(llm_client, "_dry_run"):
-                    llm_client._dry_run = True
-                elif not getattr(llm_client, "dry_run", False):
+                if hasattr(_llm_client, "_dry_run"):
+                    _llm_client._dry_run = True
+                elif not getattr(_llm_client, "dry_run", False):
                     raise InputValidationError(
                         "dry_run=True but the injected llm_client cannot be put "
                         "in dry mode; refusing (it could call the live API)"
                     )
-            self.llm_client = llm_client
+            self.llm_client = _llm_client
 
     # --- Stage 1: crawl / ingest --------------------------------------------
 
@@ -434,73 +459,41 @@ class Pipeline:
         source_text = _read_source_text(self.store, job_id)
         notes: list[str] = []
 
-        # --- risk gate (fail-closed; redline -> BLOCKED terminal) ---
-        ri = risk_input or RiskInput(title=title, body=source_text)
-        risk_out = risk_checker.run_risk_gate(
-            job_id=job_id,
-            content=ri,
-            store=self.store,
-            audit=self.audit,
-            ts=ts,
+        # --- park-or-pass gate chain (risk -> media -> dedup) ---
+        # Declarative registry: order is data, fail-closed preserved. Each gate
+        # returns None (pass) or a JobState (park). The runner derives
+        # ``stopped_at`` from the gate name.
+        from .adapters.processor.gate_registry import (
+            GateContext,
+            PARK_GATES,
+            run_gate_chain,
         )
-        if risk_out.job_state is not None:
-            return ProcessResult(
-                job_id=job_id,
-                draft=None,
-                final_state=risk_out.job_state,
-                dry_run=self.dry_run,
-                stopped_at="risk",
-                notes=notes,
-            )
 
-        # --- media validation + normalization (素材完整性 + 圖片/封面/影片規格) ---
-        # Runs after the cheap, terminal risk hard-stop (so redline content never
-        # triggers media subprocess work) and before the LLM (so bad media stops
-        # before spending tokens). A media quality issue -> NEEDS_REVISION (never
-        # BLOCKED). No media -> no-op. Deterministic local I/O, so it runs in
-        # dry-run too.
-        # Watermark is a process-time toggle: None -> use the config default;
-        # True/False overrides config.watermark.enabled for THIS run.
-        wm_config = self.config.watermark
-        if watermark is not None:
-            wm_config = wm_config.model_copy(update={"enabled": watermark})
-        media_out = media_checker.run_media_gate(
+        ctx = GateContext(
             job_id=job_id,
             store=self.store,
             audit=self.audit,
             ts=ts,
-            media_config=self.config.media,
-            watermark=wm_config,
-        )
-        if media_out.job_state is not None:
-            return ProcessResult(
-                job_id=job_id,
-                draft=None,
-                final_state=media_out.job_state,
-                dry_run=self.dry_run,
-                stopped_at="media",
-                notes=notes,
-            )
-
-        # --- dedup gate (advisory; duplicate -> DUPLICATE, never auto-reject) ---
-        dedup_out = dedup_checker.run_dedup_gate(
-            job_id=job_id,
             title=title,
-            body=source_text,
-            store=self.store,
-            audit=self.audit,
-            ts=ts,
+            source_text=source_text,
+            risk_input=risk_input,
             site_index_path=site_index_path,
+            watermark_enabled=watermark,
+            media_config=self.config.media,
+            watermark_config=self.config.watermark,
         )
-        if dedup_out.job_state is not None:
+        parked_state, stopped_at = run_gate_chain(PARK_GATES, ctx)
+        if parked_state is not None:
             return ProcessResult(
                 job_id=job_id,
                 draft=None,
-                final_state=dedup_out.job_state,
+                final_state=parked_state,
                 dry_run=self.dry_run,
-                stopped_at="dedup",
+                stopped_at=stopped_at,
                 notes=notes,
             )
+        # Stash media report for lint (has_images).
+        media_out_report = ctx.reports.get("media", {})
 
         # --- constrained rewrite (dry_run aware: NO API call in dry-run) ---
         # An ExternalServiceError here propagates to `process` -> PROCESS_FAILED.
@@ -563,7 +556,7 @@ class Pipeline:
         # --- lint + grounding gate ---
         # Derive has_images from the actual media gate result (D9): image_sections
         # is required IFF the bundle has images. has_videos stays the caller hint.
-        has_images = bool(media_out.report.get("image_count", 0))
+        has_images = bool(media_out_report.get("image_count", 0))
         lint_config = build_lint_config(self.config.content, self.config.categories)
         lint_out = run_draft_lint_gate(
             job_id=job_id,
@@ -887,3 +880,34 @@ def batch_summary(store: JobStore) -> dict[str, int]:
             summary[st.value] = n
     summary["total"] = sum(summary.values())
     return summary
+
+
+def process_batch(
+    pipeline: Pipeline,
+    state: str | JobState,
+    *,
+    ts: str,
+    title: str = "",
+    ai_copy: bool = False,
+    watermark: bool | None = None,
+    template: str | None = None,
+) -> list[ProcessResult]:
+    """Process every job in a given state independently.
+
+    Continues past parked/failed jobs (each job is independent). Returns a list
+    of ``ProcessResult`` — one per job processed. The shells render counts or
+    ``--json`` aggregate output."""
+    st = resolve_state(state) if isinstance(state, str) else state
+    jobs = list_jobs(pipeline.store, st)
+    results: list[ProcessResult] = []
+    for rec in jobs:
+        res = pipeline.process(
+            rec.job_id,
+            ts=ts,
+            title=title,
+            ai_copy=ai_copy,
+            watermark=watermark,
+            template=template,
+        )
+        results.append(res)
+    return results

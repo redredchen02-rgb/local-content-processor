@@ -32,7 +32,7 @@ SRC = pathlib.Path(__file__).resolve().parent.parent.parent / "src" / "lcp"
 ALLOWED_BASE_EXCEPTION = frozenset(
     {
         "adapters/media/ffprobe.py",  # _kill_group cleanup on any error
-        "adapters/storage/config_io.py",  # atomic_write_text temp-file cleanup
+        "adapters/storage/_fs.py",  # atomic_write_0600 temp-file cleanup
     }
 )
 

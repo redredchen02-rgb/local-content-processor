@@ -61,6 +61,8 @@ def build_lint_config(content: ContentConfig, categories: dict[str, list[str]]) 
         tag_min_count=content.tag_min_count,
         tag_max_count=content.tag_max_count,
         categories=tuple(categories.keys()),
+        hype_words=tuple(content.hype_words),
+        min_copy_chars=content.min_copy_chars,
     )
 
 

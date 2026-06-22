@@ -20,12 +20,13 @@ mode / tool dependency)."""
 
 from __future__ import annotations
 
-import secrets
+
 from dataclasses import dataclass, field
 
 from ...core.draft import Draft, FaqItem, MediaSection
 from ...core.rules.lint_rules import DEFAULT_HYPE_WORDS
 from ...core.text_sanitize import sanitize_source
+from ._shared import make_delimiter as _make_delimiter
 from .client import ChatResult, LlmClient
 
 # Strict output protocol: one piece per line, ``KEY: value``. Unknown keys and
@@ -66,10 +67,6 @@ class CopyResult:
     needs_revision: bool = False
     review_reason: str | None = None
     needs_human_review: bool = True
-
-
-def _make_delimiter() -> str:
-    return f"DATA_{secrets.token_hex(8)}"
 
 
 def build_system_prompt() -> str:

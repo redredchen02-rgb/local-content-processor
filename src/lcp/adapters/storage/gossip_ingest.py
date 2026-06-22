@@ -25,7 +25,7 @@ from urllib.parse import urlparse
 
 from ...core.errors import InputValidationError
 from ..crawler.net_guard import ALLOWED_SCHEMES
-from .config_io import _atomic_write_0600
+from ._fs import atomic_write_0600 as _atomic_write_0600
 from .job_store import JobStore
 
 SOURCE_NAME = "source.json"

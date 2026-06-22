@@ -30,10 +30,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ...core.errors import InputValidationError
-from .job_store import _chmod_db_0600
+from ._sqlite_base import SqliteBase
 
 DB_NAME = "lcp.db"
-_BUSY_TIMEOUT_MS = 5000
 
 # Plaintext PII-exception table — see module docstring. Intentionally NOT in
 # job_store's _SCHEMA so the PII-free jobs invariant stays visually intact.
@@ -65,29 +64,17 @@ def _row_to_source(row: sqlite3.Row) -> SavedSource:
     )
 
 
-class SourceStore:
+class SourceStore(SqliteBase):
     """CRUD over the saved_sources PII-exception table (shares lcp.db)."""
+
+    _SCHEMA = _SCHEMA
 
     def __init__(self, base_dir: str | os.PathLike[str] = "./data"):
         self.base_dir = Path(base_dir)
         self.db_path = self.base_dir / DB_NAME
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self._init_db()
-
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=_BUSY_TIMEOUT_MS / 1000)
-        conn.row_factory = sqlite3.Row
-        conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
-        return conn
-
-    def _init_db(self) -> None:
-        conn = self._connect()
-        try:
-            conn.execute("PRAGMA journal_mode=WAL")  # persistent; set once
-            conn.executescript(_SCHEMA)
-            conn.commit()
-        finally:
-            conn.close()
+        from .job_store import _chmod_db_0600
         _chmod_db_0600(self.db_path)  # this store holds plaintext PII by design
 
     def add_source(

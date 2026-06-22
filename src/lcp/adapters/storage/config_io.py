@@ -16,7 +16,6 @@ read files, the keyring, or env (so an early import can never run before
 from __future__ import annotations
 
 import os
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +23,7 @@ import yaml
 
 from ...core.config import Config
 from ...core.errors import DependencyError, InputValidationError
+from ._fs import atomic_write_0600 as _atomic_write_0600
 
 KEYRING_SERVICE = "local-content-processor"
 
@@ -160,27 +160,6 @@ def update_llm_config_file(
     text = yaml.safe_dump(raw, allow_unicode=True, sort_keys=False)
     _atomic_write_0600(p, text)
     return p
-
-
-def _atomic_write_0600(path: Path, text: str) -> None:
-    """Atomic 0600 write: unique temp in the same dir (mkstemp is 0600/O_EXCL),
-    fsync, chmod 0600, os.replace. A crash mid-write never leaves a torn or a
-    world-readable file. Shared by the settings write and `init_workspace`."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(text)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.chmod(tmp_name, 0o600)
-        os.replace(tmp_name, path)
-    except BaseException:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
 
 
 def find_config_example() -> Path:
