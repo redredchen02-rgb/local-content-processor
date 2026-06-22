@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import logging
 
-
 from ...core.draft import Draft, DraftStatus, SourceQuote
 
 # sanitize_source now lives in core/ (the single source of truth used by both

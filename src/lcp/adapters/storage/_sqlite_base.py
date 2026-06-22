@@ -8,7 +8,6 @@ in ``job_store`` — this base only handles connection management and schema ini
 
 from __future__ import annotations
 
-import os
 import sqlite3
 from pathlib import Path
 

@@ -75,6 +75,7 @@ class SourceStore(SqliteBase):
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self._init_db()
         from .job_store import _chmod_db_0600
+
         _chmod_db_0600(self.db_path)  # this store holds plaintext PII by design
 
     def add_source(

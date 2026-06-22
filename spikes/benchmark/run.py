@@ -26,11 +26,10 @@ from pathlib import Path
 # Ensure the project src is importable
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
-from lcp.adapters.llm.client import ChatResult, LlmClient
+from lcp.adapters.llm.client import ChatResult
 from lcp.adapters.storage.audit_log import AuditLog
 from lcp.adapters.storage.job_store import JobStore
 from lcp.core.config import Config
-from lcp.core.draft import Draft, DraftStatus
 from lcp.pipeline import Pipeline, batch_summary, list_jobs
 
 
@@ -42,7 +41,9 @@ class _BenchmarkLlmClient:
     def __init__(self) -> None:
         self._dry_run = False
 
-    def chat(self, *, messages: list[dict[str, str]], max_tokens: int = 2048, **kw: object) -> ChatResult:
+    def chat(
+        self, *, messages: list[dict[str, str]], max_tokens: int = 2048, **kw: object
+    ) -> ChatResult:
         return ChatResult(
             text="Benchmark article body. " * 50,
             finish_reason="stop",
@@ -124,7 +125,9 @@ def run_benchmark(num_jobs: int = 20) -> dict[str, object]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="lcp performance benchmark")
-    parser.add_argument("--jobs", type=int, default=20, help="Number of synthetic jobs (default: 20)")
+    parser.add_argument(
+        "--jobs", type=int, default=20, help="Number of synthetic jobs (default: 20)"
+    )
     parser.add_argument("--json", action="store_true", help="Output JSON to stdout")
     args = parser.parse_args()
 
@@ -139,7 +142,9 @@ def main() -> None:
         print(f"  startup list:      {results['startup_list_ms']} ms")
         print(f"  list {results['list_jobs_count']} jobs:    {results['list_jobs_ms']} ms")
         print(f"  batch summary:     {results['batch_summary_ms']} ms")
-        print(f"  process single:    {results['process_single_ms']} ms ({results['process_single_state']})")
+        print(
+            f"  process single:    {results['process_single_ms']} ms ({results['process_single_state']})"
+        )
         print(f"  peak memory:       {results['peak_memory_mb']} MB")
 
 

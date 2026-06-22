@@ -20,7 +20,6 @@ mode / tool dependency)."""
 
 from __future__ import annotations
 
-
 from dataclasses import dataclass, field
 
 from ...core.draft import Draft, FaqItem, MediaSection

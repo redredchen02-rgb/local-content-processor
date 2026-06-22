@@ -13,7 +13,7 @@ Usage::
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from .crawler.base import CrawlerProtocol
 from .llm.client import LlmClient

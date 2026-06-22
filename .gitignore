@@ -24,3 +24,15 @@ dist/
 # Local tooling / agent runtime state (machine-local; never commit)
 .claude/
 .context/
+.mimocode/
+.omo/
+
+# Gossip pipeline runtime artifacts (generated output; never commit)
+.gossip_history.json
+gossip_history/
+gossip_latest.csv
+gossip_latest.json
+gossip_top20.json
+gossip_top30.csv
+gossip_report.md
+gossip_heatmap.png
