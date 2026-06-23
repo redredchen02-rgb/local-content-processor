@@ -681,9 +681,136 @@ async function openJob(jobId) {
   }
   renderBanner(rec.state, rec.review_reason);
   await renderIngestReport(jobId);
+  // Render workflow panel after packet load (draft data needed for steps 04 + 08).
   const reviewers = await a.reviewers();
   renderActions(rec.state, rec.review_reason, reviewers);
   await renderPacket(jobId);
+  await renderWorkflowPanel(jobId, rec.state, rec.review_reason);
+}
+
+// ── SOP workflow panel ────────────────────────────────────────────────────────
+
+var _AFTER_CRAWL = new Set(["crawled","crawled_warn","processing","processed",
+  "needs_human_review","needs_revision","process_failed",
+  "review_pending","approved","published_recorded"]);
+var _AFTER_PROCESSED = new Set(["processed","needs_human_review","needs_revision",
+  "review_pending","approved","published_recorded"]);
+var _KW_DIMS = ["人物:","地點:","平台:","事件:","內容類型:"];
+var _NOTIF_ENABLED = (function () {
+  var m = document.querySelector('meta[name="lcp-notification-enabled"]');
+  return m ? m.content === "true" : false;
+}());
+
+function _allKwDims(keywords) {
+  if (!keywords || !keywords.length) return false;
+  return _KW_DIMS.every(function (d) {
+    return keywords.some(function (k) { return String(k).startsWith(d); });
+  });
+}
+
+function stepsFor(state, reviewReason, draft) {
+  // draft may be null for pre-PROCESSED jobs
+  var hasDraft = !!draft;
+  var cat = hasDraft ? (draft.category || null) : null;
+  var kws = hasDraft ? (draft.keywords || []) : [];
+
+  function doneOrNotYet(done) {
+    if (!hasDraft) return {done: false, notYet: true};
+    return {done: done, notYet: false};
+  }
+
+  var s01Done = state !== "new";
+  var s02Blocked = state === "blocked";
+  var s02Done = _AFTER_CRAWL.has(state) && !s02Blocked;
+  var s03Blocked = state === "duplicate";
+  var s03Done = _AFTER_CRAWL.has(state) && !s02Blocked && !s03Blocked;
+  var s04Blocked = reviewReason === "classification";
+  var s04r = doneOrNotYet(!!cat); if (s04Blocked) { s04r.done = false; s04r.notYet = false; }
+  var s05Done = _AFTER_PROCESSED.has(state);
+  var s07Blocked = reviewReason === "grounding";
+  var s07Done = s05Done && !s07Blocked;
+  var s08r = doneOrNotYet(s07Done && _allKwDims(kws));
+  var s09Done = state === "review_pending" || state === "approved" || state === "published_recorded";
+  var s10Done = state === "published_recorded";
+
+  return [
+    {n:"01",label:"接收素材",    done:s01Done,       blocked:false,    blockedLabel:"",          notYet:false},
+    {n:"02",label:"素材检查",    done:s02Done,       blocked:s02Blocked,blockedLabel:"內容風險攔截",notYet:false},
+    {n:"03",label:"站内查重",    done:s03Done,       blocked:s03Blocked,blockedLabel:"站內重複",   notYet:false},
+    {n:"04",label:"确认方向",    done:s04r.done,     blocked:s04Blocked,blockedLabel:"需人工確認分類",notYet:s04r.notYet},
+    {n:"05",label:"处理图片",    done:s05Done,       blocked:false,    blockedLabel:"",          notYet:false},
+    {n:"06",label:"制作封面",    done:s05Done,       blocked:false,    blockedLabel:"",          notYet:false},
+    {n:"07",label:"撰写文案",    done:s07Done,       blocked:s07Blocked,blockedLabel:"文案需修訂",  notYet:false},
+    {n:"08",label:"填写关键词",  done:s08r.done,     blocked:false,    blockedLabel:"",          notYet:s08r.notYet},
+    {n:"09",label:"草稿箱",      done:s09Done,       blocked:false,    blockedLabel:"",          notYet:false},
+    {n:"10",label:"发群/发布",   done:s10Done,       blocked:false,    blockedLabel:"",          notYet:!s10Done && !s09Done},
+  ];
+}
+
+async function renderWorkflowPanel(jobId, state, reviewReason) {
+  var a = api(); if (!a) return;
+  // Try to load the draft for steps 04+08; null for pre-PROCESSED is fine.
+  var draft = null;
+  try {
+    var pr = await a.get_packet(jobId);
+    if (pr && !isError(pr)) draft = pr;
+  } catch (_) {}
+
+  var steps = stepsFor(state, reviewReason, draft);
+  var c = $("job-workflow"); clear(c);
+  var panel = el("div"); panel.className = "workflow-panel";
+  var ol = el("ol"); ol.className = "workflow-steps";
+  steps.forEach(function (s) {
+    var li = el("li");
+    li.className = "step" +
+      (s.done ? " step--done" : "") +
+      (s.blocked ? " step--blocked" : "") +
+      (s.notYet ? " step--not-yet" : "");
+    var mark = el("span");
+    mark.className = "step-mark";
+    mark.textContent = s.done ? "✓" : (s.blocked ? "✗" : "○");
+    li.appendChild(mark);
+    var lbl = el("span");
+    lbl.className = "step-label";
+    lbl.textContent = s.n + " " + s.label;
+    li.appendChild(lbl);
+    if (s.blocked && s.blockedLabel) {
+      var bl = el("span"); bl.className = "step-blocked-reason";
+      bl.textContent = " — " + s.blockedLabel;
+      li.appendChild(bl);
+    }
+    // Step 10: inline notify button when REVIEW_PENDING and notification enabled
+    if (s.n === "10" && state === "review_pending" && !s.done) {
+      if (_NOTIF_ENABLED) {
+        var btn = el("button"); btn.type = "button"; btn.className = "btn-secondary step-notify";
+        btn.textContent = "发群审核";
+        btn.addEventListener("click", function () { _notifyJob(jobId, btn); });
+        li.appendChild(btn);
+      } else {
+        var hint = el("span"); hint.className = "step-notify-hint";
+        hint.textContent = " ⚠ Telegram 通知未設定";
+        li.appendChild(hint);
+      }
+    }
+    ol.appendChild(li);
+  });
+  panel.appendChild(ol);
+  c.appendChild(panel);
+}
+
+function _notifyJob(jobId, btn) {
+  var a = api(); if (!a) return;
+  var orig = btn.textContent;
+  btn.disabled = true; btn.textContent = "發送中…";
+  Promise.resolve(a.notify(jobId)).then(function (res) {
+    if (isError(res)) {
+      btn.disabled = false; btn.textContent = orig;
+      renderError($("job-status"), res);
+    } else {
+      btn.textContent = "✓ 已送出";
+      setTimeout(function () { btn.textContent = orig; btn.disabled = false; }, 3000);
+    }
+  });
 }
 
 async function renderIngestReport(jobId) {
