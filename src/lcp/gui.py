@@ -811,6 +811,52 @@ class Api:
         let a raw exception cross the bridge."""
         return {"disclaimer": signoff.DISCLAIMER}
 
+    # --- Telegram notification (SOP step 10) ------------------------------------
+
+    @bridge_safe
+    def notify(self, job_id: str) -> dict:
+        """Mirror CLI `notify`: send cover + title to the configured Telegram group.
+
+        Job must be REVIEW_PENDING. Fire-and-forget: ExternalServiceError on
+        network failure (audited), never changes job state. Bot token from keyring
+        or LCP_TG_BOT_TOKEN env var. chat_id from config.notification."""
+        from .adapters.publisher import notifier as _notifier
+        from .adapters.storage.config_io import resolve_tg_bot_token
+
+        c = self._ctx()
+        from pathlib import Path as _Path
+
+        from .pipeline import load_draft
+
+        review_dir = _Path(c.store.base_dir) / "jobs" / job_id / "review_packet"
+        draft = load_draft(c.store, job_id)
+        title = draft.title if draft else ""
+        bot_token = resolve_tg_bot_token()
+        _notifier.send_notification(
+            job_id,
+            review_dir,
+            title,
+            c.config.notification,
+            c.audit,
+            c.store,
+            bot_token=bot_token,
+            ts=_now(),
+            dry_run=False,
+        )
+        return {"job_id": escape_html(job_id), "notified": True}
+
+    @bridge_safe
+    def set_tg_token(self, token: str) -> dict:
+        """Store the Telegram bot token in the OS keyring (non-empty string).
+
+        The token is NEVER returned or logged. Mirrors CLI `set-tg-token` for
+        the Settings panel. Call with an empty string to check current status."""
+        from .adapters.storage.config_io import has_tg_bot_token, set_tg_bot_token
+
+        if token and token.strip():
+            set_tg_bot_token(token.strip())
+        return {"tg_token_set": has_tg_bot_token()}
+
     # --- LLM settings (base_url/model -> file; api_key -> keyring ONLY) -------
 
     def _settings_path(self) -> Path:

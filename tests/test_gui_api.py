@@ -844,6 +844,7 @@ def test_every_public_api_method_returns_dict_under_injected_fault(tmp_path, mon
         "ai_copy": False,
         "relint": False,
         "redline_override": False,
+        "token": "",  # set_tg_token (empty -> status-only, no keyring write)
     }
 
     public = [

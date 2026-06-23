@@ -763,6 +763,58 @@ def run(ctx, url, input_dir, job_id, target, title, source_urls, ai_copy, templa
 
 
 @cli.command()
+@click.option("--job-id", "job_id", required=True, help="REVIEW_PENDING job to notify for")
+@click.pass_context
+def notify(ctx, job_id):
+    """Send cover + title to the configured Telegram group (SOP step 10).
+
+    Job must be REVIEW_PENDING. Fire-and-forget: failure is audited but never
+    parks the job. Bot token from keyring (service=local-content-processor,
+    user=tg_bot) or LCP_TG_BOT_TOKEN env var. Configure chat_id in config.yaml."""
+    from .adapters.publisher import notifier as _notifier
+    from .adapters.storage.config_io import resolve_tg_bot_token
+
+    c = Ctx(ctx.obj)
+    review_dir = Path(c.store.base_dir) / "jobs" / job_id / "review_packet"
+    # Load draft title from job store for caption; empty string if not yet built.
+    draft = pl.load_draft(c.store, job_id)
+    title = draft.title if draft else ""
+    bot_token = resolve_tg_bot_token()
+    _notifier.send_notification(
+        job_id,
+        review_dir,
+        title,
+        c.config.notification,
+        c.audit,
+        c.store,
+        bot_token=bot_token,
+        ts=_now(),
+        dry_run=c.dry_run,
+    )
+    c.emit(
+        {"job_id": job_id, "notified": True, "dry_run": c.dry_run},
+        human=f"notification sent for {job_id}"
+        if not c.dry_run
+        else f"dry-run: notification skipped for {job_id}",
+    )
+
+
+@cli.command(name="set-tg-token")
+def set_tg_token():
+    """Store the Telegram bot token in the OS keyring (interactive, reads from stdin).
+
+    The token is read via getpass (no echo) so it never appears in shell history
+    or process listing. Stored in keyring service=local-content-processor, user=tg_bot."""
+    import getpass
+
+    from .adapters.storage.config_io import set_tg_bot_token
+
+    token = getpass.getpass("Telegram bot token: ")
+    set_tg_bot_token(token)
+    click.echo("Telegram bot token saved to OS keyring.")
+
+
+@cli.command()
 @click.option("--port", type=int, default=None, help="Port to bind on 127.0.0.1 (default 8765).")
 @click.option(
     "--no-browser", is_flag=True, help="Do not auto-open the browser; just print the URL."

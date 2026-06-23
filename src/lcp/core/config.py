@@ -109,6 +109,17 @@ class PublisherConfig(BaseModel):
     require_human_approval: bool = True
 
 
+class NotificationConfig(BaseModel):
+    """Telegram group notification settings (SOP U3).
+
+    enabled=False by default — operator must explicitly configure and enable.
+    Bot token is a credential: stored in OS keyring only, never in this file.
+    chat_id is a public channel/group ID (not a secret); safe in config.yaml."""
+
+    enabled: bool = False
+    telegram_chat_id: str = ""
+
+
 class Config(BaseModel):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     crawler: CrawlerConfig = Field(default_factory=CrawlerConfig)
@@ -117,6 +128,7 @@ class Config(BaseModel):
     content: ContentConfig = Field(default_factory=ContentConfig)
     llm: LlmConfig = Field(default_factory=LlmConfig)
     publisher: PublisherConfig = Field(default_factory=PublisherConfig)
+    notification: NotificationConfig = Field(default_factory=NotificationConfig)
     categories: dict[str, list[str]] = Field(default_factory=dict)
     # Per-栏目 operator prompt templates (plan Unit 3). A checked object: each is
     # linted (template_lint) and rendered into the DEVELOPER task slot via a

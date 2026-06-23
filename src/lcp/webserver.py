@@ -77,6 +77,8 @@ CSP = (
 
 # The index.html placeholder the server replaces with the live per-launch token.
 TOKEN_PLACEHOLDER = "__LCP_CSRF_TOKEN__"  # noqa: S105 - a sentinel, not a secret
+# Notification enabled flag: replaced at page load from config.notification.enabled.
+NOTIFICATION_PLACEHOLDER = "__LCP_NOTIFICATION_ENABLED__"  # noqa: S105 - a sentinel
 
 # Synchronous long routes whose first arg is a job_id: a concurrent same-job call
 # must not run two Stage-1/Stage-2 passes that race the caller-owned `.processing`
@@ -231,6 +233,18 @@ class _Server(ThreadingHTTPServer):
     def inflight_lock(self) -> threading.Lock:
         return self.api.inflight_lock  # type: ignore[no-any-return]
 
+    @property
+    def notification_enabled(self) -> bool:
+        """Read notification.enabled from the api's config at request time.
+
+        Rebuilt per page load (api._ctx() is cheap — just a config read) so a
+        config edit + server restart reflects correctly without restarting the
+        process. Falls back to False on any exception (fail-closed)."""
+        try:
+            return bool(self.api._ctx().config.notification.enabled)
+        except Exception:  # noqa: BLE001 - fail-closed
+            return False
+
 
 def build_server(api: Any, *, token: str, port: int) -> _Server:
     """Construct (but do not start) the loopback server. Exposed so tests can run
@@ -323,6 +337,9 @@ class _Handler(BaseHTTPRequestHandler):
         if candidate.name == "index.html":
             # Inject the live per-launch token into the page's <meta>.
             data = data.replace(TOKEN_PLACEHOLDER.encode(), self._srv.token.encode())
+            # Inject notification.enabled state into the page's <meta>.
+            notif_val = b"true" if self._srv.notification_enabled else b"false"
+            data = data.replace(NOTIFICATION_PLACEHOLDER.encode(), notif_val)
         self._send(200, data, content_type)
 
     # --- POST: /api/<method> dispatch -------------------------------------

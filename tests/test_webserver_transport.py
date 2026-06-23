@@ -368,6 +368,8 @@ EXPECTED_ROUTES = frozenset(
         "disclaimer",
         "get_settings",
         "save_settings",
+        "notify",
+        "set_tg_token",
     }
 )
 
