@@ -5,8 +5,6 @@ Detects: anger, surprise, controversy, humor, sadness, positive."""
 
 from __future__ import annotations
 
-import re
-
 from ..models import GossipItem
 
 # Sentiment keywords organized by emotion
@@ -54,7 +52,7 @@ def analyze_sentiment(title: str, description: str = "") -> str:
             scores[sentiment] = hits
     if not scores:
         return "neutral"
-    return max(scores, key=scores.get)
+    return max(scores, key=lambda k: scores[k])
 
 
 def enrich_sentiments(items: list[GossipItem]) -> list[GossipItem]:

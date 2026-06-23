@@ -55,7 +55,7 @@ def check_alerts(items: list[GossipItem]) -> list[dict]:
 
     # Sort by severity
     severity_order = {"high": 0, "medium": 1, "low": 2}
-    alerts.sort(key=lambda x: severity_order.get(x["severity"], 2))
+    alerts.sort(key=lambda x: severity_order.get(str(x["severity"]), 2))
 
     return alerts
 

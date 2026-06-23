@@ -5,8 +5,6 @@ No LLM dependency — uses template-based extraction for speed."""
 
 from __future__ import annotations
 
-import re
-
 from ..models import GossipItem
 
 

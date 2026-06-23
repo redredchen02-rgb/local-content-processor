@@ -9,7 +9,6 @@ Generates Markdown/HTML reports with:
 
 from __future__ import annotations
 
-import json
 import time
 from pathlib import Path
 
@@ -41,7 +40,7 @@ def generate_report(items: list[GossipItem], output_dir: Path | None = None) -> 
 
     # Category distribution
     lines.append("## Category Distribution\n")
-    cat_counts = {}
+    cat_counts: dict[str, int] = {}
     for it in items:
         cat_counts[it.category] = cat_counts.get(it.category, 0) + 1
     for cat, count in sorted(cat_counts.items(), key=lambda x: -x[1]):
@@ -51,7 +50,7 @@ def generate_report(items: list[GossipItem], output_dir: Path | None = None) -> 
 
     # Platform contribution
     lines.append("## Platform Contribution\n")
-    plat_counts = {}
+    plat_counts: dict[str, int] = {}
     for it in items:
         for p in it.merged_from:
             plat_counts[p] = plat_counts.get(p, 0) + 1
@@ -62,7 +61,7 @@ def generate_report(items: list[GossipItem], output_dir: Path | None = None) -> 
 
     # Cross-platform analysis
     lines.append("## Cross-Platform Analysis\n")
-    cross_counts = {}
+    cross_counts: dict[int, int] = {}
     for it in items:
         c = it.cross_platform_count
         cross_counts[c] = cross_counts.get(c, 0) + 1
@@ -73,7 +72,7 @@ def generate_report(items: list[GossipItem], output_dir: Path | None = None) -> 
 
     # Sentiment distribution
     lines.append("## Sentiment Distribution\n")
-    sent_counts = {}
+    sent_counts: dict[str, int] = {}
     for it in items:
         sent_counts[it.sentiment] = sent_counts.get(it.sentiment, 0) + 1
     for sent, count in sorted(sent_counts.items(), key=lambda x: -x[1]):

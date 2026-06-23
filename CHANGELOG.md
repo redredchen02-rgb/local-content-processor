@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`gossip` optional extras group**: `gossip = ["httpx>=0.27,<1"]` declared in
+  `pyproject.toml`; CI installs it in all three jobs so `httpx` is available for
+  mypy type-checking
 - MIT License
 - PyPI release workflow (Trusted Publishing via OIDC)
 - `[project.urls]`, classifiers, and package-data for web assets
@@ -23,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`gossip_scraper` under mypy + ruff gates**: `extend-exclude` lifted from ruff,
+  `gossip_scraper` added to `[tool.mypy] files`; 10 mypy errors resolved (dict type
+  annotations, `max()` lambda key functions, `ScraperProtocol` parameter/variable
+  types); ruff F401/I001 auto-fixed; httpx `ignore_missing_imports` override added
 - **`__version__` single source**: sourced from installed package metadata
   (`importlib.metadata`), eliminating the `pyproject`↔`__init__.py` drift
 - **Release workflow hardened** to a fail-closed, concurrency-serialized

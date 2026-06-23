@@ -34,7 +34,7 @@ def detect_region(title: str) -> str:
             scores[region] = hits
     if not scores:
         return "global"
-    return max(scores, key=scores.get)
+    return max(scores, key=lambda k: scores[k])
 
 
 def score_geo_relevance(item: GossipItem, user_region: str = "") -> float:
