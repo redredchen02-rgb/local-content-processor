@@ -38,6 +38,7 @@ crawl = ["scrapy>=2.16,<3"]
 media = ["pillow>=12.2,<13"]
 llm = ["openai>=2,<3"]
 dedup = ["datasketch>=1.6"]
+gossip = ["httpx>=0.27,<1"]
 # The GUI is now a stdlib http.server webui (lcp.webserver), launched by
 # `lcp gui` — it needs NO extra dependency. Kept (empty) so existing
 # `pip install '.[...,gui]'` commands keep working; pywebview was removed.
@@ -82,10 +83,6 @@ exclude_also = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-# gossip_scraper is excluded ONLY because it is mid-edit (parallel feature work
-# entangles its tracked files with not-yet-committed modules). plan-003 R10
-# brings it under the ruff + mypy gates once that work lands.
-extend-exclude = ["gossip_scraper"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
@@ -112,7 +109,7 @@ python_version = "3.11"
 # `scripts/` holds release tooling outside the shipped package; it is type-checked
 # (at the non-strict baseline — it does not match the strict-bundle globs below)
 # so the version-sync release gate is covered by the gate, not just by its test.
-files = ["src/lcp", "scripts"]
+files = ["src/lcp", "scripts", "gossip_scraper"]
 # --strict's global-only flags live here (they cannot sit in a per-module
 # override); the per-module-settable rest of --strict is in the lcp.core.* block.
 warn_unused_configs = true
@@ -140,4 +137,8 @@ extra_checks = true
 
 [[tool.mypy.overrides]]
 module = ["datasketch.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["httpx"]
 ignore_missing_imports = true
