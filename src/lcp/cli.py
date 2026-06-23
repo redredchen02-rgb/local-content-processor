@@ -20,8 +20,8 @@ import re
 import string
 import sys
 from pathlib import Path
-from urllib.parse import urlparse as _urlparse
 from typing import Any
+from urllib.parse import urlparse as _urlparse
 
 import click
 
@@ -234,7 +234,7 @@ def crawl(ctx, url, input_file, job_id):
 
     if job_id is None:
         job_id = _auto_job_id(url=url)
-        click.echo(f"auto job-id: {job_id}")
+        click.echo(f"auto job-id: {job_id}", err=True)
 
     # Route the URL crawl through Pipeline.stage1 (the single owner of the
     # create -> crawl -> map-status -> persist (state + hashes atomically)
@@ -271,7 +271,7 @@ def ingest(ctx, directory, job_id):
     c = Ctx(ctx.obj)
     if job_id is None:
         job_id = _auto_job_id(directory=directory)
-        click.echo(f"auto job-id: {job_id}")
+        click.echo(f"auto job-id: {job_id}", err=True)
     ts = _now()
     crawler = LocalIngestCrawler()
     p = pl.Pipeline(c.config, c.store, c.audit, dry_run=c.dry_run, crawler=crawler)
@@ -750,7 +750,7 @@ def run(ctx, url, input_dir, job_id, target, title, source_urls, ai_copy, templa
 
     if job_id is None:
         job_id = _auto_job_id(url=url, directory=input_dir)
-        click.echo(f"auto job-id: {job_id}")
+        click.echo(f"auto job-id: {job_id}", err=True)
 
     if url:
         crawler = build_crawler(c.config, c.audit, _now)
@@ -850,7 +850,7 @@ def notify(ctx, job_id):
     from .adapters.storage.config_io import resolve_tg_bot_token
 
     c = Ctx(ctx.obj)
-    review_dir = Path(c.store.base_dir) / "jobs" / job_id / "review_packet"
+    review_dir = Path(c.store.base_dir) / "jobs" / job_id / "review"
     # Load draft title from job store for caption; empty string if not yet built.
     draft = pl.load_draft(c.store, job_id)
     title = draft.title if draft else ""
@@ -902,9 +902,9 @@ def gui(ctx, port, no_browser):
     Chrome to drive/debug with Claude in Chrome. Stdlib only; no extra deps.
     Configure the LLM endpoint + api_key from the Settings panel; base_url/model
     go to the config file, the api_key goes to the OS keyring only (never a file)."""
-    from .webserver import DEFAULT_PORT, serve
-
     import errno as _errno
+
+    from .webserver import DEFAULT_PORT, serve
 
     _PORT_RETRIES = 10
     target_port = port if port is not None else DEFAULT_PORT
@@ -921,9 +921,7 @@ def gui(ctx, port, no_browser):
             if e.errno == _errno.EADDRINUSE and attempt < _PORT_RETRIES - 1:
                 click.echo(f"Port {current_port} in use, trying {current_port + 1}...", err=True)
                 continue
-            raise DependencyError(
-                f"could not start the webui server: {e}; try --port"
-            ) from e
+            raise DependencyError(f"could not start the webui server: {e}; try --port") from e
 
 
 def main(argv: list[str] | None = None) -> int:

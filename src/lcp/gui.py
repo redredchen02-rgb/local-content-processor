@@ -44,6 +44,7 @@ requests; a single pywebview window could not).
 from __future__ import annotations
 
 import functools
+import logging
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -66,6 +67,8 @@ from .adapters.storage.source_store import SourceStore
 from .core import config as _config
 from .core.errors import EXIT_INTERNAL, LcpError
 from .core.models import SourceType
+
+logger = logging.getLogger(__name__)
 
 
 def _error_dict(err: LcpError) -> dict:
@@ -376,6 +379,7 @@ class Api:
                 # A non-LcpError must NOT kill the worker and strand status at
                 # "running" forever. Return the same bridge-safe error shape fn()
                 # itself would (no raw exception text crosses the bridge).
+                logger.exception("background task failed for job %s", job_id)
                 result = {"error": "internal error", "exit_code": EXIT_INTERNAL}
             done = "error" if "error" in result else "done"
             with self.inflight_lock:
@@ -685,7 +689,7 @@ class Api:
         one job. Includes the interrupted/exhausted flags from reconcile()."""
         c = self._ctx()
         interrupted = {i.job_id: i for i in pl.Pipeline(c.config, c.store, c.audit).reconcile()}
-        rec = c.store.get_job(escape_html(job_id))
+        rec = c.store.get_job(job_id)
         if rec is None:
             return _error_dict(_input_error(f"unknown job: {job_id}"))
         return {
@@ -916,7 +920,7 @@ class Api:
 
         from .pipeline import load_draft
 
-        review_dir = _Path(c.store.base_dir) / "jobs" / job_id / "review_packet"
+        review_dir = _Path(c.store.base_dir) / "jobs" / job_id / "review"
         draft = load_draft(c.store, job_id)
         title = draft.title if draft else ""
         bot_token = resolve_tg_bot_token()

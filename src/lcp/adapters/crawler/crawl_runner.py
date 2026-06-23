@@ -167,8 +167,7 @@ class CrawlRunner:
             _clear_raw(spec.job_dir)  # U12: orphaned partial downloads -> clean retry
             stderr_tail = (getattr(proc, "stderr", None) or "")[-500:].strip()
             raise ExternalServiceError(
-                f"crawl subprocess failed (rc={rc})"
-                + (f": {stderr_tail}" if stderr_tail else "")
+                f"crawl subprocess failed (rc={rc})" + (f": {stderr_tail}" if stderr_tail else "")
             )
 
         try:
