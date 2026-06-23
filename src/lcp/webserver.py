@@ -36,6 +36,7 @@ from __future__ import annotations
 import hmac
 import inspect
 import json
+import logging
 import mimetypes
 import secrets
 import sys
@@ -66,6 +67,8 @@ API_PREFIX = "/api/"
 
 # The web/ assets directory (the ONLY document root — data/jobs/ is never served).
 WEB_DIR = (Path(__file__).resolve().parent / "web").resolve()
+
+logger = logging.getLogger(__name__)
 
 # The strict CSP, sent as a real response header (defence-in-depth with the
 # <meta> in index.html). frame-ancestors blocks clickjacking of the now-framable
@@ -357,6 +360,7 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             self._dispatch_guarded(name)
         except Exception:  # noqa: BLE001 - last-resort net: never leak a stack
+            logger.exception("API dispatch failed for %s", name)
             self._send_json({"error": "internal error", "exit_code": EXIT_INTERNAL})
 
     def _dispatch_guarded(self, name: str) -> None:
