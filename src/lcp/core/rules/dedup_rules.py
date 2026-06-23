@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import threading
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -193,6 +194,7 @@ def build_minhash(
 
 _lsh_cache: dict[tuple[str, float, int], MinHashLSH] = {}
 _lsh_sigs_cache: dict[tuple[str, float, int], dict[str, MinHash]] = {}
+_lsh_lock = threading.Lock()
 
 
 def _index_fingerprint(index: DedupIndex) -> str:
@@ -210,11 +212,12 @@ def _get_or_build_lsh(
     num_perm: int,
     k: int,
 ) -> tuple[MinHashLSH, dict[str, MinHash]]:
-    """Return (lsh, signatures) from cache or build fresh."""
+    """Return (lsh, signatures) from cache or build fresh. Thread-safe."""
     fp = _index_fingerprint(index)
     key = (fp, lsh_threshold, num_perm)
-    if key in _lsh_cache:
-        return _lsh_cache[key], _lsh_sigs_cache[key]
+    with _lsh_lock:
+        if key in _lsh_cache:
+            return _lsh_cache[key], _lsh_sigs_cache[key]
 
     lsh = MinHashLSH(threshold=lsh_threshold, num_perm=num_perm)
     signatures: dict[str, MinHash] = {}
@@ -226,13 +229,14 @@ def _get_or_build_lsh(
         if entry.job_id not in lsh:
             lsh.insert(entry.job_id, sig)
 
-    # Bound the cache to prevent unbounded growth (max 32 recent indices).
-    if len(_lsh_cache) >= 32:
-        oldest = next(iter(_lsh_cache))
-        del _lsh_cache[oldest]
-        del _lsh_sigs_cache[oldest]
-    _lsh_cache[key] = lsh
-    _lsh_sigs_cache[key] = signatures
+    with _lsh_lock:
+        # Bound the cache to prevent unbounded growth (max 32 recent indices).
+        if len(_lsh_cache) >= 32:
+            oldest = next(iter(_lsh_cache))
+            del _lsh_cache[oldest]
+            del _lsh_sigs_cache[oldest]
+        _lsh_cache[key] = lsh
+        _lsh_sigs_cache[key] = signatures
     return lsh, signatures
 
 

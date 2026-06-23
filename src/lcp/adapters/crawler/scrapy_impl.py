@@ -396,6 +396,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=int, default=30)
     parser.add_argument("--source-domain", default=None)
     parser.add_argument("--fetched-at", default=None)
+    parser.add_argument("--max-assets", type=int, default=100)
     args = parser.parse_args(argv)
 
     from ...core.errors import LcpError
@@ -408,6 +409,7 @@ def main(argv: list[str] | None = None) -> int:
         source_type=SourceType.URL,
         job_dir=Path(args.job_dir),
         url=args.url,
+        max_assets=args.max_assets,
     )
     try:
         # SSRF pre-flight (real DNS here). LCP_ALLOW_LOOPBACK_FOR_TESTS is a

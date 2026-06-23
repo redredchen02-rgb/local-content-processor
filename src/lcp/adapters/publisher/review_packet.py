@@ -146,6 +146,21 @@ def _render_message(draft: Draft, *, source_urls: list[str]) -> str:
             lines.append(f"Q: {item['question']}")
             lines.append(f"A: {item['answer']}")
         lines.append("")
+    if s.get("subheads"):
+        lines.append("小標題 / Subheads:")
+        for sh in s["subheads"]:
+            lines.append(f"- {sh}")
+        lines.append("")
+    if s.get("image_sections"):
+        lines.append("圖片圖說 / Image captions:")
+        for img in s["image_sections"]:
+            lines.append(f"- {img.get('caption', '')}")
+        lines.append("")
+    if s.get("video_sections"):
+        lines.append("影片圖說 / Video captions:")
+        for vid in s["video_sections"]:
+            lines.append(f"- {vid.get('caption', '')}")
+        lines.append("")
     if s["summary"]:
         lines.append("結尾 / Summary:")
         lines.append(s["summary"])

@@ -66,27 +66,12 @@ def media_presence(store: JobStore, job_id: str) -> tuple[bool, bool]:
 
 
 def _write_0600_json(path: Path, payload: dict[str, Any]) -> None:
-    """Atomic 0600 write of the validation report (temp + fsync + chmod-before-
-    replace), mirroring the rest of the storage layer."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+    """Atomic 0600 write of the validation report. Delegates to the canonical
+    storage._fs.atomic_write_0600 (mkstemp/O_EXCL, no PID collision)."""
+    from ..storage._fs import atomic_write_0600
+
     text = json.dumps(payload, ensure_ascii=False, indent=2)
-    tmp = path.with_name(f".{path.name}.tmp.{os.getpid()}")
-    try:
-        with tmp.open("w", encoding="utf-8") as f:
-            f.write(text)
-            f.flush()
-            os.fsync(f.fileno())
-        try:
-            os.chmod(tmp, 0o600)
-        except OSError:
-            pass
-        os.replace(tmp, path)
-    finally:
-        if tmp.exists():
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
+    atomic_write_0600(path, text)
 
 
 def _validate_images(
