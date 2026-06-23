@@ -161,6 +161,9 @@ function showView(name) {
     if (name === v) btn.setAttribute("aria-current", "page");
     else btn.removeAttribute("aria-current");
   });
+  // sync mobile nav select
+  var sel = $("nav-select");
+  if (sel && (name === "inbox" || name === "dashboard" || name === "setup")) sel.value = name;
 }
 
 // --- error + success framing (lex; replaces the old "error (N): " concat) ---
@@ -363,15 +366,15 @@ async function settle(jobId, outcome) {
   // them back — just refresh the inbox so the new state shows there.
   if (!(currentView === "job" && jobId === currentJobId)) { refreshInbox(); return; }
   clear($("job-inflight"));
-  if (outcome.t === "FAILED") { renderError($("job-status"), { error: outcome.error, exit_code: outcome.exit_code }); refreshInbox(); return; }
+  if (outcome.t === "FAILED") { renderError($("job-status"), { error: outcome.error, exit_code: outcome.exit_code }); showToast("处理失败：" + outcome.error, "error"); refreshInbox(); return; }
   if (outcome.t === "LOST") { renderError($("job-status"), { error: "此工作已不在磁碟上：" + jobId, exit_code: 2 }); refreshInbox(); return; }
   // DONE / PARKED / SETTLED -> re-render the workspace from persisted state,
   // then a transport note. PARKED is NOT a green success (it is "stopped for you").
   await openJob(jobId);
   const title = outcome.state ? lexState(outcome.state).title : "";
-  if (outcome.t === "PARKED") renderInfo($("job-status"), "已替你停下（见上方说明）", title ? "→ " + title : "");
-  else if (outcome.t === "SETTLED") renderInfo($("job-status"), "上次已完成", title ? "→ " + title : "");
-  else renderSuccess($("job-status"), "处理完成", title ? "→ " + title : "");
+  if (outcome.t === "PARKED") { renderInfo($("job-status"), "已替你停下（见上方说明）", title ? "→ " + title : ""); showToast("已替你停下 → " + title, "info"); }
+  else if (outcome.t === "SETTLED") { renderInfo($("job-status"), "上次已完成", title ? "→ " + title : ""); }
+  else { renderSuccess($("job-status"), "处理完成", title ? "→ " + title : ""); showToast("处理完成 → " + title, "success"); }
 }
 
 // --- INBOX: counts + worklist in 4 derived bands ---------------------------
@@ -454,6 +457,7 @@ async function refreshInbox() {
   clear(bandsEl);
   if (isError(listRes)) { renderError(bandsEl, listRes); setText($("inbox-counts"), ""); return; }
   const jobs = listRes.jobs || [];
+  _inboxJobs = jobs; // store for command palette search
 
   const buckets = {};
   BANDS.forEach(function (b) { buckets[b.key] = []; });
@@ -511,9 +515,66 @@ async function refreshInbox() {
 }
 
 function loadingRow() {
-  const p = el("p", "载入中…");
-  p.className = "empty loading";
-  return p;
+  var wrap = el("div");
+  wrap.appendChild(skeletonRows(3));
+  return wrap;
+}
+
+// --- PHASE 2: Toast notification system -------------------------------------
+
+var _toastTimer = null;
+function showToast(message, type, duration) {
+  type = type || "info";
+  duration = duration || 4000;
+  var container = $("toast-container");
+  if (!container) return;
+  var toast = el("div");
+  toast.className = "toast toast--" + type;
+  var msg = el("span", message);
+  msg.className = "toast-msg";
+  toast.appendChild(msg);
+  var close = el("button", "×");
+  close.className = "toast-close";
+  close.setAttribute("type", "button");
+  close.addEventListener("click", function (e) { e.stopPropagation(); removeToast(toast); });
+  toast.appendChild(close);
+  toast.addEventListener("click", function () { removeToast(toast); });
+  container.appendChild(toast);
+  var timer = setTimeout(function () { removeToast(toast); }, duration);
+  toast._timer = timer;
+}
+function removeToast(toast) {
+  if (toast._removed) return;
+  toast._removed = true;
+  if (toast._timer) clearTimeout(toast._timer);
+  toast.classList.add("is-leaving");
+  setTimeout(function () { if (toast.parentNode) toast.parentNode.removeChild(toast); }, 250);
+}
+
+// --- PHASE 2: Skeleton loading helpers -------------------------------------
+
+function skeletonRows(count) {
+  var wrap = el("div");
+  for (var i = 0; i < (count || 3); i++) {
+    var r = el("div"); r.className = "skeleton skeleton-row";
+    wrap.appendChild(r);
+  }
+  return wrap;
+}
+function skeletonBand() {
+  var s = el("div"); s.className = "skeleton skeleton-band"; return s;
+}
+function skeletonTable() {
+  var s = el("div"); s.className = "skeleton skeleton-table"; return s;
+}
+function skeletonStats(count) {
+  var wrap = el("div");
+  wrap.className = "kpi-grid";
+  for (var i = 0; i < (count || 4); i++) {
+    var s = el("div"); s.className = "skeleton skeleton-stat";
+    wrap.appendChild(s);
+  }
+  return wrap;
 }
 
 // --- DASHBOARD: accumulated metrics (read-only) -----------------------------
@@ -536,20 +597,6 @@ function dashSection(title) {
   return sec;
 }
 
-function statTable(headers, rows) {
-  const table = el("table");
-  table.className = "dash-table";
-  const thead = el("tr");
-  headers.forEach(function (h) { thead.appendChild(el("th", h)); });
-  table.appendChild(thead);
-  rows.forEach(function (cells) {
-    const tr = el("tr");
-    cells.forEach(function (c) { tr.appendChild(el("td", c)); });
-    table.appendChild(tr);
-  });
-  return table;
-}
-
 function renderDashboardEmpty(container) {
   const d = lexDash();
   const box = el("div");
@@ -570,8 +617,26 @@ function renderDashboard(container, res) {
   // feature is to feel accumulated, not blank).
   if (!res.has_jobs) { renderDashboardEmpty(container); return; }
 
-  // states
+  // --- PHASE 3: KPI stat cards ---
   const counts = res.summary || {};
+  const totalJobs = counts.total || 0;
+  const doneCount = (counts.approved || 0) + (counts.published_recorded || 0);
+  const blockedCount = (counts.blocked || 0) + (counts.duplicate || 0);
+  const pendingCount = (counts.review_pending || 0) + (counts.needs_human_review || 0) + (counts.needs_revision || 0);
+  const kpiGrid = el("div"); kpiGrid.className = "kpi-grid";
+  function kpiCard(value, label, cls) {
+    var card = el("div"); card.className = "kpi-card" + (cls ? " " + cls : "");
+    card.appendChild(el("div", String(value))); card.lastChild.className = "kpi-value";
+    card.appendChild(el("div", label)); card.lastChild.className = "kpi-label";
+    return card;
+  }
+  kpiGrid.appendChild(kpiCard(totalJobs, "总工作数", ""));
+  kpiGrid.appendChild(kpiCard(doneCount, "已签核/已上架", "kpi-card--go"));
+  kpiGrid.appendChild(kpiCard(pendingCount, "待你处理", "kpi-card--frozen"));
+  kpiGrid.appendChild(kpiCard(blockedCount, "被拦下", "kpi-card--stop"));
+  container.appendChild(kpiGrid);
+
+  // --- states table ---
   const stateRows = Object.keys(counts).filter(function (k) { return k !== "total"; }).sort()
     .map(function (k) { return [lexState(k).title, String(counts[k])]; });
   if (stateRows.length) {
@@ -580,15 +645,59 @@ function renderDashboard(container, res) {
     container.appendChild(sec);
   }
 
-  // gate intercept rates
+  // --- PHASE 3: Stacked state distribution bar ---
+  if (stateRows.length && totalJobs > 0) {
+    var bar = el("div"); bar.className = "stacked-bar";
+    var stateColors = {
+      neutral: "var(--c-neutral-bd)", progress: "var(--c-progress-bd)",
+      attention: "var(--c-attention-bd)", stop: "var(--c-stop-bd)",
+      go: "var(--c-go-bd)", frozen: "var(--c-frozen-bd)", void: "var(--c-void-bd)",
+      ready: "var(--c-go-bd)", busy: "var(--c-progress-bd)", caution: "var(--c-attention-bd)",
+      review: "var(--c-attention-bd)", retry: "var(--c-attention-bd)",
+      done: "var(--c-go-bd)"
+    };
+    Object.keys(counts).filter(function (k) { return k !== "total"; }).sort().forEach(function (k) {
+      var seg = el("div"); seg.className = "stacked-seg";
+      var pct = Math.round((counts[k] / totalJobs) * 100);
+      seg.style.width = pct + "%";
+      var tone = (lexState(k).tone || "neutral");
+      seg.style.background = stateColors[tone] || "var(--c-neutral-bd)";
+      seg.title = lexState(k).title + ": " + counts[k];
+      bar.appendChild(seg);
+    });
+    var barWrap = el("div"); barWrap.appendChild(el("p", "状态分布")); barWrap.lastChild.style.cssText = "font-size:var(--fs-400);font-weight:var(--fw-medium);margin:var(--sp-3) 0 var(--sp-1);";
+    barWrap.appendChild(bar);
+    container.appendChild(barWrap);
+  }
+
+  // --- gate intercept rates with progress bars ---
   const gates = res.gates || [];
   if (gates.length) {
     const sec = dashSection(d.section_gates || "各关卡拦截率");
-    const rows = gates.map(function (g) {
+    var gateBarWrap = el("div");
+    gates.forEach(function (g) {
+      var wrap = el("div"); wrap.className = "gate-bar-wrap";
+      var lbl = el("div"); lbl.className = "gate-bar-label";
+      lbl.appendChild(el("span", gateLabel(g.gate)));
+      lbl.appendChild(el("span", pct(g.rate) + " （" + g.intercepted + "/" + g.reached + "）"));
+      wrap.appendChild(lbl);
+      var track = el("div"); track.className = "gate-bar-track";
+      var fill = el("div"); fill.className = "gate-bar-fill";
+      var rateVal = g.rate != null ? Math.round(g.rate * 100) : 0;
+      fill.style.width = rateVal + "%";
+      var toneClass = rateVal > 50 ? "stop" : rateVal > 20 ? "attention" : "go";
+      fill.classList.add("gate-bar-fill--" + toneClass);
+      track.appendChild(fill);
+      wrap.appendChild(track);
+      gateBarWrap.appendChild(wrap);
+    });
+    sec.appendChild(gateBarWrap);
+    // also keep the table below for reference
+    var tableRows = gates.map(function (g) {
       return [gateLabel(g.gate), String(g.reached), String(g.intercepted), pct(g.rate)];
     });
     sec.appendChild(statTable(
-      ["", d.col_reached || "到达", d.col_intercepted || "拦下", d.col_rate || "拦截率"], rows
+      ["", d.col_reached || "到达", d.col_intercepted || "拦下", d.col_rate || "拦截率"], tableRows
     ));
     container.appendChild(sec);
   } else {
@@ -626,15 +735,50 @@ function renderDashboard(container, res) {
     container.appendChild(sec);
   }
 
-  // daily throughput
+  // daily throughput — bar chart + table
   const daily = res.daily_jobs || {};
   const days = Object.keys(daily);
   if (days.length) {
     const sec = dashSection(d.section_daily || "每日产量");
+    // PHASE 3: bar chart
+    var chart = el("div"); chart.className = "daily-chart";
+    var maxVal = 1;
+    days.forEach(function (day) { if (daily[day] > maxVal) maxVal = daily[day]; });
+    days.sort().forEach(function (day) {
+      var col = el("div"); col.className = "daily-col";
+      var val = el("div", String(daily[day])); val.className = "daily-value";
+      var bar = el("div"); bar.className = "daily-bar";
+      bar.style.height = Math.max(4, Math.round((daily[day] / maxVal) * 100)) + "%";
+      var lbl = el("div", day.slice(5)); lbl.className = "daily-label"; // show MM-DD
+      col.appendChild(val); col.appendChild(bar); col.appendChild(lbl);
+      chart.appendChild(col);
+    });
+    sec.appendChild(chart);
+    // also keep the table below
     const rows = days.sort().map(function (day) { return [day, String(daily[day])]; });
     sec.appendChild(statTable(["", d.col_count || "次数"], rows));
     container.appendChild(sec);
   }
+}
+
+// --- PHASE 3: data-label attributes for mobile card layout ------------------
+
+function statTable(headers, rows) {
+  const table = el("table");
+  table.className = "dash-table";
+  const thead = el("tr");
+  headers.forEach(function (h) { thead.appendChild(el("th", h)); });
+  table.appendChild(thead);
+  rows.forEach(function (cells) {
+    const tr = el("tr");
+    cells.forEach(function (c, idx) {
+      const td = el("td", c);
+      if (headers[idx]) td.setAttribute("data-label", headers[idx]);
+      tr.appendChild(td);
+    });
+    table.appendChild(tr);
+  });
+  return table;
 }
 
 async function openDashboard() {
@@ -907,6 +1051,7 @@ function reviewerOnboarding(container) {
 let armedTray = null;
 function disarmConfirm() {
   if (armedTray) { armedTray.hidden = true; armedTray = null; }
+  removeBackdrop();
 }
 function confirmTray(triggerLabel, triggerCls, buildBody, commitLabel, onCommit, preCheck) {
   const wrap = el("div");
@@ -919,7 +1064,7 @@ function confirmTray(triggerLabel, triggerCls, buildBody, commitLabel, onCommit,
   const acts = el("div"); acts.className = "confirm-actions";
   const cancel = button("取消", "btn-secondary");
   const commit = button(commitLabel, triggerCls + " is-armed");
-  cancel.addEventListener("click", function () { body.hidden = true; armedTray = null; });
+  cancel.addEventListener("click", function () { body.hidden = true; armedTray = null; removeBackdrop(); });
   commit.addEventListener("click", async function () {
     if (preCheck && !preCheck()) return;
     await onCommit();
@@ -927,10 +1072,30 @@ function confirmTray(triggerLabel, triggerCls, buildBody, commitLabel, onCommit,
   acts.appendChild(cancel);
   acts.appendChild(commit);
   body.appendChild(acts);
-  trigger.addEventListener("click", function () { disarmConfirm(); body.hidden = false; armedTray = body; });
+  trigger.addEventListener("click", function () {
+    disarmConfirm(); body.hidden = false; armedTray = body;
+    addBackdrop(function () { body.hidden = true; armedTray = null; removeBackdrop(); });
+  });
   wrap.appendChild(trigger);
   wrap.appendChild(body);
   return wrap;
+}
+
+// --- PHASE 5: backdrop for confirm trays ------------------------------------
+
+var _backdropEl = null;
+function addBackdrop(onClick) {
+  removeBackdrop();
+  _backdropEl = el("div");
+  _backdropEl.className = "confirm-backdrop";
+  _backdropEl.addEventListener("click", onClick);
+  document.body.appendChild(_backdropEl);
+}
+function removeBackdrop() {
+  if (_backdropEl && _backdropEl.parentNode) {
+    _backdropEl.parentNode.removeChild(_backdropEl);
+    _backdropEl = null;
+  }
 }
 
 async function renderActions(state, reason, reviewers) {
@@ -1157,9 +1322,10 @@ function holdPanel(reviewers, reason) {
 }
 
 async function afterAction(res, okLabel) {
-  if (isError(res)) { renderError($("job-status"), res); return; }
+  if (isError(res)) { renderError($("job-status"), res); showToast("操作失败：" + (res.error || "未知错误"), "error"); return; }
   const newState = res.state ? lexState(res.state).title : "完成";
   renderSuccess($("job-status"), okLabel, "→ " + newState);
+  showToast(okLabel + " → " + newState, "success");
   computeReadiness();
   if (currentJobId) {
     const note = $("job-status").firstChild;
@@ -1511,6 +1677,177 @@ function bind() {
   $("btn-save-settings").addEventListener("click", saveSettings);
   $("settings-base-url").addEventListener("input", advisoryBaseUrl);
   bindCreate();
+  // Phase 1: mobile nav select
+  bindNavSelect();
+  // Phase 2: override loadingRow with skeleton version
+  _origLoadingRow = loadingRow;
+  // Phase 4: inbox search
+  bindInboxSearch();
+  // Phase 4: command palette
+  bindCommandPalette();
+  // Phase 5: scroll-to-top
+  bindScrollTop();
+}
+
+// --- PHASE 1: Mobile nav select --------------------------------------------
+
+function bindNavSelect() {
+  var sel = $("nav-select");
+  if (!sel) return;
+  sel.addEventListener("change", function () {
+    var v = sel.value;
+    if (v === "inbox") { showView("inbox"); refreshInbox(); }
+    else if (v === "dashboard") { openDashboard(); }
+    else if (v === "new") { $("create-job-id").value = ""; openCreate(null); }
+    else if (v === "setup") { openSetup(); }
+  });
+}
+// sync select when desktop nav changes view
+
+// --- PHASE 4: Inbox search --------------------------------------------------
+
+var _inboxJobs = [];
+function bindInboxSearch() {
+  var inp = $("inbox-search");
+  if (!inp) return;
+  inp.addEventListener("input", function () { filterInbox(inp.value); });
+}
+function filterInbox(query) {
+  query = (query || "").toLowerCase().trim();
+  var rows = document.querySelectorAll("#inbox-bands .job-row");
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    if (!query) { row.hidden = false; continue; }
+    var text = (row.textContent || "").toLowerCase();
+    row.hidden = text.indexOf(query) === -1;
+  }
+}
+
+// --- PHASE 4: Command palette -----------------------------------------------
+
+var _paletteOpen = false;
+var _paletteIdx = 0;
+function bindCommandPalette() {
+  document.addEventListener("keydown", function (e) {
+    // don't trigger in inputs
+    var tag = e.target.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
+      if (e.key === "Escape" && _paletteOpen) { closePalette(); e.preventDefault(); }
+      return;
+    }
+    if (e.key === "/" && !_paletteOpen) { e.preventDefault(); openPalette(); return; }
+    if ((e.ctrlKey || e.metaKey) && e.key === "k") { e.preventDefault(); togglePalette(); return; }
+    if (e.key === "Escape" && _paletteOpen) { closePalette(); return; }
+    if (_paletteOpen && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+      e.preventDefault(); movePalette(e.key === "ArrowDown" ? 1 : -1); return;
+    }
+    if (_paletteOpen && e.key === "Enter") { e.preventDefault(); execPalette(); return; }
+    // global shortcuts (no modifier)
+    if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+      if (e.key === "g") { _gPending = true; return; }
+      if (_gPending) {
+        _gPending = false;
+        if (e.key === "i") { showView("inbox"); refreshInbox(); }
+        else if (e.key === "d") { openDashboard(); }
+        else if (e.key === "n") { $("create-job-id").value = ""; openCreate(null); }
+        else if (e.key === "s") { openSetup(); }
+        return;
+      }
+      if (e.key === "r") { _refreshCurrentView(); return; }
+    }
+    _gPending = false;
+  });
+}
+var _gPending = false;
+
+function _refreshCurrentView() {
+  if (currentView === "inbox") refreshInbox();
+  else if (currentView === "dashboard") openDashboard();
+  else if (currentView === "job" && currentJobId) openJob(currentJobId);
+  else if (currentView === "setup") openSetup();
+}
+
+function openPalette() { _paletteOpen = true; _paletteIdx = 0;
+  var p = $("command-palette"); p.hidden = false;
+  var inp = $("palette-input"); inp.value = ""; inp.focus();
+  renderPaletteResults("");
+}
+function closePalette() { _paletteOpen = false; $("command-palette").hidden = true; }
+function togglePalette() { if (_paletteOpen) closePalette(); else openPalette(); }
+
+function paletteCommands() {
+  return [
+    { label: "收件匣", key: "g i", action: function () { showView("inbox"); refreshInbox(); } },
+    { label: "总览", key: "g d", action: openDashboard },
+    { label: "+ 新工作", key: "g n", action: function () { $("create-job-id").value = ""; openCreate(null); } },
+    { label: "设定", key: "g s", action: openSetup },
+    { label: "重新整理", key: "r", action: _refreshCurrentView },
+  ];
+}
+
+function renderPaletteResults(query) {
+  var c = $("palette-results"); clear(c);
+  var cmds = paletteCommands();
+  query = (query || "").toLowerCase();
+  var matched = cmds.filter(function (cmd) { return !query || cmd.label.toLowerCase().indexOf(query) !== -1; });
+  // also search inbox jobs
+  if (_inboxJobs && _inboxJobs.length) {
+    _inboxJobs.forEach(function (j) {
+      var lx = lexState(j.state);
+      var text = (j.job_id + " " + lx.title).toLowerCase();
+      if (!query || text.indexOf(query) !== -1) {
+        matched.push({ label: j.job_id + " — " + lx.title, key: "", action: function () { openJob(j.job_id); } });
+      }
+    });
+  }
+  if (!matched.length) {
+    var empty = el("div", "无匹配结果"); empty.className = "palette-empty";
+    c.appendChild(empty); return;
+  }
+  matched.forEach(function (cmd, idx) {
+    var item = el("div", cmd.label); item.className = "palette-item" + (idx === _paletteIdx ? " is-active" : "");
+    if (cmd.key) { var k = el("span", cmd.key); k.className = "palette-item-key"; item.appendChild(k); }
+    item.addEventListener("click", function () { closePalette(); cmd.action(); });
+    item.addEventListener("mouseenter", function () { _paletteIdx = idx; highlightPalette(); });
+    c.appendChild(item);
+  });
+  c._cmds = matched;
+}
+function highlightPalette() {
+  var items = $("palette-results").querySelectorAll(".palette-item");
+  for (var i = 0; i < items.length; i++) {
+    items[i].className = "palette-item" + (i === _paletteIdx ? " is-active" : "");
+  }
+}
+function movePalette(dir) {
+  var items = $("palette-results").querySelectorAll(".palette-item");
+  if (!items.length) return;
+  _paletteIdx = (_paletteIdx + dir + items.length) % items.length;
+  highlightPalette();
+  items[_paletteIdx].scrollIntoView({ block: "nearest" });
+}
+function execPalette() {
+  var c = $("palette-results");
+  if (c._cmds && c._cmds[_paletteIdx]) {
+    var cmd = c._cmds[_paletteIdx];
+    closePalette(); cmd.action();
+  }
+}
+// wire palette input
+whenDom(function () {
+  var inp = $("palette-input");
+  if (inp) inp.addEventListener("input", function () { _paletteIdx = 0; renderPaletteResults(inp.value); });
+});
+
+// --- PHASE 5: Scroll-to-top -------------------------------------------------
+
+function bindScrollTop() {
+  var btn = $("scroll-top");
+  if (!btn) return;
+  window.addEventListener("scroll", function () {
+    btn.hidden = window.scrollY < window.innerHeight;
+  }, { passive: true });
+  btn.addEventListener("click", function () { window.scrollTo({ top: 0, behavior: "smooth" }); });
 }
 
 async function init() {

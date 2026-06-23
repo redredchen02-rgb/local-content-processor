@@ -33,6 +33,12 @@
         <button id="nav-new" type="button">+ 新工作</button>
         <button id="nav-setup" type="button">设定 ⚙</button>
       </nav>
+      <select id="nav-select" class="nav-select" aria-label="切换视图">
+        <option value="inbox">收件匣</option>
+        <option value="dashboard">总览</option>
+        <option value="new">+ 新工作</option>
+        <option value="setup">设定</option>
+      </select>
       <span id="ready-pill" class="pill"></span>
     </div>
     <p class="note">机器永不自动上架。签核＝署名，非身分验证。</p>
@@ -43,6 +49,7 @@
     <section id="view-inbox" class="view">
       <div class="view-head">
         <h2>收件匣</h2>
+        <input id="inbox-search" type="text" placeholder="搜索工作…" autocomplete="off">
         <button id="refresh-inbox" type="button">重新整理</button>
       </div>
       <div id="inbox-bands"></div>
@@ -137,5 +144,16 @@
 
   <script src="lex.js"></script>
   <script src="app.js"></script>
+  <!-- Phase 2: toast notifications -->
+  <div id="toast-container" aria-live="polite"></div>
+  <!-- Phase 4: command palette -->
+  <div id="command-palette" hidden>
+    <div class="palette-box">
+      <input id="palette-input" class="palette-input" type="text" placeholder="输入命令或搜索…" autocomplete="off">
+      <div id="palette-results" class="palette-results"></div>
+    </div>
+  </div>
+  <!-- Phase 5: scroll-to-top -->
+  <button id="scroll-top" class="scroll-top" hidden type="button" aria-label="回到顶部">↑</button>
 </body>
 </html>
