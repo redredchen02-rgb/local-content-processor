@@ -109,6 +109,7 @@ def test_batch_process_button_in_inbox():
     # Fan-out must call process_async per job, not an abstracted batch endpoint.
     assert "crawledRows.forEach(function (j) { a.process_async(j.job_id" in APP_JS
     assert "if (crawledRows.length)" in APP_JS  # button absent when no crawled jobs
+    assert 'showToast("API 未就绪' in APP_JS  # null-api guard shows error toast, not success
 
 
 # --- U4: banner CTA hint (app.js) -------------------------------------------

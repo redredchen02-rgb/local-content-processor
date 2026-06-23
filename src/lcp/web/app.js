@@ -498,8 +498,12 @@ async function refreshInbox() {
         batchBtn.addEventListener("click", function () {
           setBusy(batchBtn, true);
           var a = api();
-          if (a) { crawledRows.forEach(function (j) { a.process_async(j.job_id, "", false, null, null, true); }); }
-          showToast("已送出 " + crawledRows.length + " 个工作排队处理", "success");
+          if (a) {
+            crawledRows.forEach(function (j) { a.process_async(j.job_id, "", false, null, null, true); });
+            showToast("已送出 " + crawledRows.length + " 个工作排队处理", "success");
+          } else {
+            showToast("API 未就绪，请刷新页面", "error");
+          }
           setTimeout(function () { setBusy(batchBtn, false); }, 2000);
         });
         head.appendChild(batchBtn);

@@ -44,6 +44,7 @@ requests; a single pywebview window could not).
 from __future__ import annotations
 
 import functools
+import logging
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -51,6 +52,8 @@ from typing import Any
 
 from . import pipeline as pl
 from .adapters.clock import now as _now
+
+logger = logging.getLogger(__name__)
 from .adapters.crawler.base import SourceSpec
 from .adapters.crawler.factory import build_crawler
 from .adapters.crawler.ingest import LocalIngestCrawler
@@ -685,7 +688,7 @@ class Api:
         one job. Includes the interrupted/exhausted flags from reconcile()."""
         c = self._ctx()
         interrupted = {i.job_id: i for i in pl.Pipeline(c.config, c.store, c.audit).reconcile()}
-        rec = c.store.get_job(escape_html(job_id))
+        rec = c.store.get_job(job_id)
         if rec is None:
             return _error_dict(_input_error(f"unknown job: {job_id}"))
         return {
@@ -916,7 +919,7 @@ class Api:
 
         from .pipeline import load_draft
 
-        review_dir = _Path(c.store.base_dir) / "jobs" / job_id / "review_packet"
+        review_dir = _Path(c.store.base_dir) / "jobs" / job_id / "review"
         draft = load_draft(c.store, job_id)
         title = draft.title if draft else ""
         bot_token = resolve_tg_bot_token()
@@ -929,7 +932,7 @@ class Api:
             c.store,
             bot_token=bot_token,
             ts=_now(),
-            dry_run=False,
+            dry_run=c.dry_run,
         )
         return {"job_id": escape_html(job_id), "notified": True}
 
