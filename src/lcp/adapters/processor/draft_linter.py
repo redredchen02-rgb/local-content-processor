@@ -175,6 +175,35 @@ def run_draft_lint_gate(
             review_reason=ReviewReason.GROUNDING,
         )
 
+    # --- category classification check (SOP U1) ----------------------------
+    # Runs BEFORE general lint so a missing/unrecognised category routes to
+    # NEEDS_HUMAN_REVIEW+CLASSIFICATION rather than NEEDS_REVISION. Only active
+    # when the operator has populated config.categories (empty list = bypass).
+    if lint_config.categories:
+        cat = (draft.category or "").strip()
+        if not cat or cat not in lint_config.categories:
+            audit.append(
+                ts=ts,
+                stage="lint",
+                event=EVENT_LINT_GATE,
+                job_id=job_id,
+                actor=actor,
+                extra={"status": "needs_human_review", "review_reason": ReviewReason.CLASSIFICATION.value},
+            )
+            persist_gate_state(
+                store,
+                job_id,
+                JobState.NEEDS_HUMAN_REVIEW,
+                updated_at=ts,
+                review_reason=ReviewReason.CLASSIFICATION,
+            )
+            return DraftLintOutcome(
+                lint=None,
+                grounding=grounding_result,
+                job_state=JobState.NEEDS_HUMAN_REVIEW,
+                review_reason=ReviewReason.CLASSIFICATION,
+            )
+
     # --- lint (structure / quality; local-only, no URL parse) --------------
     lint_result = _run_lint(
         draft,

@@ -431,3 +431,87 @@ def test_build_lint_config_projects_content_config():
     assert cfg.title_min_chars == 25
     assert cfg.title_max_chars == 35
     assert set(cfg.categories) == {"美食", "社會"}
+
+
+# --- SOP U1: CLASSIFICATION category gate ------------------------------------
+
+
+def test_missing_category_routes_to_classification_hold(store, audit, lint_config):
+    # categories configured, draft has no category → NEEDS_HUMAN_REVIEW + CLASSIFICATION
+    _new_processing_job(store, "c1")
+    out = run_draft_lint_gate(
+        job_id="c1",
+        draft=_good_draft(category=None),
+        source_text=SOURCE,
+        lint_config=lint_config,
+        store=store,
+        audit=audit,
+        ts=TS,
+    )
+    assert out.job_state == JobState.NEEDS_HUMAN_REVIEW
+    assert out.review_reason == ReviewReason.CLASSIFICATION
+    assert store.get_job("c1").state == JobState.NEEDS_HUMAN_REVIEW
+
+
+def test_unknown_category_routes_to_classification_hold(store, audit, lint_config):
+    # Draft has a category but it's not in the configured list.
+    _new_processing_job(store, "c2")
+    out = run_draft_lint_gate(
+        job_id="c2",
+        draft=_good_draft(category="未知分類"),
+        source_text=SOURCE,
+        lint_config=lint_config,
+        store=store,
+        audit=audit,
+        ts=TS,
+    )
+    assert out.review_reason == ReviewReason.CLASSIFICATION
+    assert out.job_state == JobState.NEEDS_HUMAN_REVIEW
+
+
+def test_empty_categories_config_bypasses_classification_check(store, audit):
+    # When categories is empty (not configured), category check is skipped.
+    _new_processing_job(store, "c3")
+    no_cat_config = build_lint_config(
+        ContentConfig(
+            title_min_chars=8,
+            title_max_chars=35,
+            intro_min_chars=1,
+            intro_max_chars=9999,
+            event_body_min_chars=1,
+            event_body_max_chars=9999,
+            summary_warn_chars=9998,
+            summary_error_chars=9999,
+            faq_min_count=1,
+            faq_max_count=99,
+            quick_facts_min_count=1,
+            quick_facts_max_count=99,
+        ),
+        {},  # empty categories dict
+    )
+    out = run_draft_lint_gate(
+        job_id="c3",
+        draft=_good_draft(category=None),
+        source_text=SOURCE,
+        lint_config=no_cat_config,
+        store=store,
+        audit=audit,
+        ts=TS,
+    )
+    # No category check → job is not parked for classification.
+    assert out.review_reason != ReviewReason.CLASSIFICATION
+
+
+def test_valid_category_passes_through_to_lint(store, audit, lint_config):
+    # Valid category in categories list → classification check passes; lint runs.
+    _new_processing_job(store, "c4")
+    out = run_draft_lint_gate(
+        job_id="c4",
+        draft=_good_draft(),  # has category="美食" which is in CATEGORIES
+        source_text=SOURCE,
+        lint_config=lint_config,
+        store=store,
+        audit=audit,
+        ts=TS,
+    )
+    assert out.review_reason != ReviewReason.CLASSIFICATION

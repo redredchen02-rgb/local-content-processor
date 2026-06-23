@@ -296,8 +296,12 @@ def lint_draft(
 
     # --- keywords consistent with body -------------------------------------
     body_text = _draft_text(draft).lower()
+    # Strip the optional type prefix ("人物:周冬雨" → "周冬雨") before checking
+    # body presence; backward-compatible: plain keywords without ":" are unchanged.
     orphan_keywords = [
-        kw for kw in draft.keywords if kw.strip() and kw.strip().lower() not in body_text
+        kw
+        for kw in draft.keywords
+        if kw.strip() and kw.split(":", 1)[-1].strip().lower() not in body_text
     ]
     if orphan_keywords:
         warnings.append(f"keyword(s) not found in draft body: {orphan_keywords}")
