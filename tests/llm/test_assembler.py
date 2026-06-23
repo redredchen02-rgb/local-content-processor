@@ -439,3 +439,64 @@ def test_u2_indented_markers_parsed_correctly():
     assert draft.status == DraftStatus.DRAFTED, draft.review_reason
     assert draft.intro == "引言測試第一行內容"
     assert draft.event_body == "事件經過內容在這裡"
+
+
+# --------------------------------------------------------------------------
+# Integration: assembler output meets Unit 1 length constraints
+# --------------------------------------------------------------------------
+
+
+def test_assembled_draft_meets_unit1_length_constraints():
+    """Integration: assemble() → lint_draft() — intro and event_body produced by
+    a valid INTRO:/EVENT: response must not trigger Unit 1 length errors.
+
+    Only the intro/event_body length path is exercised — other REQUIRED_SECTIONS
+    (quick_facts/faq/summary) are filled by the copywriter, not the assembler,
+    so lint is expected to flag those as missing; the test only asserts that the
+    assembler does not truncate or mangle the two fields it owns."""
+    from lcp.core.rules.lint_rules import LintConfig, lint_draft
+
+    # 88-char intro satisfies [80, 120]; 128-char event_body satisfies [100, 200].
+    # Values mirror _strict_draft() in tests/rules/test_lint_rules.py.
+    intro_88 = (
+        "本週末在台北華山文創園區將舉辦規模盛大的年度美食市集活動，"
+        "現場聚集超過一百個來自全台各地的特色美食攤位，"
+        "主辦單位誠摯歡迎廣大民眾攜家帶眷前來共同參與這場精彩難得的美食文化盛會。"
+    )
+    event_128 = (
+        "台北華山文創園區本週末盛大舉辦年度全台最大規模的美食市集特色活動，"
+        "現場超過一百個攤位提供各式在地特色小吃及異國料理美食佳餚供民眾選購品嚐。"
+        "主辦單位預計吸引超過萬名以上的民眾前來共襄盛舉同歡，"
+        "現場另設有完善的休憩用餐區域提供給民眾休息並悠閒享用各式美食料理。"
+    )
+    client = FakeClient(
+        result=ChatResult(
+            text=f"INTRO: {intro_88}\nEVENT: {event_128}",
+            finish_reason="stop",
+            model="m",
+            needs_revision=False,
+            executed=True,
+        )
+    )
+    draft = assemble(SOURCE, client)
+    assert draft.status == DraftStatus.DRAFTED, draft.review_reason
+    # Assembler must preserve exact lengths without truncation.
+    assert len(draft.intro) == len(intro_88)
+    assert len(draft.event_body) == len(event_128)
+
+    # Integration check: no intro/event_body length errors from the Unit 1 gate.
+    # (title_min_chars/faq_min_count/quick_facts_min_count set to 0 because the
+    # assembler does not fill those fields — the copywriter does.)
+    lint_cfg = LintConfig(
+        title_min_chars=0,
+        intro_min_chars=80,
+        intro_max_chars=120,
+        event_body_min_chars=100,
+        event_body_max_chars=200,
+        faq_min_count=0,
+        quick_facts_min_count=0,
+        tag_min_count=0,
+    )
+    lint_result = lint_draft(draft, lint_cfg)
+    assert not any("intro" in e for e in lint_result.errors), lint_result.errors
+    assert not any("event_body" in e for e in lint_result.errors), lint_result.errors

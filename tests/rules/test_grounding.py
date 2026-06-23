@@ -212,3 +212,38 @@ def test_grounding_module_imports_no_url_libraries():
     src = open(mod.__file__, encoding="utf-8").read()
     for forbidden in ("import urllib", "import requests", "import socket", "import httpx"):
         assert forbidden not in src, f"{forbidden!r} must not appear in grounding"
+
+
+# --- Unit 1 / format-spec: intro sentences are grounded too ------------------
+
+
+def test_ungrounded_intro_sentence_fails():
+    """draft.intro with a fabricated claim absent from source → needs_human_review.
+
+    Exercises the _split_claims() path that extends grounding to the intro field
+    (added alongside the INTRO:/EVENT: two-prefix assembler protocol)."""
+    d = Draft(
+        # This accusation has zero overlap with the food-market SOURCE above.
+        intro="某藝人疑似逃漏稅金額高達五千萬元遭到稅務機關全面調查。",
+        event_body="華山文創園區本週末舉辦美食市集。",
+        quotes=[],
+    )
+    r = verify_grounding(d, SOURCE)
+    assert r.status == GroundingStatus.NEEDS_HUMAN_REVIEW
+    assert r.needs_human_review
+    assert any(u.kind == "claim" for u in r.ungrounded_claims)
+
+
+def test_grounded_intro_sentence_passes():
+    """draft.intro whose sentences are verbatim substrings of the source → PASS.
+
+    Exercises the happy path of the intro grounding extension in _split_claims()."""
+    d = Draft(
+        # Both sentences split from intro are verbatim substrings of SOURCE.
+        intro="華山文創園區本週末舉辦美食市集。現場有上百個攤位提供各式小吃與飲料。",
+        event_body="主辦單位預估將吸引大量人潮前往參觀。",
+        quotes=[],
+    )
+    r = verify_grounding(d, SOURCE)
+    assert r.status == GroundingStatus.PASS
+    assert r.passed
