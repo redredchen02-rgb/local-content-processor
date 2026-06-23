@@ -965,8 +965,6 @@ def test_get_ingest_report_path_traversal_raises(tmp_path):
     """job_id containing path traversal must raise InputValidationError."""
     import yaml
 
-    from lcp.core.errors import InputValidationError
-
     cfg = tmp_path / "config.yaml"
     cfg.write_text(yaml.safe_dump({"storage": {"base_dir": str(tmp_path)}}), encoding="utf-8")
     api = Api(config_path=str(cfg))

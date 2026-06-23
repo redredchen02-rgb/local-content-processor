@@ -7,7 +7,6 @@ the webserver notification-enabled meta tag injection."""
 from __future__ import annotations
 
 import urllib.error
-from pathlib import Path
 
 import pytest
 
@@ -370,7 +369,6 @@ class _MockUrllibRequest:
 def _make_urllib_mock(urlopen_fn):
     """Build a mock urllib module whose urlopen calls urlopen_fn."""
     import types
-
     import urllib.error
     import urllib.parse
     import urllib.request

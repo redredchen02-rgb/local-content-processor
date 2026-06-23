@@ -22,7 +22,7 @@ from lcp.adapters.crawler.base import SourceSpec
 from lcp.adapters.crawler.ingest import LocalIngestCrawler
 from lcp.adapters.storage.audit_log import AuditLog
 from lcp.adapters.storage.job_store import JobStore
-from lcp.core.config import Config, ContentConfig, PublisherConfig
+from lcp.core.config import Config, PublisherConfig
 from lcp.core.models import SourceType
 from lcp.core.state import JobState
 from tests.support.pipeline_fakes import (
