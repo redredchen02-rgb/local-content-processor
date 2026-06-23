@@ -122,17 +122,20 @@ def _parse_sections(text: str) -> tuple[str, str]:
 
     Scans line by line.  First-match semantics: the first line starting with
     ``INTRO:`` sets intro; subsequent ``INTRO:`` lines are ignored (same for
-    ``EVENT:``).  Values are stripped and then run through ``sanitize_source``
-    to remove any bidi/zero-width sequences the LLM might have reflected back.
+    ``EVENT:``).  Leading/trailing whitespace is stripped before prefix matching
+    so indented output (common when LLMs structure responses hierarchically) is
+    handled correctly.  Values are then run through ``sanitize_source`` to remove
+    any bidi/zero-width sequences the LLM might have reflected back.
 
     Returns ``("", "")`` if neither marker is present."""
     intro = ""
     event = ""
     for raw_line in text.splitlines():
-        if not intro and raw_line.startswith("INTRO:"):
-            intro = raw_line[len("INTRO:"):].strip()
-        elif not event and raw_line.startswith("EVENT:"):
-            event = raw_line[len("EVENT:"):].strip()
+        line = raw_line.strip()
+        if not intro and line.startswith("INTRO:"):
+            intro = line[len("INTRO:"):].strip()
+        elif not event and line.startswith("EVENT:"):
+            event = line[len("EVENT:"):].strip()
     return sanitize_source(intro), sanitize_source(event)
 
 

@@ -421,3 +421,21 @@ def test_u2_truncated_finish_reason_unaffected():
     draft = assemble(SOURCE, client)
     assert draft.status == DraftStatus.NEEDS_REVISION
     assert draft.review_reason == "truncated:length"
+
+
+def test_u2_indented_markers_parsed_correctly():
+    """Indented INTRO:/EVENT: lines (LLM output with leading spaces) must be
+    accepted — the strip-before-startswith fix prevents false NEEDS_REVISION."""
+    client = FakeClient(
+        result=ChatResult(
+            text="  INTRO: 引言測試第一行內容\n  EVENT: 事件經過內容在這裡",
+            finish_reason="stop",
+            model="m",
+            needs_revision=False,
+            executed=True,
+        )
+    )
+    draft = assemble(SOURCE, client)
+    assert draft.status == DraftStatus.DRAFTED, draft.review_reason
+    assert draft.intro == "引言測試第一行內容"
+    assert draft.event_body == "事件經過內容在這裡"
