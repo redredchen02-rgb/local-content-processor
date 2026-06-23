@@ -138,6 +138,8 @@ class CrawlRunner:
             host,
             "--fetched-at",
             ts,
+            "--max-assets",
+            str(spec.max_assets),
         ]
         for d in self.registry.domains:
             cmd += ["--allow-domain", d]
@@ -163,7 +165,11 @@ class CrawlRunner:
         rc = getattr(proc, "returncode", None)
         if rc != 0:
             _clear_raw(spec.job_dir)  # U12: orphaned partial downloads -> clean retry
-            raise ExternalServiceError(f"crawl subprocess failed (rc={rc})")
+            stderr_tail = (proc.stderr or "")[-500:].strip()
+            raise ExternalServiceError(
+                f"crawl subprocess failed (rc={rc})"
+                + (f": {stderr_tail}" if stderr_tail else "")
+            )
 
         try:
             manifest = read_manifest(spec.job_dir)
@@ -174,7 +180,11 @@ class CrawlRunner:
             raise
         if manifest is None:
             _clear_raw(spec.job_dir)  # U12: no valid bundle -> clean retry
-            raise ExternalServiceError(f"crawl subprocess produced no manifest (rc={rc})")
+            stderr_tail = (proc.stderr or "")[-500:].strip()
+            raise ExternalServiceError(
+                f"crawl subprocess produced no manifest (rc={rc})"
+                + (f": {stderr_tail}" if stderr_tail else "")
+            )
 
         if self.audit is not None:
             self.audit.append(
