@@ -162,7 +162,7 @@ def classify(title: str) -> str:
             scores[cat] = hits
     if not scores:
         return "other"
-    return max(scores, key=scores.get)
+    return max(scores, key=lambda k: scores[k])
 
 
 def enrich_categories(items: list[GossipItem]) -> list[GossipItem]:

@@ -31,8 +31,8 @@ from .core.sentiment import enrich_sentiments
 from .core.summary import enrich_summaries
 from .core.trend import compute_velocity
 from .models import GossipItem
-from .scrapers.base import ScraperProtocol
 from .scrapers.baidu import BaiduScraper
+from .scrapers.base import ScraperProtocol
 from .scrapers.bbc_chinese import BBCChineseScraper
 from .scrapers.bilibili import BilibiliScraper
 from .scrapers.bilibili_popular import BilibiliPopularScraper
@@ -49,7 +49,7 @@ from .scrapers.tieba import TiebaScraper
 from .scrapers.toutiao import ToutiaoScraper
 from .scrapers.weibo import WeiboScraper
 
-SCRAPERS = {
+SCRAPERS: dict[str, type[ScraperProtocol]] = {
     "weibo": WeiboScraper,
     "baidu": BaiduScraper,
     "bilibili": BilibiliScraper,
@@ -108,7 +108,7 @@ async def run(
     report_mode: bool = False,
 ) -> None:
     # --- Phase 1: Parallel fetch ---
-    scrapers = []
+    scrapers: list[tuple[str, ScraperProtocol]] = []
     for name in platforms:
         cls = SCRAPERS.get(name)
         if cls is None:

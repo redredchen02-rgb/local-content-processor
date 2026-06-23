@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 from .__main__ import DEFAULT_PLATFORMS, SCRAPERS
+from .scrapers.base import ScraperProtocol
 
 _SNAPSHOT_DIR = Path("gossip_history")
 
@@ -60,13 +61,13 @@ async def _fetch_all(platforms: list[str], limit: int) -> list:
     from .core.trend import compute_velocity
     from .models import GossipItem
 
-    scrapers = []
+    scrapers: list[tuple[str, ScraperProtocol]] = []
     for name in platforms:
         cls = SCRAPERS.get(name)
         if cls:
             scrapers.append((name, cls()))
 
-    async def _fetch_one(name: str, scraper: object) -> list[GossipItem]:
+    async def _fetch_one(name: str, scraper: ScraperProtocol) -> list[GossipItem]:
         try:
             items = await scraper.fetch(limit=limit)
             print(f"  {name}: {len(items)}", file=sys.stderr)
