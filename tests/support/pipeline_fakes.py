@@ -23,7 +23,7 @@ from lcp.adapters.llm.client import ChatResult
 from lcp.adapters.storage.audit_log import AuditLog
 from lcp.adapters.storage.job_store import JobStore
 from lcp.adapters.storage.manifest import write_manifest
-from lcp.core.config import Config
+from lcp.core.config import Config, ContentConfig
 from lcp.core.models import SourceType
 
 # Neutral, redline-free source; every paragraph is <40 chars so a verbatim
@@ -37,9 +37,9 @@ SOURCE = (
 # A 25–35-char title (lint requires [25,35]); not grounded-checked, only length.
 TITLE = "台北華山文創園區本週末舉辦大型美食市集盛大登場人潮擠爆"
 
-# The assemble body: first line -> intro, whole text -> event_body. Both
-# sentences are verbatim source substrings (grounded); each <40 chars.
-BODY = "華山文創園區本週末舉辦美食市集。\n現場有上百個攤位提供各式小吃與飲料。"
+# The assemble body: uses the INTRO:/EVENT: two-prefix protocol (Unit 2).
+# Both values are verbatim source substrings (grounded); each <40 chars.
+BODY = "INTRO: 華山文創園區本週末舉辦美食市集。\nEVENT: 現場有上百個攤位提供各式小吃與飲料。"
 
 # The copywriter structural-copy payload (line-prefix protocol). Every claim is
 # a verbatim source substring so grounding passes deterministically; tags are
@@ -129,6 +129,25 @@ def seed_clean_index(store: JobStore) -> None:
     (store.base_dir / "site_index.jsonl").write_text("", encoding="utf-8")
 
 
+# A ContentConfig with loose Unit-1 field-length constraints so e2e tests that
+# exercise the full gate chain (risk/dedup/grounding/copy) are not broken by the
+# new intro/event_body/faq/quick_facts length rules. The fake LLM (DualMode-
+# ChatClient) generates minimal content for determinism; testing the strict
+# defaults is the job of tests/rules/test_lint_rules.py.
+LOOSE_CONTENT_CONFIG = ContentConfig(
+    intro_min_chars=1,
+    intro_max_chars=9999,
+    event_body_min_chars=1,
+    event_body_max_chars=9999,
+    summary_warn_chars=9998,
+    summary_error_chars=9999,
+    faq_min_count=1,
+    faq_max_count=99,
+    quick_facts_min_count=1,
+    quick_facts_max_count=99,
+)
+
+
 def build_pipeline(
     store: JobStore,
     audit: AuditLog,
@@ -138,8 +157,15 @@ def build_pipeline(
     source: str = SOURCE,
 ) -> pl.Pipeline:
     """A Pipeline wired with the no-network crawler + a deterministic LLM."""
+    if config is None:
+        config = Config(content=LOOSE_CONTENT_CONFIG)
+    elif config.content == ContentConfig():
+        # Caller passed a Config with default ContentConfig (only overriding
+        # other sections like publisher) — apply loose constraints so the fake
+        # short LLM output still passes lint.
+        config = config.model_copy(update={"content": LOOSE_CONTENT_CONFIG})
     return pl.Pipeline(
-        config if config is not None else Config(),
+        config,
         store,
         audit,
         crawler=FakeCrawler(source),

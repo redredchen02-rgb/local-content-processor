@@ -44,7 +44,9 @@ class ToutiaoScraper:
                     platform=self.platform,
                     rank=i + 1,
                     title=title,
-                    url=url if url else f"https://so.toutiao.com/search?keyword={quote_plus(title)}",
+                    url=url
+                    if url
+                    else f"https://so.toutiao.com/search?keyword={quote_plus(title)}",
                     heat=int(hot_value) if hot_value else 0,
                     tag=_tag_from_label(label),
                 )

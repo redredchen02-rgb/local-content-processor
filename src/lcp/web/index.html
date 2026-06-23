@@ -16,6 +16,8 @@
        with the live token at serve time; app.js reads it (CSP-safe DOM read) and
        sends it as Authorization: Bearer on every /api/* fetch. Never a URL/log. -->
   <meta name="lcp-csrf" content="__LCP_CSRF_TOKEN__">
+  <!-- Telegram notification enabled flag: replaced by the server at page load. -->
+  <meta name="lcp-notification-enabled" content="__LCP_NOTIFICATION_ENABLED__">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Local Content Processor</title>
   <link rel="stylesheet" href="app.css">
@@ -98,6 +100,7 @@
       </div>
 
       <div id="job-banner"></div>
+      <div id="job-workflow"></div>
       <div id="job-inflight" aria-live="polite"></div>
       <div id="job-actions"></div>
       <div id="job-packet"></div>

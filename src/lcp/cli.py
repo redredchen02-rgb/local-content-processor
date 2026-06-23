@@ -762,6 +762,95 @@ def run(ctx, url, input_dir, job_id, target, title, source_urls, ai_copy, templa
     )
 
 
+@cli.command(name="show-ingest-report")
+@click.option("--job-id", "job_id", required=True)
+@click.pass_context
+def show_ingest_report(ctx, job_id):
+    """Print the LOCAL_DIR ingest completeness report for a job (SOP step 01).
+
+    Exits 0 when the report is complete; exits 2 when absent or incomplete."""
+    import json as _json_mod
+
+    from .adapters.crawler.net_guard import safe_join
+
+    c = Ctx(ctx.obj)
+    raw_dir = Path(c.store.job_dir(job_id)) / "raw"
+    try:
+        report_path = safe_join(raw_dir, "ingest_report.json")
+    except LcpError as e:
+        raise click.ClickException(str(e)) from e
+    if not report_path.exists():
+        c.emit({"job_id": job_id, "report": None}, human=f"no ingest report for {job_id}")
+        raise SystemExit(2)
+    data = _json_mod.loads(report_path.read_text(encoding="utf-8"))
+    if c.as_json:
+        click.echo(_json_mod.dumps(data, ensure_ascii=False, sort_keys=True))
+        return
+    imgs = data.get("imported_images", 0)
+    vids = data.get("imported_videos", 0)
+    failed = data.get("failed") or []
+    click.echo(f"✓ 已匯入 {imgs} 張圖片、{vids} 支影片")
+    if not data.get("has_body"):
+        click.echo("⚠ 缺少正文 (body.txt)")
+    if failed:
+        names = ", ".join(f["name"] for f in failed[:5])
+        click.echo(f"⚠ {len(failed)} 個檔案匯入失敗: {names}")
+    if not data.get("complete"):
+        raise SystemExit(2)
+
+
+@cli.command()
+@click.option("--job-id", "job_id", required=True, help="REVIEW_PENDING job to notify for")
+@click.pass_context
+def notify(ctx, job_id):
+    """Send cover + title to the configured Telegram group (SOP step 10).
+
+    Job must be REVIEW_PENDING. Fire-and-forget: failure is audited but never
+    parks the job. Bot token from keyring (service=local-content-processor,
+    user=tg_bot) or LCP_TG_BOT_TOKEN env var. Configure chat_id in config.yaml."""
+    from .adapters.publisher import notifier as _notifier
+    from .adapters.storage.config_io import resolve_tg_bot_token
+
+    c = Ctx(ctx.obj)
+    review_dir = Path(c.store.base_dir) / "jobs" / job_id / "review_packet"
+    # Load draft title from job store for caption; empty string if not yet built.
+    draft = pl.load_draft(c.store, job_id)
+    title = draft.title if draft else ""
+    bot_token = resolve_tg_bot_token()
+    _notifier.send_notification(
+        job_id,
+        review_dir,
+        title,
+        c.config.notification,
+        c.audit,
+        c.store,
+        bot_token=bot_token,
+        ts=_now(),
+        dry_run=c.dry_run,
+    )
+    c.emit(
+        {"job_id": job_id, "notified": True, "dry_run": c.dry_run},
+        human=f"notification sent for {job_id}"
+        if not c.dry_run
+        else f"dry-run: notification skipped for {job_id}",
+    )
+
+
+@cli.command(name="set-tg-token")
+def set_tg_token():
+    """Store the Telegram bot token in the OS keyring (interactive, reads from stdin).
+
+    The token is read via getpass (no echo) so it never appears in shell history
+    or process listing. Stored in keyring service=local-content-processor, user=tg_bot."""
+    import getpass
+
+    from .adapters.storage.config_io import set_tg_bot_token
+
+    token = getpass.getpass("Telegram bot token: ")
+    set_tg_bot_token(token)
+    click.echo("Telegram bot token saved to OS keyring.")
+
+
 @cli.command()
 @click.option("--port", type=int, default=None, help="Port to bind on 127.0.0.1 (default 8765).")
 @click.option(

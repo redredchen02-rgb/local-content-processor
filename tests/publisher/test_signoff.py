@@ -574,8 +574,27 @@ def _lint_clean_draft(**overrides) -> Draft:
     return Draft(**base)
 
 
-def test_resolve_grounding_hold_relint_clean_promotes(config, store, audit):
+def test_resolve_grounding_hold_relint_clean_promotes(store, audit):
     """A grounding hold clears via re-lint: a clean lint promotes to PROCESSED."""
+    from lcp.core.config import ContentConfig
+
+    # Use loose Unit-1 constraints so this test stays focused on the
+    # grounding-hold→relint→PROCESSED path, not field-length rules.
+    loose_config = Config(
+        publisher=PublisherConfig(reviewers=[REVIEWER, "bob"]),
+        content=ContentConfig(
+            intro_min_chars=1,
+            intro_max_chars=9999,
+            event_body_min_chars=1,
+            event_body_max_chars=9999,
+            summary_warn_chars=9998,
+            summary_error_chars=9999,
+            faq_min_count=1,
+            faq_max_count=99,
+            quick_facts_min_count=1,
+            quick_facts_max_count=99,
+        ),
+    )
     source = "華山文創園區本週末舉辦美食市集。"
     draft = _lint_clean_draft()
     # sanity: this draft really passes the default lint
@@ -584,7 +603,7 @@ def test_resolve_grounding_hold_relint_clean_promotes(config, store, audit):
     rec = signoff.resolve(
         "jg",
         REVIEWER,
-        config=config,
+        config=loose_config,
         store=store,
         audit=audit,
         ts=TS,

@@ -811,6 +811,102 @@ class Api:
         let a raw exception cross the bridge."""
         return {"disclaimer": signoff.DISCLAIMER}
 
+    # --- Ingest completeness report (SOP step 01) --------------------------------
+
+    @bridge_safe
+    def get_ingest_report(self, job_id: str) -> dict:
+        """Return the LOCAL_DIR ingest completeness report for a job, or null.
+
+        Reads `data/jobs/<id>/raw/ingest_report.json` via safe_join (path-traversal
+        guard). Returns `None` when absent — URL-crawled jobs never write this file
+        so its absence is not an error. Attacker-shapeable fields (failed-file names)
+        are HTML-escaped."""
+        try:
+            import json
+
+            from .adapters.crawler.net_guard import safe_join
+
+            c = self._ctx()
+            # Guard job_id against path traversal before building the raw dir.
+            safe_job_dir = safe_join(c.store.jobs_root, job_id)
+            raw_dir = safe_job_dir / "raw"
+            report_path = safe_join(raw_dir, "ingest_report.json")
+            if not report_path.exists():
+                return {"job_id": escape_html(job_id), "report": None}
+            data = json.loads(report_path.read_text(encoding="utf-8"))
+            # Escape attacker-shapeable strings (file names from untrusted FS input).
+            escaped_failed = [
+                {
+                    "name": escape_html(str(f.get("name", ""))),
+                    "reason": escape_html(str(f.get("reason", ""))),
+                }
+                for f in (data.get("failed") or [])
+            ]
+            return {
+                "job_id": escape_html(job_id),
+                "report": {
+                    "has_title": bool(data.get("has_title")),
+                    "has_body": bool(data.get("has_body")),
+                    "imported_images": int(data.get("imported_images", 0)),
+                    "imported_videos": int(data.get("imported_videos", 0)),
+                    "failed": escaped_failed,
+                    "skipped": int(data.get("skipped", 0)),
+                    "complete": bool(data.get("complete")),
+                },
+            }
+        except LcpError:
+            raise
+        except (OSError, ValueError):
+            return {"job_id": escape_html(job_id), "report": None}
+        except Exception:  # noqa: BLE001 - bridge boundary
+            return {"error": "internal error", "exit_code": EXIT_INTERNAL}
+
+    # --- Telegram notification (SOP step 10) ------------------------------------
+
+    @bridge_safe
+    def notify(self, job_id: str) -> dict:
+        """Mirror CLI `notify`: send cover + title to the configured Telegram group.
+
+        Job must be REVIEW_PENDING. Fire-and-forget: ExternalServiceError on
+        network failure (audited), never changes job state. Bot token from keyring
+        or LCP_TG_BOT_TOKEN env var. chat_id from config.notification."""
+        from .adapters.publisher import notifier as _notifier
+        from .adapters.storage.config_io import resolve_tg_bot_token
+
+        c = self._ctx()
+        from pathlib import Path as _Path
+
+        from .pipeline import load_draft
+
+        review_dir = _Path(c.store.base_dir) / "jobs" / job_id / "review_packet"
+        draft = load_draft(c.store, job_id)
+        title = draft.title if draft else ""
+        bot_token = resolve_tg_bot_token()
+        _notifier.send_notification(
+            job_id,
+            review_dir,
+            title,
+            c.config.notification,
+            c.audit,
+            c.store,
+            bot_token=bot_token,
+            ts=_now(),
+            dry_run=False,
+        )
+        return {"job_id": escape_html(job_id), "notified": True}
+
+    @bridge_safe
+    def set_tg_token(self, token: str) -> dict:
+        """Store the Telegram bot token in the OS keyring (non-empty string).
+
+        The token is NEVER returned or logged. Mirrors CLI `set-tg-token` for
+        the Settings panel. Call with an empty string to check current status."""
+        from .adapters.storage.config_io import has_tg_bot_token, set_tg_bot_token
+
+        if token and token.strip():
+            set_tg_bot_token(token.strip())
+        return {"tg_token_set": has_tg_bot_token()}
+
     # --- LLM settings (base_url/model -> file; api_key -> keyring ONLY) -------
 
     def _settings_path(self) -> Path:

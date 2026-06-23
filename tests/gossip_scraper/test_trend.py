@@ -26,14 +26,18 @@ def _item(title: str, platform: str = "weibo", rank: int = 1) -> GossipItem:
 # _DEFAULT_HISTORY_DIR is cwd-independent
 # ---------------------------------------------------------------------------
 
+
 def test_default_history_dir_is_absolute() -> None:
     assert _DEFAULT_HISTORY_DIR.is_absolute()
 
 
-def test_default_history_dir_does_not_change_with_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_default_history_dir_does_not_change_with_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     # Import-time constant must stay the same regardless of cwd change
     from gossip_scraper.core.trend import _DEFAULT_HISTORY_DIR as d
+
     assert d.is_absolute()
     assert d == _DEFAULT_HISTORY_DIR
 
@@ -41,6 +45,7 @@ def test_default_history_dir_does_not_change_with_cwd(tmp_path: Path, monkeypatc
 # ---------------------------------------------------------------------------
 # _item_key: title-only (no platform prefix)
 # ---------------------------------------------------------------------------
+
 
 def test_item_key_ignores_platform() -> None:
     a = _item("某明星大瓜爆出了", platform="weibo")
@@ -57,6 +62,7 @@ def test_item_key_truncates_at_30() -> None:
 # ---------------------------------------------------------------------------
 # _load_history: IndexError on malformed values
 # ---------------------------------------------------------------------------
+
 
 def test_load_history_tolerates_malformed_values(tmp_path: Path) -> None:
     # Write a history file where one value is a single-element list instead of [rank, ts]
@@ -81,6 +87,7 @@ def test_load_history_tolerates_corrupt_json(tmp_path: Path) -> None:
 # Atomic write: tmp file replaced, no leftover on success
 # ---------------------------------------------------------------------------
 
+
 def test_save_history_atomic_no_tmp_leftover(tmp_path: Path) -> None:
     items = [_item("话题A", rank=1), _item("话题B", rank=2)]
     compute_velocity(items, history_dir=tmp_path)
@@ -103,6 +110,7 @@ def test_save_history_readable_json(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Velocity tracking: title-only key survives platform switch
 # ---------------------------------------------------------------------------
+
 
 def test_velocity_survives_platform_switch(tmp_path: Path) -> None:
     # First run: topic carried by weibo at rank 5

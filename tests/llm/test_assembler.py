@@ -19,7 +19,9 @@ class FakeClient:
 
     def __init__(self, result=None, raises=None):
         self._result = result or ChatResult(
-            text="重寫後的正文第一行\n第二行內容",
+            # Default result uses the new two-prefix protocol so existing tests
+            # that check DRAFTED status continue to pass.
+            text="INTRO: 引言測試第一行內容\nEVENT: 事件經過內容在這裡",
             finish_reason="stop",
             model="company-model",
             needs_revision=False,
@@ -275,3 +277,226 @@ def test_default_temperature_is_constrained():
     client = FakeClient()
     assemble(SOURCE, client)
     assert client.calls[0]["temperature"] <= 0.3
+
+
+# --------------------------------------------------------------------------
+# Unit 2: two-prefix protocol (INTRO: / EVENT:) and _parse_sections()
+# --------------------------------------------------------------------------
+
+
+def test_u2_happy_path_parses_both_sections():
+    """LLM returns INTRO: + EVENT: → DRAFTED with correct fields."""
+    client = FakeClient(
+        result=ChatResult(
+            text="INTRO: 引言測試開頭直接入題。\nEVENT: 事件經過按時間順序描述。",
+            finish_reason="stop",
+            model="m",
+            needs_revision=False,
+            executed=True,
+        )
+    )
+    draft = assemble(SOURCE, client, title="測試標題")
+    assert draft.status == DraftStatus.DRAFTED
+    assert draft.intro == "引言測試開頭直接入題。"
+    assert draft.event_body == "事件經過按時間順序描述。"
+    assert draft.needs_human_review is True
+    assert draft.constrained_rewrite is True
+    assert draft.review_reason is None
+
+
+def test_u2_no_markers_missing_both():
+    """LLM returns plain text blob with no INTRO:/EVENT: → NEEDS_REVISION."""
+    client = FakeClient(
+        result=ChatResult(
+            text="這是一段沒有任何 prefix 的純文本輸出，不符合協議要求。",
+            finish_reason="stop",
+            model="m",
+            needs_revision=False,
+            executed=True,
+        )
+    )
+    draft = assemble(SOURCE, client)
+    assert draft.status == DraftStatus.NEEDS_REVISION
+    assert draft.review_reason == "missing_section_markers"
+    assert draft.needs_human_review is True
+
+
+def test_u2_only_intro_missing_event():
+    """LLM returns INTRO: but no EVENT: → NEEDS_REVISION, missing_event."""
+    client = FakeClient(
+        result=ChatResult(
+            text="INTRO: 只有引言沒有事件經過。",
+            finish_reason="stop",
+            model="m",
+            needs_revision=False,
+            executed=True,
+        )
+    )
+    draft = assemble(SOURCE, client)
+    assert draft.status == DraftStatus.NEEDS_REVISION
+    assert draft.review_reason == "missing_event"
+
+
+def test_u2_only_event_missing_intro():
+    """LLM returns EVENT: but no INTRO: → NEEDS_REVISION, missing_intro."""
+    client = FakeClient(
+        result=ChatResult(
+            text="EVENT: 只有事件經過沒有引言。",
+            finish_reason="stop",
+            model="m",
+            needs_revision=False,
+            executed=True,
+        )
+    )
+    draft = assemble(SOURCE, client)
+    assert draft.status == DraftStatus.NEEDS_REVISION
+    assert draft.review_reason == "missing_intro"
+
+
+def test_u2_multiline_intro_truncated_to_first_line():
+    """Multi-line: INTRO: takes only the first INTRO: line value; subsequent
+    text without a marker is ignored.  EVENT: still parsed correctly."""
+    client = FakeClient(
+        result=ChatResult(
+            text="INTRO: 第一行引言\n附加行沒有 marker\nEVENT: 事件經過內容",
+            finish_reason="stop",
+            model="m",
+            needs_revision=False,
+            executed=True,
+        )
+    )
+    draft = assemble(SOURCE, client)
+    # intro takes only the value of the first INTRO: line
+    assert draft.intro == "第一行引言"
+    assert draft.event_body == "事件經過內容"
+    assert draft.status == DraftStatus.DRAFTED
+
+
+def test_u2_duplicate_intro_first_match_wins():
+    """Duplicate INTRO: lines: first-match semantics — second is ignored."""
+    client = FakeClient(
+        result=ChatResult(
+            text="INTRO: 第一段引言\nINTRO: 第二段引言（應被忽略）\nEVENT: 事件經過",
+            finish_reason="stop",
+            model="m",
+            needs_revision=False,
+            executed=True,
+        )
+    )
+    draft = assemble(SOURCE, client)
+    assert draft.intro == "第一段引言"
+    assert "第二段" not in draft.intro
+    assert draft.status == DraftStatus.DRAFTED
+
+
+def test_u2_dry_run_not_executed_unaffected():
+    """Dry-run path is unaffected by the two-prefix changes."""
+    client = FakeClient(
+        result=ChatResult(
+            text="[dry-run] LLM not actually executed — no tokens spent.",
+            finish_reason=None,
+            model="m",
+            needs_revision=False,
+            executed=False,
+        )
+    )
+    draft = assemble(SOURCE, client)
+    assert draft.status == DraftStatus.NOT_EXECUTED
+    assert draft.executed is False
+    assert "not actually executed" in draft.intro.lower()
+
+
+def test_u2_truncated_finish_reason_unaffected():
+    """Truncated finish_reason path (checked before _parse_sections) is unaffected."""
+    client = FakeClient(
+        result=ChatResult(
+            text="截斷的內容",
+            finish_reason="length",
+            model="m",
+            needs_revision=True,
+            revision_reason="truncated:length",
+            executed=True,
+        )
+    )
+    draft = assemble(SOURCE, client)
+    assert draft.status == DraftStatus.NEEDS_REVISION
+    assert draft.review_reason == "truncated:length"
+
+
+def test_u2_indented_markers_parsed_correctly():
+    """Indented INTRO:/EVENT: lines (LLM output with leading spaces) must be
+    accepted — the strip-before-startswith fix prevents false NEEDS_REVISION."""
+    client = FakeClient(
+        result=ChatResult(
+            text="  INTRO: 引言測試第一行內容\n  EVENT: 事件經過內容在這裡",
+            finish_reason="stop",
+            model="m",
+            needs_revision=False,
+            executed=True,
+        )
+    )
+    draft = assemble(SOURCE, client)
+    assert draft.status == DraftStatus.DRAFTED, draft.review_reason
+    assert draft.intro == "引言測試第一行內容"
+    assert draft.event_body == "事件經過內容在這裡"
+
+
+# --------------------------------------------------------------------------
+# Integration: assembler output meets Unit 1 length constraints
+# --------------------------------------------------------------------------
+
+
+def test_assembled_draft_meets_unit1_length_constraints():
+    """Integration: assemble() → lint_draft() — intro and event_body produced by
+    a valid INTRO:/EVENT: response must not trigger Unit 1 length errors.
+
+    Only the intro/event_body length path is exercised — other REQUIRED_SECTIONS
+    (quick_facts/faq/summary) are filled by the copywriter, not the assembler,
+    so lint is expected to flag those as missing; the test only asserts that the
+    assembler does not truncate or mangle the two fields it owns."""
+    from lcp.core.rules.lint_rules import LintConfig, lint_draft
+
+    # 88-char intro satisfies [80, 120]; 128-char event_body satisfies [100, 200].
+    # Values mirror _strict_draft() in tests/rules/test_lint_rules.py.
+    intro_88 = (
+        "本週末在台北華山文創園區將舉辦規模盛大的年度美食市集活動，"
+        "現場聚集超過一百個來自全台各地的特色美食攤位，"
+        "主辦單位誠摯歡迎廣大民眾攜家帶眷前來共同參與這場精彩難得的美食文化盛會。"
+    )
+    event_128 = (
+        "台北華山文創園區本週末盛大舉辦年度全台最大規模的美食市集特色活動，"
+        "現場超過一百個攤位提供各式在地特色小吃及異國料理美食佳餚供民眾選購品嚐。"
+        "主辦單位預計吸引超過萬名以上的民眾前來共襄盛舉同歡，"
+        "現場另設有完善的休憩用餐區域提供給民眾休息並悠閒享用各式美食料理。"
+    )
+    client = FakeClient(
+        result=ChatResult(
+            text=f"INTRO: {intro_88}\nEVENT: {event_128}",
+            finish_reason="stop",
+            model="m",
+            needs_revision=False,
+            executed=True,
+        )
+    )
+    draft = assemble(SOURCE, client)
+    assert draft.status == DraftStatus.DRAFTED, draft.review_reason
+    # Assembler must preserve exact lengths without truncation.
+    assert len(draft.intro) == len(intro_88)
+    assert len(draft.event_body) == len(event_128)
+
+    # Integration check: no intro/event_body length errors from the Unit 1 gate.
+    # (title_min_chars/faq_min_count/quick_facts_min_count set to 0 because the
+    # assembler does not fill those fields — the copywriter does.)
+    lint_cfg = LintConfig(
+        title_min_chars=0,
+        intro_min_chars=80,
+        intro_max_chars=120,
+        event_body_min_chars=100,
+        event_body_max_chars=200,
+        faq_min_count=0,
+        quick_facts_min_count=0,
+        tag_min_count=0,
+    )
+    lint_result = lint_draft(draft, lint_cfg)
+    assert not any("intro" in e for e in lint_result.errors), lint_result.errors
+    assert not any("event_body" in e for e in lint_result.errors), lint_result.errors

@@ -41,6 +41,7 @@ class ReviewReason(str, Enum):
     RISK = "risk"
     DEDUP = "dedup"
     GROUNDING = "grounding"
+    CLASSIFICATION = "classification"
 
 
 # Transient state that must NOT be written to SQLite (crash detection relies on

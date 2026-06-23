@@ -110,6 +110,59 @@ def set_llm_api_key(secret: str, *, username: str = "llm") -> None:
         ) from e
 
 
+_TG_BOT_USER = "tg_bot"
+
+
+def resolve_tg_bot_token() -> str:
+    """Resolve the Telegram bot token from keyring, then env. Never from file.
+
+    Keyring: service=KEYRING_SERVICE, user='tg_bot'.
+    Env fallback: LCP_TG_BOT_TOKEN (dev/CI convenience)."""
+    try:
+        import keyring
+
+        secret = keyring.get_password(KEYRING_SERVICE, _TG_BOT_USER)
+        if secret:
+            return secret
+    except Exception:  # noqa: BLE001 - keyring fallback; env var is the backup
+        pass
+    env = os.environ.get("LCP_TG_BOT_TOKEN")
+    if env:
+        return env
+    raise DependencyError(
+        "Telegram bot token not configured: set it in the OS keyring "
+        f"(service={KEYRING_SERVICE!r}, user={_TG_BOT_USER!r}) "
+        "or the LCP_TG_BOT_TOKEN env var."
+    )
+
+
+def has_tg_bot_token() -> bool:
+    """True iff a TG bot token is resolvable — WITHOUT revealing it."""
+    try:
+        resolve_tg_bot_token()
+        return True
+    except DependencyError:
+        return False
+
+
+def set_tg_bot_token(secret: str) -> None:
+    """Store the Telegram bot token in the OS keyring.
+
+    The token is NEVER written to a config file. Raises InputValidationError
+    on empty input; DependencyError if no keyring backend is usable."""
+    if not secret or not secret.strip():
+        raise InputValidationError("Telegram bot token is empty")
+    try:
+        import keyring
+
+        keyring.set_password(KEYRING_SERVICE, _TG_BOT_USER, secret.strip())
+    except Exception as e:  # noqa: BLE001 - keyring backend boundary conversion
+        raise DependencyError(
+            f"could not store Telegram bot token in the OS keyring ({type(e).__name__}); "
+            "set the LCP_TG_BOT_TOKEN env var instead."
+        ) from e
+
+
 def _merge_list(llm: dict[str, Any], field: str, value: str) -> None:
     """Append `value` to the list at llm[field] (creating it), no duplicates."""
     items = llm.get(field)

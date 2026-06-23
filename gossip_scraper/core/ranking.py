@@ -177,9 +177,7 @@ def rank(items: list[GossipItem], sort_by: str = "score") -> list[GossipItem]:
         velocity_bonus = min(0.1, max(0, it.trend_velocity * 0.05))
         it.surprise_score = min(1.0, it.surprise_score + velocity_bonus)
         it.score = (
-            it.heat_score * W_HEAT
-            + it.freshness_score * W_FRESH
-            + it.surprise_score * W_SURPRISE
+            it.heat_score * W_HEAT + it.freshness_score * W_FRESH + it.surprise_score * W_SURPRISE
         )
 
     # Phase 5: sort by chosen dimension
@@ -260,9 +258,16 @@ def _score_surprise(
 
     # 5. Sentiment (controversy/anger get higher scores)
     from .sentiment import sentiment_to_score
+
     sent_score = sentiment_to_score(item.sentiment)
 
-    return 0.15 * tag_score + 0.35 * cross_score + 0.1 * vel_score + 0.25 * kw_score + 0.15 * sent_score
+    return (
+        0.15 * tag_score
+        + 0.35 * cross_score
+        + 0.1 * vel_score
+        + 0.25 * kw_score
+        + 0.15 * sent_score
+    )
 
 
 def _score_keywords(title: str) -> float:

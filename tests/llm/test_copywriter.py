@@ -205,3 +205,163 @@ def test_apply_copy_keeps_existing_summary_when_copy_summary_empty():
     draft = Draft(title="t", intro="i", event_body="b", summary="原有结尾")
     out = copywriter.apply_copy_to_draft(draft, copywriter.CopyResult(captions=["c"]))
     assert out.summary == "原有结尾"
+
+
+# --- Unit 3: build_system_prompt() structural rules ---------------------------
+
+
+def test_system_prompt_contains_title_structure_keywords():
+    prompt = copywriter.build_system_prompt()
+    # TITLE rules must mention 人物 (person/entity) as part of the structure spec.
+    assert "人物" in prompt
+    # Length constraint is stated.
+    assert "25" in prompt and "35" in prompt
+
+
+def test_system_prompt_contains_all_seven_quickfact_field_labels():
+    prompt = copywriter.build_system_prompt()
+    expected_fields = [
+        "人物/主體",
+        "發生地點",
+        "所屬平台",
+        "內容類型",
+        "事件關鍵詞",
+        "核心看點",
+        "當前進展",
+    ]
+    for field in expected_fields:
+        assert field in prompt, f"QUICKFACT field label missing from system prompt: {field!r}"
+
+
+def test_system_prompt_contains_faq_count_range():
+    prompt = copywriter.build_system_prompt()
+    # FAQ rules must specify the 3–5 range.
+    assert "3" in prompt and "5" in prompt
+
+
+def test_parse_quickfact_value_carries_field_label(with_key):
+    # QUICKFACT lines with embedded field labels (e.g. "人物/主體：某博主") must be
+    # stored verbatim in quick_facts — _parse does NOT split key/value further.
+    out = "QUICKFACT: 人物/主體：某博主\nQUICKFACT: 所屬平台：抖音\n"
+    client = LlmClient(_config(), client_factory=_Stub(out).factory)
+    res = copywriter.generate_structural_copy("src", client)
+    assert "人物/主體：某博主" in res.quick_facts
+    assert "所屬平台：抖音" in res.quick_facts
+
+
+def test_clean_tags_removes_hype_word_顶级():
+    # "顶级" is in DEFAULT_HYPE_WORDS (Unit 1); _clean_tags must filter it out.
+    result = copywriter._clean_tags(["顶级", "博主", "抖音"])
+    assert "顶级" not in result
+    assert "博主" in result
+    assert "抖音" in result
+
+
+# --- SOP U1: CATEGORY suggestion -----------------------------------------------
+
+
+def test_category_parsed_from_output(with_key):
+    out = "CATEGORY: 娛樂\nSUBHEAD: 事件\n"
+    client = LlmClient(_config(), client_factory=_Stub(out).factory)
+    res = copywriter.generate_structural_copy("src", client)
+    assert res.category == "娛樂"
+
+
+def test_category_absent_when_no_category_line(with_key):
+    out = "SUBHEAD: 事件\nTAG: 博主\nTAG: 抖音\nTAG: 八卦\n"
+    client = LlmClient(_config(), client_factory=_Stub(out).factory)
+    res = copywriter.generate_structural_copy("src", client)
+    assert res.category is None
+
+
+def test_category_first_match_only(with_key):
+    # Only the first CATEGORY: line is used; duplicates are ignored.
+    out = "CATEGORY: 娛樂\nCATEGORY: 社會\n"
+    client = LlmClient(_config(), client_factory=_Stub(out).factory)
+    res = copywriter.generate_structural_copy("src", client)
+    assert res.category == "娛樂"
+
+
+def test_category_not_produced_on_dry_run():
+    client = LlmClient(_config(), dry_run=True, client_factory=_Stub("CATEGORY: 娛樂\n").factory)
+    res = copywriter.generate_structural_copy("src", client)
+    assert res.category is None
+
+
+def test_apply_copy_merges_category():
+    draft = copywriter.Draft(title="t", intro="i", event_body="b")
+    copy = copywriter.CopyResult(category="體育")
+    out = copywriter.apply_copy_to_draft(draft, copy)
+    assert out.category == "體育"
+
+
+def test_apply_copy_keeps_existing_category_when_copy_empty():
+    draft = copywriter.Draft(title="t", intro="i", event_body="b", category="社會")
+    copy = copywriter.CopyResult()  # no category
+    out = copywriter.apply_copy_to_draft(draft, copy)
+    assert out.category == "社會"
+
+
+# --- SOP U2: KEYWORD_* generation ----------------------------------------------
+
+
+def test_keywords_parsed_with_type_prefix(with_key):
+    out = "KEYWORD_PERSON: 周冬雨\nKEYWORD_PLATFORM: 微博\n"
+    client = LlmClient(_config(), client_factory=_Stub(out).factory)
+    res = copywriter.generate_structural_copy("src", client)
+    assert "人物:周冬雨" in res.keywords
+    assert "平台:微博" in res.keywords
+
+
+def test_keywords_all_five_dimensions(with_key):
+    out = (
+        "KEYWORD_PERSON: 某博主\n"
+        "KEYWORD_PLACE: 上海\n"
+        "KEYWORD_PLATFORM: 抖音\n"
+        "KEYWORD_EVENT: 出軌事件\n"
+        "KEYWORD_TYPE: 爆料\n"
+    )
+    client = LlmClient(_config(), client_factory=_Stub(out).factory)
+    res = copywriter.generate_structural_copy("src", client)
+    assert "人物:某博主" in res.keywords
+    assert "地點:上海" in res.keywords
+    assert "平台:抖音" in res.keywords
+    assert "事件:出軌事件" in res.keywords
+    assert "內容類型:爆料" in res.keywords
+
+
+def test_keywords_capped_per_dimension(with_key):
+    # 5 KEYWORD_PERSON entries → only the first 3 are kept (_MAX_KW_PER_DIM=3)
+    out = "".join(f"KEYWORD_PERSON: 人{i}\n" for i in range(5))
+    client = LlmClient(_config(), client_factory=_Stub(out).factory)
+    res = copywriter.generate_structural_copy("src", client)
+    person_kws = [k for k in res.keywords if k.startswith("人物:")]
+    assert len(person_kws) == 3
+
+
+def test_keywords_empty_on_dry_run():
+    client = LlmClient(
+        _config(), dry_run=True, client_factory=_Stub("KEYWORD_PERSON: 某人\n").factory
+    )
+    res = copywriter.generate_structural_copy("src", client)
+    assert res.keywords == []
+
+
+def test_apply_copy_merges_keywords():
+    draft = copywriter.Draft(title="t", intro="i", event_body="b", keywords=["事件:原有"])
+    copy = copywriter.CopyResult(keywords=["人物:新人物"])
+    out = copywriter.apply_copy_to_draft(draft, copy)
+    assert "事件:原有" in out.keywords
+    assert "人物:新人物" in out.keywords
+
+
+def test_system_prompt_mentions_five_keyword_dimensions():
+    prompt = copywriter.build_system_prompt()
+    for dim in (
+        "KEYWORD_PERSON",
+        "KEYWORD_PLACE",
+        "KEYWORD_PLATFORM",
+        "KEYWORD_EVENT",
+        "KEYWORD_TYPE",
+    ):
+        assert dim in prompt

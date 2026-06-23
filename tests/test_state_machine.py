@@ -115,4 +115,4 @@ def test_side_branches_have_exits():
 
 
 def test_needs_human_review_reasons_exist():
-    assert {r.value for r in ReviewReason} == {"risk", "dedup", "grounding"}
+    assert {r.value for r in ReviewReason} == {"risk", "dedup", "grounding", "classification"}
