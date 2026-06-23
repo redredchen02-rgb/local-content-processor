@@ -43,11 +43,11 @@ echo ""
 
 # 4. 啟動 GUI。webview 視窗會卡住這個終端機直到你關閉視窗。
 "$LCP" gui
-status=$?
+exit_code=$?
 
 echo ""
-if [[ $status -ne 0 ]]; then
-  echo "❌ lcp gui 異常結束 (exit $status)，錯誤訊息見上方。"
+if [[ $exit_code -ne 0 ]]; then
+  echo "❌ lcp gui 異常結束 (exit $exit_code)，錯誤訊息見上方。"
   echo "（按 Enter 關閉視窗）"
   read -r _
 else

@@ -7,14 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-23
+
 ### Added
 
+- **GUI auto job-id**: URL input in the create form auto-suggests a job id from
+  the URL hostname + UTC date + 4-char random suffix; operators can accept or
+  override; the random suffix is always preserved even for very long hostnames
+- **GUI one-shot "quick mode"**: a checkbox in the create form runs Stage 1 + Stage 2
+  end-to-end (`run_until_draft_async`) so the crawler and LLM assembler complete
+  in one click instead of two separate steps
+- **GUI batch process**: "全部处理" button in the inflight inbox fans out
+  `process_async` to all crawled jobs in one click
+- **GUI banner CTA hints**: actionable states (crawled, processed, review-pending)
+  now show an arrow hint pointing to the action panel
+- **CLI `--job-id` optional**: `lcp crawl`, `lcp ingest`, and `lcp run` no longer
+  require `--job-id`; if omitted, a unique id is derived from the URL hostname (or
+  directory name) plus a UTC date and 4-char random suffix; the id is printed so
+  operators can reference it in subsequent commands
+- **`lcp gui` port auto-retry**: if the default port (8765) is occupied, the server
+  tries the next 9 ports before giving up and prints a progress message per attempt
 - **`gossip` optional extras group**: `gossip = ["httpx>=0.27,<1"]` declared in
-  `pyproject.toml`; CI installs it in all three jobs so `httpx` is available for
-  mypy type-checking
+  `pyproject.toml`; CI installs it so `httpx` is available for mypy type-checking
 - MIT License
-- PyPI release workflow (Trusted Publishing via OIDC)
-- `[project.urls]`, classifiers, and package-data for web assets
+- PyPI release workflow (Trusted Publishing via OIDC), `[project.urls]`,
+  classifiers, and package-data for web assets
 - **CI security gate**: `pip-audit` job scans the resolved dependency closure
   (exit code is the gate); advisory on the release path
 - **CI coverage gate**: `pytest-cov` reporting with a low `--cov-fail-under`
@@ -22,22 +39,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Runnable quickstart**: `samples/demo-001/` text bundle drives the real
   pipeline to `REVIEW_PENDING`; dedicated real-decodable-image media-gate test
 - **Release version-sync gate**: `scripts/check_tag_matches_version.py` fails a
-  tagged build loud when the pushed tag ≠ `pyproject` version (type-checked + tested)
+  tagged build loud when the pushed tag ≠ `pyproject` version
 
 ### Changed
 
 - **`gossip_scraper` under mypy + ruff gates**: `extend-exclude` lifted from ruff,
-  `gossip_scraper` added to `[tool.mypy] files`; 10 mypy errors resolved (dict type
-  annotations, `max()` lambda key functions, `ScraperProtocol` parameter/variable
-  types); ruff F401/I001 auto-fixed; httpx `ignore_missing_imports` override added
+  `gossip_scraper` added to `[tool.mypy] files`; 10 mypy errors resolved; ruff
+  F401/I001 auto-fixed; httpx `ignore_missing_imports` override added
 - **`__version__` single source**: sourced from installed package metadata
   (`importlib.metadata`), eliminating the `pyproject`↔`__init__.py` drift
 - **Release workflow hardened** to a fail-closed, concurrency-serialized
   three-job chain (`build → publish-pypi → github-release`): per-job least
-  privilege (`id-token` only on publish, `contents:write` only on release),
-  tag-ancestor + version-sync + CHANGELOG-section pre-publish gates, `twine
-  check --strict`, fresh-venv install smoke, cross-job dist digest re-verify,
-  all actions SHA-pinned, benchmark removed from the release path
+  privilege, tag-ancestor + version-sync + CHANGELOG-section pre-publish gates,
+  `twine check --strict`, fresh-venv install smoke, all actions SHA-pinned
+
+### Fixed
+
+- **auto job-id truncation**: long hostnames no longer silently eliminate the
+  random suffix (making every successive job for that source fail as "already
+  exists") — the base is now truncated before the suffix is appended, so
+  uniqueness is preserved at all hostname lengths
+- **`lcp gui` port retry**: uses `errno.EADDRINUSE` instead of a locale-dependent
+  string match; browser is correctly opened when any attempt (not only the first)
+  succeeds
 
 ## 0.1.0 — 2026-06-18
 
