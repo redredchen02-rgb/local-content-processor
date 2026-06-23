@@ -133,9 +133,9 @@ def _parse_sections(text: str) -> tuple[str, str]:
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not intro and line.startswith("INTRO:"):
-            intro = line[len("INTRO:"):].strip()
+            intro = line[len("INTRO:") :].strip()
         elif not event and line.startswith("EVENT:"):
-            event = line[len("EVENT:"):].strip()
+            event = line[len("EVENT:") :].strip()
     return sanitize_source(intro), sanitize_source(event)
 
 

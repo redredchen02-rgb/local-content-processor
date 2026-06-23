@@ -73,9 +73,7 @@ def send_notification(
             "Telegram notification is disabled (notification.enabled=false in config)"
         )
     if not config.telegram_chat_id:
-        raise InputValidationError(
-            "notification.telegram_chat_id is empty — set it in config.yaml"
-        )
+        raise InputValidationError("notification.telegram_chat_id is empty — set it in config.yaml")
     if not bot_token or not bot_token.strip():
         raise DependencyError("Telegram bot token is empty or missing")
 
@@ -106,9 +104,7 @@ def send_notification(
             actor=actor,
             extra={"error": error_type},
         )
-        raise ExternalServiceError(
-            f"Telegram notification failed ({error_type}): {exc}"
-        ) from exc
+        raise ExternalServiceError(f"Telegram notification failed ({error_type}): {exc}") from exc
 
     audit.append(
         ts=ts,

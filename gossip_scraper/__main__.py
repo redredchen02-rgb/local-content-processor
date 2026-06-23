@@ -179,9 +179,9 @@ async def run(
     if generate_mode:
         for it in all_items[:5]:
             post = generate_post(it, platform="weibo")
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print(f"【{post['title']}】")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
             print(post["body"])
             if post["call_to_action"]:
                 print(f"\n👉 {post['call_to_action']}")

@@ -74,8 +74,14 @@ def test_happy_path_sends_photo_and_writes_audit(store, audit, review_dir, monke
     monkeypatch.setattr(notifier, "urllib", _make_urllib_mock(_fake_urlopen))
 
     send_notification(
-        "j1", review_dir, "測試標題", _enabled_config(), audit, store,
-        bot_token=TOKEN, ts=TS,
+        "j1",
+        review_dir,
+        "測試標題",
+        _enabled_config(),
+        audit,
+        store,
+        bot_token=TOKEN,
+        ts=TS,
     )
 
     assert len(calls) == 1
@@ -101,8 +107,14 @@ def test_happy_path_text_fallback_when_cover_absent(store, audit, review_dir, mo
     monkeypatch.setattr(notifier, "urllib", _make_urllib_mock(_fake_urlopen))
 
     send_notification(
-        "j2", review_dir, "無封面標題", _enabled_config(), audit, store,
-        bot_token=TOKEN, ts=TS,
+        "j2",
+        review_dir,
+        "無封面標題",
+        _enabled_config(),
+        audit,
+        store,
+        bot_token=TOKEN,
+        ts=TS,
     )
 
     assert len(calls) == 1
@@ -124,8 +136,14 @@ def test_network_failure_writes_failed_audit_and_raises(store, audit, review_dir
 
     with pytest.raises(ExternalServiceError):
         send_notification(
-            "j3", review_dir, "title", _enabled_config(), audit, store,
-            bot_token=TOKEN, ts=TS,
+            "j3",
+            review_dir,
+            "title",
+            _enabled_config(),
+            audit,
+            store,
+            bot_token=TOKEN,
+            ts=TS,
         )
 
     events = _read_events(audit)
@@ -145,8 +163,14 @@ def test_config_disabled_raises_before_network(store, audit, review_dir, monkeyp
 
     with pytest.raises(InputValidationError, match="disabled"):
         send_notification(
-            "j4", review_dir, "title", NotificationConfig(enabled=False), audit, store,
-            bot_token=TOKEN, ts=TS,
+            "j4",
+            review_dir,
+            "title",
+            NotificationConfig(enabled=False),
+            audit,
+            store,
+            bot_token=TOKEN,
+            ts=TS,
         )
 
     assert calls == []
@@ -156,9 +180,14 @@ def test_missing_chat_id_raises_input_error(store, audit, review_dir, monkeypatc
     _job_at_review_pending(store, "j5")
     with pytest.raises(InputValidationError, match="chat_id"):
         send_notification(
-            "j5", review_dir, "title",
+            "j5",
+            review_dir,
+            "title",
             NotificationConfig(enabled=True, telegram_chat_id=""),
-            audit, store, bot_token=TOKEN, ts=TS,
+            audit,
+            store,
+            bot_token=TOKEN,
+            ts=TS,
         )
 
 
@@ -166,8 +195,14 @@ def test_empty_token_raises_dependency_error(store, audit, review_dir):
     _job_at_review_pending(store, "j6")
     with pytest.raises(DependencyError):
         send_notification(
-            "j6", review_dir, "title", _enabled_config(), audit, store,
-            bot_token="", ts=TS,
+            "j6",
+            review_dir,
+            "title",
+            _enabled_config(),
+            audit,
+            store,
+            bot_token="",
+            ts=TS,
         )
 
 
@@ -177,8 +212,14 @@ def test_non_review_pending_state_raises(store, audit, review_dir):
     # Leave at CRAWLED — not REVIEW_PENDING
     with pytest.raises(InputValidationError, match="REVIEW_PENDING"):
         send_notification(
-            "j7", review_dir, "title", _enabled_config(), audit, store,
-            bot_token=TOKEN, ts=TS,
+            "j7",
+            review_dir,
+            "title",
+            _enabled_config(),
+            audit,
+            store,
+            bot_token=TOKEN,
+            ts=TS,
         )
 
 
@@ -197,15 +238,21 @@ def test_dry_run_returns_without_api_call_or_audit(store, audit, review_dir, mon
     monkeypatch.setattr(notifier, "urllib", _make_urllib_mock(_fake_urlopen))
 
     send_notification(
-        "j8", review_dir, "title", _enabled_config(), audit, store,
-        bot_token=TOKEN, ts=TS, dry_run=True,
+        "j8",
+        review_dir,
+        "title",
+        _enabled_config(),
+        audit,
+        store,
+        bot_token=TOKEN,
+        ts=TS,
+        dry_run=True,
     )
 
     assert calls == []
     events = _read_events(audit)
     assert not any(
-        e.get("event") in (EVENT_NOTIFICATION_SENT, EVENT_NOTIFICATION_FAILED)
-        for e in events
+        e.get("event") in (EVENT_NOTIFICATION_SENT, EVENT_NOTIFICATION_FAILED) for e in events
     )
 
 
@@ -222,10 +269,12 @@ def test_webserver_injects_notification_enabled_true(tmp_path):
 
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
-        yaml.safe_dump({
-            "storage": {"base_dir": str(tmp_path)},
-            "notification": {"enabled": True, "telegram_chat_id": "-123"},
-        }),
+        yaml.safe_dump(
+            {
+                "storage": {"base_dir": str(tmp_path)},
+                "notification": {"enabled": True, "telegram_chat_id": "-123"},
+            }
+        ),
         encoding="utf-8",
     )
     api = Api(config_path=str(cfg))
@@ -258,10 +307,12 @@ def test_webserver_injects_notification_enabled_false(tmp_path):
 
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
-        yaml.safe_dump({
-            "storage": {"base_dir": str(tmp_path)},
-            "notification": {"enabled": False},
-        }),
+        yaml.safe_dump(
+            {
+                "storage": {"base_dir": str(tmp_path)},
+                "notification": {"enabled": False},
+            }
+        ),
         encoding="utf-8",
     )
     api = Api(config_path=str(cfg))
@@ -304,6 +355,7 @@ class _MockUrllib:
 
     def __getattr__(self, name: str):
         import urllib as _urllib
+
         return getattr(_urllib, name)
 
 

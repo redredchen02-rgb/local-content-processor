@@ -1,7 +1,7 @@
 ---
 title: "feat: 七/八條款文章格式規範 — 吃瓜內容 LLM 生成品質提升"
 type: feat
-status: active
+status: completed
 date: 2026-06-23
 ---
 

@@ -24,34 +24,40 @@ def check_alerts(items: list[GossipItem]) -> list[dict]:
     for it in items:
         # Cross-platform explosion
         if it.cross_platform_count >= CROSS_PLATFORM_ALERT:
-            alerts.append({
-                "type": "cross_platform",
-                "title": it.title,
-                "platforms": it.cross_platform_count,
-                "severity": "high" if it.cross_platform_count >= 6 else "medium",
-                "message": f"出現在{it.cross_platform_count}個平台：{', '.join(it.merged_from[:5])}",
-            })
+            alerts.append(
+                {
+                    "type": "cross_platform",
+                    "title": it.title,
+                    "platforms": it.cross_platform_count,
+                    "severity": "high" if it.cross_platform_count >= 6 else "medium",
+                    "message": f"出現在{it.cross_platform_count}個平台：{', '.join(it.merged_from[:5])}",
+                }
+            )
 
         # High heat + high surprise (dramatic + popular)
         if it.heat_score >= 0.8 and it.surprise_score >= HEAT_SURPRISE_THRESHOLD:
-            alerts.append({
-                "type": "dramatic_popular",
-                "title": it.title,
-                "heat": it.heat_score,
-                "surprise": it.surprise_score,
-                "severity": "high",
-                "message": f"高流量+高反差：H={it.heat_score:.2f} S={it.surprise_score:.2f}",
-            })
+            alerts.append(
+                {
+                    "type": "dramatic_popular",
+                    "title": it.title,
+                    "heat": it.heat_score,
+                    "surprise": it.surprise_score,
+                    "severity": "high",
+                    "message": f"高流量+高反差：H={it.heat_score:.2f} S={it.surprise_score:.2f}",
+                }
+            )
 
         # Sudden rank jump
         if it.trend_velocity >= VELOCITY_THRESHOLD:
-            alerts.append({
-                "type": "rising_fast",
-                "title": it.title,
-                "velocity": it.trend_velocity,
-                "severity": "medium",
-                "message": f"快速上升中：速度={it.trend_velocity:.2f}",
-            })
+            alerts.append(
+                {
+                    "type": "rising_fast",
+                    "title": it.title,
+                    "velocity": it.trend_velocity,
+                    "severity": "medium",
+                    "message": f"快速上升中：速度={it.trend_velocity:.2f}",
+                }
+            )
 
     # Sort by severity
     severity_order = {"high": 0, "medium": 1, "low": 2}

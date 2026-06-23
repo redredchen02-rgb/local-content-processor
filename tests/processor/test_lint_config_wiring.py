@@ -152,18 +152,14 @@ def test_unit1_summary_warn_ge_error_raises():
 
     # warn == error (degenerate — warn zone collapses to empty)
     try:
-        build_lint_config(
-            ContentConfig(summary_warn_chars=100, summary_error_chars=100), {}
-        )
+        build_lint_config(ContentConfig(summary_warn_chars=100, summary_error_chars=100), {})
         raise AssertionError("should have raised InputValidationError")
     except InputValidationError:
         pass
 
     # warn > error (inverted)
     try:
-        build_lint_config(
-            ContentConfig(summary_warn_chars=150, summary_error_chars=100), {}
-        )
+        build_lint_config(ContentConfig(summary_warn_chars=150, summary_error_chars=100), {})
         raise AssertionError("should have raised InputValidationError")
     except InputValidationError:
         pass
@@ -171,8 +167,6 @@ def test_unit1_summary_warn_ge_error_raises():
 
 def test_unit1_summary_warn_lt_error_ok():
     """summary_warn_chars < summary_error_chars → valid, no exception."""
-    cfg = build_lint_config(
-        ContentConfig(summary_warn_chars=80, summary_error_chars=120), {}
-    )
+    cfg = build_lint_config(ContentConfig(summary_warn_chars=80, summary_error_chars=120), {})
     assert cfg.summary_warn_chars == 80
     assert cfg.summary_error_chars == 120

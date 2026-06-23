@@ -408,8 +408,9 @@ def test_unit1_summary_error_zone():
 def test_unit1_too_few_faq():
     """faq items < faq_min_count (3) → error."""
     r = lint_draft(
-        _strict_draft(faq=[FaqItem(question="問？", answer="答。"),
-                           FaqItem(question="問2？", answer="答2。")]),
+        _strict_draft(
+            faq=[FaqItem(question="問？", answer="答。"), FaqItem(question="問2？", answer="答2。")]
+        ),
         CFG_STRICT,
     )
     assert r.status == LintStatus.NEEDS_REVISION

@@ -357,5 +357,11 @@ def test_apply_copy_merges_keywords():
 
 def test_system_prompt_mentions_five_keyword_dimensions():
     prompt = copywriter.build_system_prompt()
-    for dim in ("KEYWORD_PERSON", "KEYWORD_PLACE", "KEYWORD_PLATFORM", "KEYWORD_EVENT", "KEYWORD_TYPE"):
+    for dim in (
+        "KEYWORD_PERSON",
+        "KEYWORD_PLACE",
+        "KEYWORD_PLATFORM",
+        "KEYWORD_EVENT",
+        "KEYWORD_TYPE",
+    ):
         assert dim in prompt

@@ -188,7 +188,10 @@ def run_draft_lint_gate(
                 event=EVENT_LINT_GATE,
                 job_id=job_id,
                 actor=actor,
-                extra={"status": "needs_human_review", "review_reason": ReviewReason.CLASSIFICATION.value},
+                extra={
+                    "status": "needs_human_review",
+                    "review_reason": ReviewReason.CLASSIFICATION.value,
+                },
             )
             persist_gate_state(
                 store,
