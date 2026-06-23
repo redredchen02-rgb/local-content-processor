@@ -126,8 +126,8 @@ docker compose up -d
 # 2. Initialize configuration
 docker compose exec lcp lcp init
 
-# 3. Ingest sample content (create your own content dir or use an existing one)
-docker compose exec lcp lcp ingest --job-id demo-001 --dir ./material/demo-001
+# 3. Ingest the bundled sample content (samples/demo-001 ships with the repo)
+docker compose exec lcp lcp ingest --job-id demo-001 --dir ./samples/demo-001
 
 # 4. View the worklist
 docker compose exec lcp lcp list
