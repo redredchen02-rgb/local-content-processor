@@ -680,9 +680,34 @@ async function openJob(jobId) {
     return;
   }
   renderBanner(rec.state, rec.review_reason);
+  await renderIngestReport(jobId);
   const reviewers = await a.reviewers();
   renderActions(rec.state, rec.review_reason, reviewers);
   await renderPacket(jobId);
+}
+
+async function renderIngestReport(jobId) {
+  const a = api(); if (!a) return;
+  const res = await a.get_ingest_report(jobId);
+  if (!res || isError(res) || !res.report) return;
+  const r = res.report;
+  const box = el("div"); box.className = "ingest-report";
+  const imgs = r.imported_images || 0;
+  const vids = r.imported_videos || 0;
+  if (imgs > 0 || vids > 0) {
+    box.appendChild(el("p", "✓ 已匯入 " + imgs + " 張圖片、" + vids + " 支影片"));
+  }
+  if (!r.has_body) {
+    const w = el("p"); w.className = "warn"; w.textContent = "⚠ 缺少正文 (body.txt)";
+    box.appendChild(w);
+  }
+  if (r.failed && r.failed.length > 0) {
+    const names = r.failed.slice(0, 5).map(function (f) { return f.name; }).join("、");
+    const w = el("p"); w.className = "warn";
+    w.textContent = "⚠ " + r.failed.length + " 個檔案匯入失敗: " + names;
+    box.appendChild(w);
+  }
+  if (box.children.length) $("job-banner").appendChild(box);
 }
 
 function renderBanner(state, reason) {

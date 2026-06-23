@@ -875,3 +875,102 @@ def test_module_imports_without_pywebview_window():
     # Constructing Api does NOT open a window or import webview.
     api = gui.Api()
     assert api is not None
+
+
+# ── ingest report tests ────────────────────────────────────────────────────────
+
+
+def _make_ingest_report(raw_dir, *, has_body=True, images=2, videos=0, failed=None):
+    import json
+
+    (raw_dir / "raw").mkdir(parents=True, exist_ok=True)
+    report = {
+        "job_id": "j1",
+        "has_title": True,
+        "has_body": has_body,
+        "imported_images": images,
+        "imported_videos": videos,
+        "failed": failed or [],
+        "skipped": 0,
+        "truncated_at_max_assets": False,
+        "complete": has_body and not failed,
+    }
+    (raw_dir / "raw" / "ingest_report.json").write_text(
+        json.dumps(report, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def test_get_ingest_report_happy_path_returns_counts(tmp_path):
+    import yaml
+
+    cfg = tmp_path / "config.yaml"
+    jobs = tmp_path / "jobs"
+    jobs.mkdir()
+    cfg.write_text(yaml.safe_dump({"storage": {"base_dir": str(tmp_path)}}), encoding="utf-8")
+    api = Api(config_path=str(cfg))
+
+    # Create the job and its raw dir.
+    job_dir = jobs / "j1"
+    job_dir.mkdir()
+    _make_ingest_report(job_dir, images=3, videos=1)
+
+    result = api.get_ingest_report("j1")
+    assert result["report"] is not None
+    assert result["report"]["imported_images"] == 3
+    assert result["report"]["imported_videos"] == 1
+    assert result["report"]["has_body"] is True
+
+
+def test_get_ingest_report_partial_has_body_false(tmp_path):
+    import yaml
+
+    cfg = tmp_path / "config.yaml"
+    jobs = tmp_path / "jobs"
+    jobs.mkdir()
+    cfg.write_text(yaml.safe_dump({"storage": {"base_dir": str(tmp_path)}}), encoding="utf-8")
+    api = Api(config_path=str(cfg))
+
+    job_dir = jobs / "j1"
+    job_dir.mkdir()
+    _make_ingest_report(
+        job_dir,
+        has_body=False,
+        failed=[{"name": "bad.jpg", "reason": "corrupt"}],
+    )
+
+    result = api.get_ingest_report("j1")
+    assert result["report"]["has_body"] is False
+    assert len(result["report"]["failed"]) == 1
+    assert result["report"]["failed"][0]["name"] == "bad.jpg"
+
+
+def test_get_ingest_report_absent_returns_none(tmp_path):
+    """URL-crawled job has no ingest_report.json → returns None gracefully."""
+    import yaml
+
+    cfg = tmp_path / "config.yaml"
+    jobs = tmp_path / "jobs"
+    jobs.mkdir()
+    cfg.write_text(yaml.safe_dump({"storage": {"base_dir": str(tmp_path)}}), encoding="utf-8")
+    api = Api(config_path=str(cfg))
+
+    job_dir = jobs / "j1"
+    job_dir.mkdir()  # no raw/ingest_report.json
+
+    result = api.get_ingest_report("j1")
+    assert result["report"] is None
+
+
+def test_get_ingest_report_path_traversal_raises(tmp_path):
+    """job_id containing path traversal must raise InputValidationError."""
+    import yaml
+
+    from lcp.core.errors import InputValidationError
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(yaml.safe_dump({"storage": {"base_dir": str(tmp_path)}}), encoding="utf-8")
+    api = Api(config_path=str(cfg))
+
+    result = api.get_ingest_report("../../../etc/passwd")
+    # @bridge_safe maps InputValidationError to {"error": ..., "exit_code": 2}
+    assert "error" in result and result["exit_code"] == 2

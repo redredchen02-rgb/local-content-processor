@@ -762,6 +762,43 @@ def run(ctx, url, input_dir, job_id, target, title, source_urls, ai_copy, templa
     )
 
 
+@cli.command(name="show-ingest-report")
+@click.option("--job-id", "job_id", required=True)
+@click.pass_context
+def show_ingest_report(ctx, job_id):
+    """Print the LOCAL_DIR ingest completeness report for a job (SOP step 01).
+
+    Exits 0 when the report is complete; exits 2 when absent or incomplete."""
+    import json as _json_mod
+
+    from .adapters.crawler.net_guard import safe_join
+
+    c = Ctx(ctx.obj)
+    raw_dir = Path(c.store.job_dir(job_id)) / "raw"
+    try:
+        report_path = safe_join(raw_dir, "ingest_report.json")
+    except LcpError as e:
+        raise click.ClickException(str(e)) from e
+    if not report_path.exists():
+        c.emit({"job_id": job_id, "report": None}, human=f"no ingest report for {job_id}")
+        raise SystemExit(2)
+    data = _json_mod.loads(report_path.read_text(encoding="utf-8"))
+    if c.as_json:
+        click.echo(_json_mod.dumps(data, ensure_ascii=False, sort_keys=True))
+        return
+    imgs = data.get("imported_images", 0)
+    vids = data.get("imported_videos", 0)
+    failed = data.get("failed") or []
+    click.echo(f"✓ 已匯入 {imgs} 張圖片、{vids} 支影片")
+    if not data.get("has_body"):
+        click.echo("⚠ 缺少正文 (body.txt)")
+    if failed:
+        names = ", ".join(f["name"] for f in failed[:5])
+        click.echo(f"⚠ {len(failed)} 個檔案匯入失敗: {names}")
+    if not data.get("complete"):
+        raise SystemExit(2)
+
+
 @cli.command()
 @click.option("--job-id", "job_id", required=True, help="REVIEW_PENDING job to notify for")
 @click.pass_context

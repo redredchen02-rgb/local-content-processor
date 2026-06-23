@@ -40,6 +40,7 @@ _CLI_NORMALIZE: dict[str, str] = {
     "list": "list_jobs",
     "review-packet": "review_packet",
     "ingest-gossip": "ingest_gossip",
+    "show-ingest-report": "get_ingest_report",
 }
 
 # GUI method -> canonical name

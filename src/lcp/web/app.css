@@ -175,6 +175,9 @@ input[type="text"], select { flex: 1; min-width: 11rem; padding: var(--sp-1); }
 .tone--ready, .tone--go, .tone--done { background: var(--c-go-bg); color: var(--c-go-tx); }
 .tone--void { background: var(--c-void-bg); color: var(--c-void-tx); }
 .reason-note { margin-top: var(--sp-2); padding-top: var(--sp-2); border-top: 1px dashed currentColor; }
+.ingest-report { font-size: var(--fs-400); margin: var(--sp-2) 0; padding: var(--sp-2) var(--sp-3); background: var(--c-neutral-bg); border-radius: var(--radius-sm); }
+.ingest-report p { margin: var(--sp-1) 0; }
+.ingest-report .warn { color: var(--c-attention-tx); }
 
 /* action region + in-DOM confirm tray */
 .action-row { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; margin: var(--sp-2) 0; }
