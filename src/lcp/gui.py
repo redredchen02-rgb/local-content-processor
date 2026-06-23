@@ -379,6 +379,7 @@ class Api:
                 # A non-LcpError must NOT kill the worker and strand status at
                 # "running" forever. Return the same bridge-safe error shape fn()
                 # itself would (no raw exception text crosses the bridge).
+                logger.exception("background task failed for job %s", job_id)
                 result = {"error": "internal error", "exit_code": EXIT_INTERNAL}
             done = "error" if "error" in result else "done"
             with self.inflight_lock:
@@ -932,7 +933,7 @@ class Api:
             c.store,
             bot_token=bot_token,
             ts=_now(),
-            dry_run=c.dry_run,
+            dry_run=False,
         )
         return {"job_id": escape_html(job_id), "notified": True}
 
