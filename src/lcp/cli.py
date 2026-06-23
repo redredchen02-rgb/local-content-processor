@@ -20,8 +20,8 @@ import re
 import string
 import sys
 from pathlib import Path
-from urllib.parse import urlparse as _urlparse
 from typing import Any
+from urllib.parse import urlparse as _urlparse
 
 import click
 
@@ -902,9 +902,9 @@ def gui(ctx, port, no_browser):
     Chrome to drive/debug with Claude in Chrome. Stdlib only; no extra deps.
     Configure the LLM endpoint + api_key from the Settings panel; base_url/model
     go to the config file, the api_key goes to the OS keyring only (never a file)."""
-    from .webserver import DEFAULT_PORT, serve
-
     import errno as _errno
+
+    from .webserver import DEFAULT_PORT, serve
 
     _PORT_RETRIES = 10
     target_port = port if port is not None else DEFAULT_PORT
@@ -921,9 +921,7 @@ def gui(ctx, port, no_browser):
             if e.errno == _errno.EADDRINUSE and attempt < _PORT_RETRIES - 1:
                 click.echo(f"Port {current_port} in use, trying {current_port + 1}...", err=True)
                 continue
-            raise DependencyError(
-                f"could not start the webui server: {e}; try --port"
-            ) from e
+            raise DependencyError(f"could not start the webui server: {e}; try --port") from e
 
 
 def main(argv: list[str] | None = None) -> int:
