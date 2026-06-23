@@ -52,8 +52,6 @@ from typing import Any
 
 from . import pipeline as pl
 from .adapters.clock import now as _now
-
-logger = logging.getLogger(__name__)
 from .adapters.crawler.base import SourceSpec
 from .adapters.crawler.factory import build_crawler
 from .adapters.crawler.ingest import LocalIngestCrawler
@@ -69,6 +67,8 @@ from .adapters.storage.source_store import SourceStore
 from .core import config as _config
 from .core.errors import EXIT_INTERNAL, LcpError
 from .core.models import SourceType
+
+logger = logging.getLogger(__name__)
 
 
 def _error_dict(err: LcpError) -> dict:
