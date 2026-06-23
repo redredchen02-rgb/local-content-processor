@@ -12,6 +12,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MIT License
 - PyPI release workflow (Trusted Publishing via OIDC)
 - `[project.urls]`, classifiers, and package-data for web assets
+- **CI security gate**: `pip-audit` job scans the resolved dependency closure
+  (exit code is the gate); advisory on the release path
+- **CI coverage gate**: `pytest-cov` reporting with a low `--cov-fail-under`
+  soft floor (regression insurance, ratchets upward)
+- **Runnable quickstart**: `samples/demo-001/` text bundle drives the real
+  pipeline to `REVIEW_PENDING`; dedicated real-decodable-image media-gate test
+- **Release version-sync gate**: `scripts/check_tag_matches_version.py` fails a
+  tagged build loud when the pushed tag ≠ `pyproject` version (type-checked + tested)
+
+### Changed
+
+- **`__version__` single source**: sourced from installed package metadata
+  (`importlib.metadata`), eliminating the `pyproject`↔`__init__.py` drift
+- **Release workflow hardened** to a fail-closed, concurrency-serialized
+  three-job chain (`build → publish-pypi → github-release`): per-job least
+  privilege (`id-token` only on publish, `contents:write` only on release),
+  tag-ancestor + version-sync + CHANGELOG-section pre-publish gates, `twine
+  check --strict`, fresh-venv install smoke, cross-job dist digest re-verify,
+  all actions SHA-pinned, benchmark removed from the release path
 
 ## 0.1.0 — 2026-06-18
 

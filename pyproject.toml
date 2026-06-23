@@ -109,7 +109,10 @@ docstring-code-format = true
 # override module list below.
 [tool.mypy]
 python_version = "3.11"
-files = ["src/lcp"]
+# `scripts/` holds release tooling outside the shipped package; it is type-checked
+# (at the non-strict baseline — it does not match the strict-bundle globs below)
+# so the version-sync release gate is covered by the gate, not just by its test.
+files = ["src/lcp", "scripts"]
 # --strict's global-only flags live here (they cannot sit in a per-module
 # override); the per-module-settable rest of --strict is in the lcp.core.* block.
 warn_unused_configs = true
