@@ -91,8 +91,8 @@ class LlmConfig(BaseModel):
     base_url: str = ""
     keyring_username: str = "llm"
     model: str = ""
-    timeout_seconds: int = 60
-    max_retries: int = 3
+    timeout_seconds: int = 30
+    max_retries: int = 1
     allowed_hosts: list[str] = Field(default_factory=list)
     # R40 escape hatch, config-driven (defaults keep https-only, public-CA).
     # ca_bundle: path to a private-CA bundle (extra trusted roots). This still

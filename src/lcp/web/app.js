@@ -51,6 +51,8 @@ var BRIDGE = new Proxy({}, {
     if (typeof name !== "string" || name === "then") return undefined;
     return function () {
       var args = Array.prototype.slice.call(arguments);
+      var ac = new AbortController();
+      var timer = setTimeout(function () { ac.abort(); }, 15000);
       return fetch("/api/" + name, {
         method: "POST",
         headers: {
@@ -58,8 +60,13 @@ var BRIDGE = new Proxy({}, {
           Authorization: "Bearer " + (LCP_TOKEN || ""),
         },
         body: JSON.stringify({ args: args }),
+        signal: ac.signal,
       }).then(function (r) {
+        clearTimeout(timer);
         return r.json();
+      }).catch(function (e) {
+        clearTimeout(timer);
+        throw e;
       });
     };
   },

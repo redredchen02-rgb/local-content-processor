@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-_BUSY_TIMEOUT_MS = 5000
+_BUSY_TIMEOUT_MS = 10000
 
 
 class SqliteBase:
@@ -21,7 +21,7 @@ class SqliteBase:
     _SCHEMA: str
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=_BUSY_TIMEOUT_MS / 1000)
+        conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
         return conn

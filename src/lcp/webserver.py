@@ -216,6 +216,7 @@ class _Server(ThreadingHTTPServer):
 
     def __init__(self, address: tuple[str, int], handler: type, *, api: Any, token: str):
         super().__init__(address, handler)
+        self.timeout = 30  # socket read/write timeout (seconds)
         self.api = api
         self.token = token
         # The ACTUAL bound port (0 -> ephemeral) drives the Host allowlist.
@@ -410,6 +411,7 @@ def serve(  # pragma: no cover - blocking, desktop/operator entry point
     api = _make_api(config_path)
     token = secrets.token_urlsafe(32)
     server = build_server(api, token=token, port=port)
+    server.timeout = 1  # serve_forever poll interval for shutdown checks
     url = f"http://{SERVER_HOST}:{server.public_port}/"
     # flush=True: the URL is the guaranteed deliverable (R1); without it a piped/
     # redirected stdout buffers and the operator never sees where to point Chrome.

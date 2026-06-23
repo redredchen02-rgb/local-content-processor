@@ -145,7 +145,7 @@ class CrawlRunner:
         try:
             proc = self._run(
                 cmd,
-                timeout=self.timeout + 30,  # outer guard > Scrapy's own timeout
+                timeout=self.timeout * 2 + 10,  # outer guard > Scrapy's own timeout
                 env=minimal_env(),  # NO secrets inherited (R40/R44)
                 capture_output=True,
                 text=True,

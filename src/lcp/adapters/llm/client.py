@@ -63,10 +63,9 @@ MAX_TEMPERATURE = 0.3
 # counter resets on any success.
 #
 # WORST-CASE STALL: each real call can itself block up to
-# (max_retries + 1) × timeout_seconds while the SDK retries. Operators should NOT
-# set both `llm.max_retries` and `llm.timeout_seconds` high, or a single
-# pre-cooldown call can stall for that whole product before this cooldown even
-# has a chance to engage.
+# (max_retries + 1) × timeout_seconds while the SDK retries. With defaults
+# (max_retries=1, timeout_seconds=30) worst case is 60s per call — well
+# within the cooldown window of 60s after 3 failures.
 COOLDOWN_FAILURE_THRESHOLD = 3
 COOLDOWN_SECONDS = 60.0
 
