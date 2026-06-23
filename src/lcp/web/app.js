@@ -249,6 +249,7 @@ function stageLabel(kind) {
   if (kind === "crawl") return "正在抓取页面…";
   if (kind === "process_dry") return "正在跑安全预览（不连模型）…";
   if (kind === "process") return "正在请模型组装草稿…";
+  if (kind === "run") return "正在一键爬取并处理草稿…";
   return "处理中…";
 }
 
@@ -489,6 +490,20 @@ async function refreshInbox() {
         collapsed = !collapsed; body.hidden = collapsed; setText(toggle, collapsed ? "展开" : "收起");
       });
       head.appendChild(toggle);
+    }
+    if (b.key === "inflight") {
+      var crawledRows = rows.filter(function (j) { return j.state === "crawled" || j.state === "crawled_warn"; });
+      if (crawledRows.length) {
+        var batchBtn = button("全部处理 (" + crawledRows.length + "个)", "btn-secondary");
+        batchBtn.addEventListener("click", function () {
+          setBusy(batchBtn, true);
+          var a = api();
+          if (a) { crawledRows.forEach(function (j) { a.process_async(j.job_id, "", false, null, null, true); }); }
+          showToast("已送出 " + crawledRows.length + " 个工作排队处理", "success");
+          setTimeout(function () { setBusy(batchBtn, false); }, 2000);
+        });
+        head.appendChild(batchBtn);
+      }
     }
     section.appendChild(head);
     if (rows.length === 0) {
@@ -998,7 +1013,17 @@ function renderBanner(state, reason) {
   head.appendChild(badgeFor(state));
   box.appendChild(head);
   box.appendChild(el("p", lx.why));
-  if (lx.next) box.appendChild(el("p", "你可以：" + lx.next));
+  if (lx.next) {
+    var ctaStates = ["crawled", "crawled_warn", "processed", "review_pending"];
+    if (ctaStates.indexOf(state) !== -1) {
+      var hint = el("div");
+      hint.className = "banner-cta-hint";
+      hint.textContent = "→ 见下方行动：" + lx.next;
+      box.appendChild(hint);
+    } else {
+      box.appendChild(el("p", "你可以：" + lx.next));
+    }
+  }
   if (state === "needs_human_review" && reason) {
     const r = lexReason(reason);
     if (r) {
@@ -1430,6 +1455,24 @@ function inertLinks(container, items) {
 // through the normal, re-validated create path.
 const savedSourceRaw = {};
 
+// U1: auto job-id suggestion from URL hostname + YYMMDD + 4-char random suffix.
+// Returns "" on any error so callers can skip if empty.
+var _jobIdAutofilled = false;
+function _suggestJobId(url) {
+  try {
+    var hostname = new URL(url).hostname.toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    if (!hostname) hostname = "job";
+    var d = new Date();
+    var yy = String(d.getUTCFullYear()).slice(2);
+    var mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+    var dd = String(d.getUTCDate()).padStart(2, "0");
+    var rand = (Math.random().toString(36).slice(2) + "0000").slice(0, 4);
+    var suffix = "-" + yy + mm + dd + "-" + rand;
+    return hostname.slice(0, 40 - suffix.length) + suffix;
+  } catch (e) { return ""; }
+}
+
 function createModeUrl() {
   return $("create-mode-url").checked;
 }
@@ -1478,7 +1521,7 @@ function openCreate(jobId) {
   $("job-create").hidden = false;
   clear($("job-banner")); clear($("job-actions")); clear($("job-packet")); clear($("job-status")); clear($("job-inflight"));
   setText($("job-title"), jobId ? "重新抓取 " + jobId : "新工作");
-  if (jobId) $("create-job-id").value = jobId;
+  $("create-job-id").value = jobId || ""; _jobIdAutofilled = false;
   $("create-save-source").checked = false;
   $("create-save-label").value = "";
   setText($("create-status"), "");
@@ -1504,6 +1547,15 @@ function bindCreate() {
     await a.delete_saved_source(id);
     await loadSavedSources();
   });
+  // U1: auto-fill job-id from URL hostname when the url input changes.
+  $("create-url").addEventListener("input", function () {
+    if ($("create-mode-url").checked && (_jobIdAutofilled || !$("create-job-id").value.trim())) {
+      var suggestion = _suggestJobId(this.value.trim());
+      if (suggestion) { $("create-job-id").value = suggestion; _jobIdAutofilled = true; }
+    }
+  });
+  // U1: once the user types in the job-id field, stop overwriting it.
+  $("create-job-id").addEventListener("input", function () { _jobIdAutofilled = false; });
   $("btn-create").addEventListener("click", async function () {
     const a = api(); if (!a) return;
     const jobId = $("create-job-id").value.trim();
@@ -1520,11 +1572,14 @@ function bindCreate() {
       const url = $("create-url").value.trim();
       if (!url) { setText($("create-status"), "请填网址。"); return; }
       setBusy(btn, true);
-      const kick = await a.create_and_crawl_async(jobId, url); // async -> no freeze
+      // U2: quick-mode checkbox → one-shot Stage1+Stage2 (run_until_draft_async).
+      const quickMode = $("create-quick-mode") && $("create-quick-mode").checked;
+      const kick = quickMode ? await a.run_until_draft_async(jobId, url, true)
+                             : await a.create_and_crawl_async(jobId, url);
       setBusy(btn, false);
       if (isError(kick)) { setText($("create-status"), inlineError(kick)); return; }
       await maybeSaveSource(url);
-      enterProgress(jobId, "crawl");
+      enterProgress(jobId, quickMode ? "run" : "crawl");
       refreshInbox();
     } else {
       const dir = $("create-dir").value.trim();

@@ -165,7 +165,7 @@ class CrawlRunner:
         rc = getattr(proc, "returncode", None)
         if rc != 0:
             _clear_raw(spec.job_dir)  # U12: orphaned partial downloads -> clean retry
-            stderr_tail = (proc.stderr or "")[-500:].strip()
+            stderr_tail = (getattr(proc, "stderr", None) or "")[-500:].strip()
             raise ExternalServiceError(
                 f"crawl subprocess failed (rc={rc})"
                 + (f": {stderr_tail}" if stderr_tail else "")
@@ -180,7 +180,7 @@ class CrawlRunner:
             raise
         if manifest is None:
             _clear_raw(spec.job_dir)  # U12: no valid bundle -> clean retry
-            stderr_tail = (proc.stderr or "")[-500:].strip()
+            stderr_tail = (getattr(proc, "stderr", None) or "")[-500:].strip()
             raise ExternalServiceError(
                 f"crawl subprocess produced no manifest (rc={rc})"
                 + (f": {stderr_tail}" if stderr_tail else "")

@@ -314,6 +314,34 @@ def test_runner_no_manifest_raises_external_service_error(tmp_path):
         runner.crawl_url(spec, ts=TS)
 
 
+def test_runner_nonzero_rc_surfaces_stderr(tmp_path):
+    """When the crawl subprocess exits non-zero, the stderr output (which
+    contains the actual exception) must be included in the error message."""
+    error_msg = '{"error": "ImportError", "message": "No module named scrapy"}'
+
+    def fake_run(cmd, **kwargs):
+        class P:
+            returncode = 5
+            stderr = error_msg
+
+        return P()
+
+    runner = CrawlRunner(_registry(), resolver=_good_resolver, subprocess_runner=fake_run)
+    spec = SourceSpec(
+        job_id="jstderr",
+        source_type=SourceType.URL,
+        job_dir=tmp_path / "jstderr",
+        url="https://example.com/x",
+    )
+    with pytest.raises(ExternalServiceError, match="rc=5"):
+        runner.crawl_url(spec, ts=TS)
+    try:
+        runner.crawl_url(spec, ts=TS)
+    except ExternalServiceError as e:
+        assert "ImportError" in str(e)
+        assert "No module named scrapy" in str(e)
+
+
 def test_runner_nonzero_rc_with_stale_manifest_raises(tmp_path):
     """U6 (REL-1): a child that exits NON-ZERO must be a retriable failure even if
     a (stale, from a prior run) manifest is present — the runner must check

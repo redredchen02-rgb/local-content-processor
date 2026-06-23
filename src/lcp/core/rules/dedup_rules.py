@@ -219,17 +219,16 @@ def _get_or_build_lsh(
         if key in _lsh_cache:
             return _lsh_cache[key], _lsh_sigs_cache[key]
 
-    lsh = MinHashLSH(threshold=lsh_threshold, num_perm=num_perm)
-    signatures: dict[str, MinHash] = {}
-    for entry in index.entries:
-        if not entry.body.strip():
-            continue
-        sig = build_minhash(entry.body, num_perm=num_perm, k=k)
-        signatures[entry.job_id] = sig
-        if entry.job_id not in lsh:
-            lsh.insert(entry.job_id, sig)
+        lsh = MinHashLSH(threshold=lsh_threshold, num_perm=num_perm)
+        signatures: dict[str, MinHash] = {}
+        for entry in index.entries:
+            if not entry.body.strip():
+                continue
+            sig = build_minhash(entry.body, num_perm=num_perm, k=k)
+            signatures[entry.job_id] = sig
+            if entry.job_id not in lsh:
+                lsh.insert(entry.job_id, sig)
 
-    with _lsh_lock:
         # Bound the cache to prevent unbounded growth (max 32 recent indices).
         if len(_lsh_cache) >= 32:
             oldest = next(iter(_lsh_cache))

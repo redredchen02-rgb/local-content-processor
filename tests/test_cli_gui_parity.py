@@ -67,6 +67,7 @@ _GUI_ONLY: frozenset[str] = frozenset(
     {
         "create_and_crawl_async",  # async background kickoff
         "process_async",  # async background kickoff
+        "run_until_draft_async",  # async background kickoff (one-shot Stage1+Stage2)
         "templates",  # data endpoint, not an operator action
         "reviewers",  # data endpoint
         "disclaimer",  # data endpoint

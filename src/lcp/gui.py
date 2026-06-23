@@ -410,6 +410,44 @@ class Api:
         )
 
     @bridge_safe
+    def _do_run_until_draft(self, job_id: str, url: str, ai_copy: bool) -> dict:
+        """Sync helper: Stage 1 + Stage 2 up to draft target; called from
+        run_until_draft_async. @bridge_safe so LcpError yields a proper error
+        dict rather than the generic "internal error" from _run_bg's bare except."""
+        c = self._ctx()
+        crawler = build_crawler(c.config, c.audit, _now)
+        spec = SourceSpec(
+            job_id=job_id,
+            source_type=SourceType.URL,
+            job_dir=c.store.job_dir(job_id),
+            url=url,
+            max_assets=c.config.crawler.max_assets_per_job,
+        )
+        p = pl.Pipeline(c.config, c.store, c.audit, crawler=crawler)
+        res = p.run_until(
+            spec,
+            target=pl.TARGET_DRAFT,
+            ts=_now(),
+            ai_copy=bool(ai_copy),
+            source_urls=[url],
+        )
+        return {
+            "job_id": escape_html(job_id),
+            "state": res.final_state.value,
+            "target": res.target,
+            "dry_run": res.dry_run,
+            "notes": [escape_html(n) for n in res.notes],
+            "advisory": _completion_advisory(res.final_state, dry_run=res.dry_run),
+        }
+
+    def run_until_draft_async(self, job_id: str, url: str, ai_copy: bool = True) -> dict:
+        """Background variant: Stage 1 + Stage 2 end-to-end up to draft target.
+
+        Returns immediately with ``{status: "running"}``; the GUI polls
+        :meth:`job_status` until ``status`` becomes ``done`` or ``error``."""
+        return self._run_bg(job_id, lambda: self._do_run_until_draft(job_id, url, ai_copy))
+
+    @bridge_safe
     def job_status(self, job_id: str) -> dict:
         """Read a background task's status: running | done | error | unknown.
 

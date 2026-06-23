@@ -15,8 +15,12 @@ paste + attestation (R26/R37)."""
 from __future__ import annotations
 
 import json as _json
+import random
+import re
+import string
 import sys
 from pathlib import Path
+from urllib.parse import urlparse as _urlparse
 from typing import Any
 
 import click
@@ -60,6 +64,28 @@ def _completion_advisory(state: Any, *, dry_run: bool) -> str | None:
             "complete draft needs --ai-copy (and captions only for image bundles)."
         )
     return None
+
+
+def _auto_job_id(url: str | None = None, directory: str | None = None) -> str:
+    """Generate a job id from URL hostname (or dir name) + YYMMDD + 4-char random suffix."""
+    ts = _now()  # ISO-8601, e.g. "2026-06-23T10:00:00+00:00"
+    date_part = ts[:10].replace("-", "")[2:]  # "2026-06-23" → "260623"
+    rand_part = "".join(random.choices(string.ascii_lowercase + string.digits, k=4))
+
+    if url is not None:
+        hostname = _urlparse(url).hostname
+        if not hostname:
+            base = "job"
+        else:
+            base = re.sub(r"[^a-z0-9]+", "-", hostname.lower()).strip("-") or "job"
+    elif directory is not None:
+        dir_name = Path(directory).name.lower()
+        base = re.sub(r"[^a-z0-9]+", "-", dir_name).strip("-") or "job"
+    else:
+        base = "job"
+
+    suffix = f"-{date_part}-{rand_part}"  # 12 chars; always preserved at the tail
+    return base[: 40 - len(suffix)] + suffix
 
 
 class Ctx:
@@ -176,9 +202,10 @@ def init(ctx):
 @click.option(
     "--job-id",
     "job_id",
-    required=True,
-    help="New job id (a failed crawl can be retried in place; re-crawling an "
-    "already-crawled job is refused — delete it first or use a fresh id)",
+    default=None,
+    help="Job id (可省略 — 自動推導自 URL hostname + 日期); a failed crawl can be "
+    "retried in place; re-crawling an already-crawled job is refused — delete "
+    "it first or use a fresh id",
 )
 @click.pass_context
 def crawl(ctx, url, input_file, job_id):
@@ -205,6 +232,10 @@ def crawl(ctx, url, input_file, job_id):
             )
         url = urls[0]
 
+    if job_id is None:
+        job_id = _auto_job_id(url=url)
+        click.echo(f"auto job-id: {job_id}")
+
     # Route the URL crawl through Pipeline.stage1 (the single owner of the
     # create -> crawl -> map-status -> persist (state + hashes atomically)
     # sequence) using the shared CrawlRunnerCrawler adapter — no inline
@@ -230,14 +261,17 @@ def crawl(ctx, url, input_file, job_id):
 @click.option(
     "--job-id",
     "job_id",
-    required=True,
-    help="New job id (re-ingesting an existing job is refused; "
-    "delete/supersede it first or use a fresh id)",
+    default=None,
+    help="Job id (可省略 — 自動推導自資料夾名稱 + 日期); re-ingesting an existing job "
+    "is refused — delete/supersede it first or use a fresh id",
 )
 @click.pass_context
 def ingest(ctx, directory, job_id):
     """Stage 1: ingest a local material folder (no network)."""
     c = Ctx(ctx.obj)
+    if job_id is None:
+        job_id = _auto_job_id(directory=directory)
+        click.echo(f"auto job-id: {job_id}")
     ts = _now()
     crawler = LocalIngestCrawler()
     p = pl.Pipeline(c.config, c.store, c.audit, dry_run=c.dry_run, crawler=crawler)
@@ -671,7 +705,7 @@ def list_cmd(ctx, state, summary):
 @cli.command()
 @click.option("--url", default=None, help="URL to crawl (Stage 1)")
 @click.option("--input", "input_dir", default=None, help="Local folder to ingest")
-@click.option("--job-id", "job_id", required=True)
+@click.option("--job-id", "job_id", default=None, help="Job id (可省略 — 自動推導)")
 @click.option(
     "--until",
     "target",
@@ -705,7 +739,7 @@ def run(ctx, url, input_dir, job_id, target, title, source_urls, ai_copy, templa
     if not url and not input_dir:
         # An ingested gossip job: its source URL was persisted at ingest time
         # (data/jobs/<id>/source.json). Read it so the crawl can proceed by id.
-        url = gi.read_source_url(c.store.job_dir(job_id))
+        url = gi.read_source_url(c.store.job_dir(job_id)) if job_id else None
         if not url:
             raise UsageError(
                 "run requires --url or --input (or an `ingest-gossip` job whose "
@@ -713,6 +747,10 @@ def run(ctx, url, input_dir, job_id, target, title, source_urls, ai_copy, templa
             )
     elif bool(url) and bool(input_dir):
         raise UsageError("run requires exactly one of --url or --input")
+
+    if job_id is None:
+        job_id = _auto_job_id(url=url, directory=input_dir)
+        click.echo(f"auto job-id: {job_id}")
 
     if url:
         crawler = build_crawler(c.config, c.audit, _now)
@@ -866,16 +904,26 @@ def gui(ctx, port, no_browser):
     go to the config file, the api_key goes to the OS keyring only (never a file)."""
     from .webserver import DEFAULT_PORT, serve
 
-    try:
-        serve(
-            config_path=ctx.obj.get("config_path"),
-            port=port if port is not None else DEFAULT_PORT,
-            open_browser=not no_browser,
-        )
-    except OSError as e:  # e.g. port already in use (EADDRINUSE)
-        raise DependencyError(
-            f"could not start the webui server (port in use?): {e}; try --port"
-        ) from e
+    import errno as _errno
+
+    _PORT_RETRIES = 10
+    target_port = port if port is not None else DEFAULT_PORT
+    for attempt in range(_PORT_RETRIES):
+        current_port = target_port + attempt
+        try:
+            serve(
+                config_path=ctx.obj.get("config_path"),
+                port=current_port,
+                open_browser=not no_browser,
+            )
+            break  # serve() returns only on Ctrl-C
+        except OSError as e:
+            if e.errno == _errno.EADDRINUSE and attempt < _PORT_RETRIES - 1:
+                click.echo(f"Port {current_port} in use, trying {current_port + 1}...", err=True)
+                continue
+            raise DependencyError(
+                f"could not start the webui server: {e}; try --port"
+            ) from e
 
 
 def main(argv: list[str] | None = None) -> int:

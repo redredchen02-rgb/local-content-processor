@@ -31,9 +31,10 @@ def test_help_lists_commands(capsys):
         assert cmd in out
 
 
-def test_missing_required_option_is_usage_error(capsys):
-    # crawl now requires --job-id; missing it is a click usage error (exit 1).
-    rc = main(["crawl", "--url", "https://example.com/p/1"])
+def test_missing_url_or_input_is_usage_error(capsys):
+    # crawl requires --url or --input; missing both is a usage error (exit 1).
+    # (--job-id is optional since U5 — auto-generated from hostname + date.)
+    rc = main(["crawl"])
     assert rc == EXIT_USAGE
 
 

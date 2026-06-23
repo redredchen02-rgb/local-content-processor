@@ -348,6 +348,7 @@ EXPECTED_ROUTES = frozenset(
         "process_batch",
         "create_and_crawl_async",
         "process_async",
+        "run_until_draft_async",
         "job_status",
         "get_job",
         "make_review_packet",

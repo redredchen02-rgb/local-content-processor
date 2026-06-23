@@ -64,3 +64,57 @@ def test_index_csp_has_frame_ancestors_and_self_connect():
     # connect-src must stay 'self' (the same-origin fetch works) — never widened.
     assert "connect-src 'self'" in INDEX_HTML
     assert "connect-src *" not in INDEX_HTML
+
+
+# --- U1: auto job-id suggestion (app.js) ------------------------------------
+
+
+def test_suggest_job_id_function_present():
+    assert "_suggestJobId" in APP_JS
+    assert "_jobIdAutofilled" in APP_JS
+    assert "slice(0, 40 - suffix.length)" in APP_JS  # base truncated, suffix always preserved
+    assert 'catch (e) { return ""; }' in APP_JS  # error fallback returns empty string
+    assert "getUTCFullYear" in APP_JS  # UTC date aligns with CLI _auto_job_id (UTC via _now())
+
+
+def test_url_input_triggers_suggest_job_id():
+    # The URL input event listener calls _suggestJobId.
+    assert "create-url" in APP_JS
+    assert "_suggestJobId(this.value.trim())" in APP_JS
+
+
+# --- U2: one-shot quick-mode (app.js + index.html) --------------------------
+
+
+def test_run_until_draft_async_called_in_quick_mode():
+    assert "run_until_draft_async" in APP_JS
+    assert "create-quick-mode" in APP_JS
+    assert 'enterProgress(jobId, quickMode ? "run" : "crawl")' in APP_JS
+
+
+def test_stage_label_has_run_case():
+    assert 'kind === "run"' in APP_JS
+
+
+def test_index_has_quick_mode_checkbox():
+    assert 'id="create-quick-mode"' in INDEX_HTML
+
+
+# --- U3: batch-process button (app.js) --------------------------------------
+
+
+def test_batch_process_button_in_inbox():
+    assert "全部处理" in APP_JS
+    assert "crawled_warn" in APP_JS  # filter includes crawled_warn
+    # Fan-out must call process_async per job, not an abstracted batch endpoint.
+    assert "crawledRows.forEach(function (j) { a.process_async(j.job_id" in APP_JS
+    assert "if (crawledRows.length)" in APP_JS  # button absent when no crawled jobs
+
+
+# --- U4: banner CTA hint (app.js) -------------------------------------------
+
+
+def test_banner_cta_hint_rendered_for_actionable_states():
+    assert "banner-cta-hint" in APP_JS
+    assert "见下方行动" in APP_JS
+    assert "crawled_warn" in APP_JS  # included in ctaStates
