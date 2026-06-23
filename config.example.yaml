@@ -37,6 +37,23 @@ content:
   # min_copy_chars: paragraph-length floor for the copied-too-much check.
   hype_words: []
   min_copy_chars: 0
+  # Field-level lint tunables (Unit 1). 0 = unset → use LintConfig calibrated default.
+  # intro_min_chars / intro_max_chars: char bounds for the intro paragraph.
+  # intro_min_chars: 0
+  # intro_max_chars: 0
+  # event_body_min_chars / event_body_max_chars: char bounds for the event body section.
+  # event_body_min_chars: 0
+  # event_body_max_chars: 0
+  # summary_warn_chars: char threshold at which the summary triggers a lint warning.
+  # summary_error_chars: char threshold at which the summary triggers a lint error.
+  # summary_warn_chars: 0
+  # summary_error_chars: 0
+  # faq_min_count / faq_max_count: acceptable number of FAQ items.
+  # faq_min_count: 0
+  # faq_max_count: 0
+  # quick_facts_min_count / quick_facts_max_count: acceptable number of quick-facts bullets.
+  # quick_facts_min_count: 0
+  # quick_facts_max_count: 0
 
 llm:
   base_url: ""             # company OpenAI-compatible endpoint, must include /v1
@@ -54,6 +71,25 @@ publisher:
   reviewers: []            # whitelist of reviewer names allowed to approve/reject
   publish_enabled_by_default: false
   require_human_approval: true
+
+templates:
+  # Per-欄目 LLM operator task templates (Unit 4).
+  # Each key must match a key in categories: below.
+  # Slots available: {category}  {title}  {tags}  {keywords}
+  # (any other {placeholder} is rejected by validate_template at load time)
+  # The rendered text is injected as a DEVELOPER task block — it is a request to the
+  # LLM, not authority; the hardcoded SYSTEM message (zero-capability / grounding /
+  # anti-injection constraints) always takes precedence.
+  # Usage: copy the entry you want into config.yaml's templates: section.
+  今日吃瓜: |
+    [欄目：{category}]
+    以 Eatmelon 吃瓜吃到飽的輕鬆口語語氣撰寫。
+    標題：{title}
+    標籤：{tags}
+    關鍵詞：{keywords}
+    語氣要求：口語化、直接、不煽情、不誇大。
+    每篇根據素材自然調整結構，不套固定開頭或結尾模板。
+    未確認資訊使用「網傳」「疑似」「據傳」等限定詞，不寫成事實陳述。
 
 categories:
   今日吃瓜: ["普通爆料", "日常瓜類"]

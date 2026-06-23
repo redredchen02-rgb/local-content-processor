@@ -19,7 +19,9 @@ class FakeClient:
 
     def __init__(self, result=None, raises=None):
         self._result = result or ChatResult(
-            text="重寫後的正文第一行\n第二行內容",
+            # Default result uses the new two-prefix protocol so existing tests
+            # that check DRAFTED status continue to pass.
+            text="INTRO: 引言測試第一行內容\nEVENT: 事件經過內容在這裡",
             finish_reason="stop",
             model="company-model",
             needs_revision=False,
@@ -275,3 +277,147 @@ def test_default_temperature_is_constrained():
     client = FakeClient()
     assemble(SOURCE, client)
     assert client.calls[0]["temperature"] <= 0.3
+
+
+# --------------------------------------------------------------------------
+# Unit 2: two-prefix protocol (INTRO: / EVENT:) and _parse_sections()
+# --------------------------------------------------------------------------
+
+
+def test_u2_happy_path_parses_both_sections():
+    """LLM returns INTRO: + EVENT: → DRAFTED with correct fields."""
+    client = FakeClient(
+        result=ChatResult(
+            text="INTRO: 引言測試開頭直接入題。\nEVENT: 事件經過按時間順序描述。",
+            finish_reason="stop",
+            model="m",
+            needs_revision=False,
+            executed=True,
+        )
+    )
+    draft = assemble(SOURCE, client, title="測試標題")
+    assert draft.status == DraftStatus.DRAFTED
+    assert draft.intro == "引言測試開頭直接入題。"
+    assert draft.event_body == "事件經過按時間順序描述。"
+    assert draft.needs_human_review is True
+    assert draft.constrained_rewrite is True
+    assert draft.review_reason is None
+
+
+def test_u2_no_markers_missing_both():
+    """LLM returns plain text blob with no INTRO:/EVENT: → NEEDS_REVISION."""
+    client = FakeClient(
+        result=ChatResult(
+            text="這是一段沒有任何 prefix 的純文本輸出，不符合協議要求。",
+            finish_reason="stop",
+            model="m",
+            needs_revision=False,
+            executed=True,
+        )
+    )
+    draft = assemble(SOURCE, client)
+    assert draft.status == DraftStatus.NEEDS_REVISION
+    assert draft.review_reason == "missing_section_markers"
+    assert draft.needs_human_review is True
+
+
+def test_u2_only_intro_missing_event():
+    """LLM returns INTRO: but no EVENT: → NEEDS_REVISION, missing_event."""
+    client = FakeClient(
+        result=ChatResult(
+            text="INTRO: 只有引言沒有事件經過。",
+            finish_reason="stop",
+            model="m",
+            needs_revision=False,
+            executed=True,
+        )
+    )
+    draft = assemble(SOURCE, client)
+    assert draft.status == DraftStatus.NEEDS_REVISION
+    assert draft.review_reason == "missing_event"
+
+
+def test_u2_only_event_missing_intro():
+    """LLM returns EVENT: but no INTRO: → NEEDS_REVISION, missing_intro."""
+    client = FakeClient(
+        result=ChatResult(
+            text="EVENT: 只有事件經過沒有引言。",
+            finish_reason="stop",
+            model="m",
+            needs_revision=False,
+            executed=True,
+        )
+    )
+    draft = assemble(SOURCE, client)
+    assert draft.status == DraftStatus.NEEDS_REVISION
+    assert draft.review_reason == "missing_intro"
+
+
+def test_u2_multiline_intro_truncated_to_first_line():
+    """Multi-line: INTRO: takes only the first INTRO: line value; subsequent
+    text without a marker is ignored.  EVENT: still parsed correctly."""
+    client = FakeClient(
+        result=ChatResult(
+            text="INTRO: 第一行引言\n附加行沒有 marker\nEVENT: 事件經過內容",
+            finish_reason="stop",
+            model="m",
+            needs_revision=False,
+            executed=True,
+        )
+    )
+    draft = assemble(SOURCE, client)
+    # intro takes only the value of the first INTRO: line
+    assert draft.intro == "第一行引言"
+    assert draft.event_body == "事件經過內容"
+    assert draft.status == DraftStatus.DRAFTED
+
+
+def test_u2_duplicate_intro_first_match_wins():
+    """Duplicate INTRO: lines: first-match semantics — second is ignored."""
+    client = FakeClient(
+        result=ChatResult(
+            text="INTRO: 第一段引言\nINTRO: 第二段引言（應被忽略）\nEVENT: 事件經過",
+            finish_reason="stop",
+            model="m",
+            needs_revision=False,
+            executed=True,
+        )
+    )
+    draft = assemble(SOURCE, client)
+    assert draft.intro == "第一段引言"
+    assert "第二段" not in draft.intro
+    assert draft.status == DraftStatus.DRAFTED
+
+
+def test_u2_dry_run_not_executed_unaffected():
+    """Dry-run path is unaffected by the two-prefix changes."""
+    client = FakeClient(
+        result=ChatResult(
+            text="[dry-run] LLM not actually executed — no tokens spent.",
+            finish_reason=None,
+            model="m",
+            needs_revision=False,
+            executed=False,
+        )
+    )
+    draft = assemble(SOURCE, client)
+    assert draft.status == DraftStatus.NOT_EXECUTED
+    assert draft.executed is False
+    assert "not actually executed" in draft.intro.lower()
+
+
+def test_u2_truncated_finish_reason_unaffected():
+    """Truncated finish_reason path (checked before _parse_sections) is unaffected."""
+    client = FakeClient(
+        result=ChatResult(
+            text="截斷的內容",
+            finish_reason="length",
+            model="m",
+            needs_revision=True,
+            revision_reason="truncated:length",
+            executed=True,
+        )
+    )
+    draft = assemble(SOURCE, client)
+    assert draft.status == DraftStatus.NEEDS_REVISION
+    assert draft.review_reason == "truncated:length"

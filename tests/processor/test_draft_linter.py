@@ -52,7 +52,26 @@ def audit(tmp_path):
 
 @pytest.fixture()
 def lint_config():
-    return build_lint_config(ContentConfig(title_min_chars=8, title_max_chars=35), CATEGORIES)
+    # Set loose Unit-1 field constraints so existing tests (grounding, audit,
+    # state-machine) are not disturbed by the new length/count rules.
+    # Unit-1 constraint correctness is covered in tests/rules/test_lint_rules.py.
+    return build_lint_config(
+        ContentConfig(
+            title_min_chars=8,
+            title_max_chars=35,
+            intro_min_chars=1,
+            intro_max_chars=9999,
+            event_body_min_chars=1,
+            event_body_max_chars=9999,
+            summary_warn_chars=9998,
+            summary_error_chars=9999,
+            faq_min_count=1,
+            faq_max_count=99,
+            quick_facts_min_count=1,
+            quick_facts_max_count=99,
+        ),
+        CATEGORIES,
+    )
 
 
 def _new_processing_job(store: JobStore, job_id: str) -> None:
@@ -65,7 +84,7 @@ def _new_processing_job(store: JobStore, job_id: str) -> None:
 def _good_draft(**overrides) -> Draft:
     base = dict(
         title="台北華山美食市集週末熱鬧登場",
-        intro="本週末在華山舉辦大型美食市集。",
+        intro="華山文創園區本週末舉辦美食市集。",
         quick_facts=["時間：週末", "地點：華山", "免費"],
         event_body="華山文創園區本週末舉辦美食市集。現場有上百個攤位提供各式小吃與飲料。",
         image_sections=[MediaSection(asset_ref="img/a.jpg", caption="攤位")],
@@ -267,7 +286,21 @@ def _job_at_grounding_review(store: JobStore, audit: AuditLog, job_id: str) -> N
         draft=_good_draft(quotes=[SourceQuote(text="捏造不存在的引述內容")]),
         source_text=SOURCE,
         lint_config=build_lint_config(
-            ContentConfig(title_min_chars=8, title_max_chars=35), CATEGORIES
+            ContentConfig(
+                title_min_chars=8,
+                title_max_chars=35,
+                intro_min_chars=1,
+                intro_max_chars=9999,
+                event_body_min_chars=1,
+                event_body_max_chars=9999,
+                summary_warn_chars=9998,
+                summary_error_chars=9999,
+                faq_min_count=1,
+                faq_max_count=99,
+                quick_facts_min_count=1,
+                quick_facts_max_count=99,
+            ),
+            CATEGORIES,
         ),
         store=store,
         audit=audit,

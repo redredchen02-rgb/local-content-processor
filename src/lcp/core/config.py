@@ -72,6 +72,17 @@ class ContentConfig(BaseModel):
     # the paragraph-length floor for the copied-too-much (plagiarism) check.
     hype_words: list[str] = Field(default_factory=list)
     min_copy_chars: int = 0
+    # Field-level lint tunables (Unit 1). 0 = unset → use LintConfig default.
+    intro_min_chars: int = 0
+    intro_max_chars: int = 0
+    event_body_min_chars: int = 0
+    event_body_max_chars: int = 0
+    summary_warn_chars: int = 0
+    summary_error_chars: int = 0
+    faq_min_count: int = 0
+    faq_max_count: int = 0
+    quick_facts_min_count: int = 0
+    quick_facts_max_count: int = 0
 
 
 class LlmConfig(BaseModel):

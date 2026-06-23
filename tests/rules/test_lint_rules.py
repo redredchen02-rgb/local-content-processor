@@ -24,6 +24,18 @@ CFG = LintConfig(
     tag_min_count=3,
     tag_max_count=5,
     categories=CATEGORIES,
+    # Keep existing tests passing by setting loose field-level constraints.
+    # The new strict-defaults are exercised by the dedicated Unit 1 tests below.
+    intro_min_chars=1,
+    intro_max_chars=9999,
+    event_body_min_chars=1,
+    event_body_max_chars=9999,
+    summary_warn_chars=9998,
+    summary_error_chars=9999,
+    faq_min_count=1,
+    faq_max_count=99,
+    quick_facts_min_count=1,
+    quick_facts_max_count=99,
 )
 
 
@@ -276,6 +288,176 @@ def test_lint_module_imports_no_url_libraries():
     src = open(mod.__file__, encoding="utf-8").read()
     for forbidden in ("import urllib", "import requests", "import socket", "import httpx"):
         assert forbidden not in src, f"{forbidden!r} must not appear in lint_rules"
+
+
+# --- Unit 1: field-level length / count constraints -------------------------
+
+# LintConfig with strict defaults for Unit 1 tests (mirrors real defaults).
+CFG_STRICT = LintConfig(
+    title_min_chars=10,
+    title_max_chars=35,
+    tag_min_count=3,
+    tag_max_count=5,
+    categories=CATEGORIES,
+    # Use LintConfig class defaults for all Unit 1 fields:
+    # intro [80,120], event_body [100,200], summary warn=100/error=150,
+    # faq [3,5], quick_facts [3,7].
+)
+
+
+def _strict_draft(**overrides) -> Draft:
+    """A well-formed draft satisfying all Unit 1 constraints (strict defaults).
+
+    - intro: 88 chars (in [80,120])
+    - event_body: 128 chars (in [100,200])
+    - summary: 61 chars (≤ summary_warn=100, no warning)
+    - faq: 4 items (in [3,5])
+    - quick_facts: 5 items (in [3,7])
+    """
+    base = dict(
+        title="台北週末美食市集盛大登場好熱鬧",
+        # 88 chars: satisfies intro [80,120]
+        intro=(
+            "本週末在台北華山文創園區將舉辦規模盛大的年度美食市集活動，"
+            "現場聚集超過一百個來自全台各地的特色美食攤位，"
+            "主辦單位誠摯歡迎廣大民眾攜家帶眷前來共同參與這場精彩難得的美食文化盛會。"
+        ),
+        quick_facts=["時間：週六日", "地點：華山", "免費入場", "停車：附近停車場", "交通：捷運"],
+        # 128 chars: satisfies event_body [100,200]
+        event_body=(
+            "台北華山文創園區本週末盛大舉辦年度全台最大規模的美食市集特色活動，"
+            "現場超過一百個攤位提供各式在地特色小吃及異國料理美食佳餚供民眾選購品嚐。"
+            "主辦單位預計吸引超過萬名以上的民眾前來共襄盛舉同歡，"
+            "現場另設有完善的休憩用餐區域提供給民眾休息並悠閒享用各式美食料理。"
+        ),
+        image_sections=[MediaSection(asset_ref="img/a.jpg", caption="攤位實景")],
+        faq=[
+            FaqItem(question="需要門票嗎？", answer="不需要，免費入場。"),
+            FaqItem(question="開放時間？", answer="早上十點到晚上九點。"),
+            FaqItem(question="有停車場嗎？", answer="附近有多處停車場。"),
+            FaqItem(question="有哪些美食？", answer="涵蓋台式、日式、韓式等各類料理。"),
+        ],
+        # 61 chars: satisfies summary ≤ warn=100 (no warning triggered)
+        summary="這是一場精彩的週末美食文化盛會活動，現場美食種類豐富，絕對不容錯過，歡迎大家前來共享。",
+        tags=["美食", "市集", "華山"],
+        keywords=["美食", "市集"],
+        category="美食",
+    )
+    base.update(overrides)
+    return Draft(**base)
+
+
+def test_unit1_happy_path_passes():
+    """All Unit 1 constraints satisfied → PASS."""
+    r = lint_draft(_strict_draft(), CFG_STRICT)
+    assert r.status == LintStatus.PASS, r.errors
+
+
+def test_unit1_intro_too_short():
+    """intro < intro_min_chars (80) → error."""
+    short_intro = "短" * 50  # 50 chars < 80
+    r = lint_draft(_strict_draft(intro=short_intro), CFG_STRICT)
+    assert r.status == LintStatus.NEEDS_REVISION
+    assert any("intro too short" in e for e in r.errors)
+
+
+def test_unit1_intro_too_long():
+    """intro > intro_max_chars (120) → error."""
+    long_intro = "長" * 130  # 130 chars > 120
+    r = lint_draft(_strict_draft(intro=long_intro), CFG_STRICT)
+    assert r.status == LintStatus.NEEDS_REVISION
+    assert any("intro too long" in e for e in r.errors)
+
+
+def test_unit1_event_body_too_short():
+    """event_body < event_body_min_chars (100) → error."""
+    short_body = "短" * 80  # 80 chars < 100
+    r = lint_draft(_strict_draft(event_body=short_body), CFG_STRICT)
+    assert r.status == LintStatus.NEEDS_REVISION
+    assert any("event_body too short" in e for e in r.errors)
+
+
+def test_unit1_event_body_too_long():
+    """event_body > event_body_max_chars (200) → error."""
+    long_body = "長" * 210  # 210 chars > 200
+    r = lint_draft(_strict_draft(event_body=long_body), CFG_STRICT)
+    assert r.status == LintStatus.NEEDS_REVISION
+    assert any("event_body too long" in e for e in r.errors)
+
+
+def test_unit1_summary_warning_zone():
+    """summary_warn_chars < len(summary) <= summary_error_chars → warning only, not error."""
+    # summary_warn=100, summary_error=150 → 110 chars is in the warning zone
+    warn_summary = "警" * 110  # 110 chars: 100 < 110 ≤ 150
+    r = lint_draft(_strict_draft(summary=warn_summary), CFG_STRICT)
+    assert r.status == LintStatus.PASS, f"should pass (warning only), errors={r.errors}"
+    assert any("結尾偏長" in w for w in r.warnings)
+    assert not any("結尾過長" in e for e in r.errors)
+
+
+def test_unit1_summary_error_zone():
+    """len(summary) > summary_error_chars (150) → error → NEEDS_REVISION."""
+    long_summary = "長" * 160  # 160 chars > 150
+    r = lint_draft(_strict_draft(summary=long_summary), CFG_STRICT)
+    assert r.status == LintStatus.NEEDS_REVISION
+    assert any("結尾過長" in e for e in r.errors)
+    # should NOT also produce the warning when it's already an error
+    assert not any("結尾偏長" in w for w in r.warnings)
+
+
+def test_unit1_too_few_faq():
+    """faq items < faq_min_count (3) → error."""
+    r = lint_draft(
+        _strict_draft(faq=[FaqItem(question="問？", answer="答。"),
+                           FaqItem(question="問2？", answer="答2。")]),
+        CFG_STRICT,
+    )
+    assert r.status == LintStatus.NEEDS_REVISION
+    assert any("too few FAQ" in e for e in r.errors)
+
+
+def test_unit1_too_many_faq():
+    """faq items > faq_max_count (5) → error."""
+    r = lint_draft(
+        _strict_draft(faq=[FaqItem(question=f"問{i}？", answer=f"答{i}。") for i in range(6)]),
+        CFG_STRICT,
+    )
+    assert r.status == LintStatus.NEEDS_REVISION
+    assert any("too many FAQ" in e for e in r.errors)
+
+
+def test_unit1_quick_facts_too_few():
+    """non-empty quick_facts < quick_facts_min_count (3) → error."""
+    r = lint_draft(_strict_draft(quick_facts=["只有一個", "只有兩個"]), CFG_STRICT)
+    assert r.status == LintStatus.NEEDS_REVISION
+    assert any("too few quick_facts" in e for e in r.errors)
+
+
+def test_unit1_quick_facts_too_many():
+    """non-empty quick_facts > quick_facts_max_count (7) → error."""
+    r = lint_draft(_strict_draft(quick_facts=[f"項目{i}" for i in range(8)]), CFG_STRICT)
+    assert r.status == LintStatus.NEEDS_REVISION
+    assert any("too many quick_facts" in e for e in r.errors)
+
+
+def test_unit1_quick_facts_empty_handled_by_required_section_rule():
+    """quick_facts=[] is caught by the required-section check, NOT the count rule.
+    The count rule only fires when quick_facts is non-empty."""
+    r = lint_draft(_strict_draft(quick_facts=[]), CFG_STRICT)
+    assert r.status == LintStatus.NEEDS_REVISION
+    # Should say "missing required section", not "too few quick_facts"
+    assert any("一分鐘快速看懂" in e for e in r.errors)
+    assert not any("too few quick_facts" in e for e in r.errors)
+
+
+def test_unit1_new_hype_word_dingjí_triggers_error():
+    """New hype word '顶级' (simplified) in tag → error."""
+    r = lint_draft(_strict_draft(tags=["美食", "顶级美味", "市集"]), CFG_STRICT)
+    assert r.status == LintStatus.NEEDS_REVISION
+    assert any("hype" in e for e in r.errors)
+
+
+# --- Unit 1 done -------------------------------------------------------------
 
 
 def test_copied_too_much_denominator_uses_source_set():

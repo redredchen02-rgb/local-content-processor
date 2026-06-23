@@ -180,12 +180,18 @@ class SubstringOverlapStrategy:
 
 
 def _split_claims(draft: Draft) -> list[str]:
-    """Narrative claims to verify: event_body sentences + faq answers + the
-    net-new AI structural pieces (image/video captions + subheads, Unit 4).
-    Captions/subheads are generated content, so they must be grounded too — an
-    ungrounded caption routes the job to human review, never silently passes.
+    """Narrative claims to verify: intro sentences + event_body sentences +
+    faq answers + the net-new AI structural pieces (image/video captions +
+    subheads, Unit 4).  Captions/subheads are generated content, so they must
+    be grounded too — an ungrounded caption routes the job to human review,
+    never silently passes.  intro is an independent LLM-generated field; its
+    factual claims must be verified as substrings of the source.
     Pure splitting on sentence boundaries / newlines — no URL parsing."""
     claims: list[str] = []
+    # intro: independently LLM-generated, so its claims need grounding too.
+    for chunk in _sentences(draft.intro):
+        if len(chunk) >= _MIN_CLAIM_CHARS:
+            claims.append(chunk)
     for chunk in _sentences(draft.event_body):
         if len(chunk) >= _MIN_CLAIM_CHARS:
             claims.append(chunk)

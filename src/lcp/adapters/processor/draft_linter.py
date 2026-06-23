@@ -28,6 +28,7 @@ from dataclasses import dataclass
 
 from ...core.config import ContentConfig
 from ...core.draft import Draft
+from ...core.errors import InputValidationError
 from ...core.rules import grounding as grounding_rules
 from ...core.rules import lint_rules
 from ...core.rules.grounding import GroundingResult, GroundingStrategy
@@ -65,7 +66,25 @@ def build_lint_config(content: ContentConfig, categories: dict[str, list[str]]) 
     ``hype_words``/``min_copy_chars`` are operator-tunable; an empty/zero value
     falls back to the rule's calibrated default, so this projection is behavior-
     preserving until an operator overrides them (they were previously dropped —
-    the rule's defaults always governed regardless of config)."""
+    the rule's defaults always governed regardless of config).
+
+    Unit 1: field-level length/count tunables use the same 0-fallback pattern.
+    Cross-validation: summary_warn_chars must be strictly less than
+    summary_error_chars (otherwise the warning zone collapses/inverts)."""
+    _f = LintConfig.__dataclass_fields__
+
+    def _int(val: int, field_name: str) -> int:
+        """Return val if > 0, otherwise the LintConfig dataclass default."""
+        return val if val > 0 else _f[field_name].default  # type: ignore[return-value]
+
+    summary_warn = _int(content.summary_warn_chars, "summary_warn_chars")
+    summary_error = _int(content.summary_error_chars, "summary_error_chars")
+    if summary_warn >= summary_error:
+        raise InputValidationError(
+            f"summary_warn_chars ({summary_warn}) must be less than "
+            f"summary_error_chars ({summary_error})"
+        )
+
     return LintConfig(
         title_min_chars=content.title_min_chars,
         title_max_chars=content.title_max_chars,
@@ -76,6 +95,16 @@ def build_lint_config(content: ContentConfig, categories: dict[str, list[str]]) 
             content.min_copy_chars if content.min_copy_chars > 0 else DEFAULT_MIN_COPY_CHARS
         ),
         categories=tuple(categories.keys()),
+        intro_min_chars=_int(content.intro_min_chars, "intro_min_chars"),
+        intro_max_chars=_int(content.intro_max_chars, "intro_max_chars"),
+        event_body_min_chars=_int(content.event_body_min_chars, "event_body_min_chars"),
+        event_body_max_chars=_int(content.event_body_max_chars, "event_body_max_chars"),
+        summary_warn_chars=summary_warn,
+        summary_error_chars=summary_error,
+        faq_min_count=_int(content.faq_min_count, "faq_min_count"),
+        faq_max_count=_int(content.faq_max_count, "faq_max_count"),
+        quick_facts_min_count=_int(content.quick_facts_min_count, "quick_facts_min_count"),
+        quick_facts_max_count=_int(content.quick_facts_max_count, "quick_facts_max_count"),
     )
 
 

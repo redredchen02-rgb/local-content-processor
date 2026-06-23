@@ -22,10 +22,11 @@ from lcp.adapters.crawler.base import SourceSpec
 from lcp.adapters.crawler.ingest import LocalIngestCrawler
 from lcp.adapters.storage.audit_log import AuditLog
 from lcp.adapters.storage.job_store import JobStore
-from lcp.core.config import Config, PublisherConfig
+from lcp.core.config import Config, ContentConfig, PublisherConfig
 from lcp.core.models import SourceType
 from lcp.core.state import JobState
 from tests.support.pipeline_fakes import (
+    LOOSE_CONTENT_CONFIG,
     SOURCE,
     TITLE,
     DualModeChatClient,
@@ -49,7 +50,13 @@ def audit(tmp_path):
 
 @pytest.fixture()
 def config():
-    return Config(publisher=PublisherConfig(reviewers=["alice"]))
+    # Use loose Unit-1 content constraints: the fake LLM generates minimal
+    # content for determinism; field-length correctness is tested in
+    # tests/rules/test_lint_rules.py (not the goal of this quickstart e2e).
+    return Config(
+        publisher=PublisherConfig(reviewers=["alice"]),
+        content=LOOSE_CONTENT_CONFIG,
+    )
 
 
 def test_sample_matches_grounded_fixture() -> None:

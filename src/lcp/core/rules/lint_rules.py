@@ -73,6 +73,10 @@ DEFAULT_HYPE_WORDS: tuple[str, ...] = (
     "clickbait",
     "shocking",
     "insane",
+    "顶级",
+    "頂級",
+    "最好看",
+    "刺激到不行",
 )
 
 # A source paragraph copied verbatim into the draft body that is at least this
@@ -134,6 +138,19 @@ class LintConfig:
     hype_words: tuple[str, ...] = DEFAULT_HYPE_WORDS
     min_copy_chars: int = DEFAULT_MIN_COPY_CHARS
     block_copy_ratio: float = DEFAULT_BLOCK_COPY_RATIO
+    # --- field-level length / count constraints (Unit 1) ----------------------
+    intro_min_chars: int = 80
+    intro_max_chars: int = 120
+    event_body_min_chars: int = 100
+    event_body_max_chars: int = 200
+    # summary uses two thresholds: warn zone (warn_chars < len <= error_chars)
+    # and error zone (len > error_chars) — both operator-tunable.
+    summary_warn_chars: int = 100
+    summary_error_chars: int = 150
+    faq_min_count: int = 3
+    faq_max_count: int = 5
+    quick_facts_min_count: int = 3
+    quick_facts_max_count: int = 7
 
 
 _WS_RE = re.compile(r"\s+")
@@ -209,6 +226,49 @@ def lint_draft(
     for attr, label in REQUIRED_SECTIONS:
         if not _section_present(draft, attr):
             errors.append(f"missing required section: {label}")
+
+    # --- field-level length / count constraints (Unit 1) -------------------
+    # These run after required-section checks so a missing section is reported
+    # as "missing" rather than "too short" (section present = non-empty string
+    # or non-empty list; only non-empty values reach these length checks).
+
+    intro = (draft.intro or "").strip()
+    if intro:
+        n = len(intro)
+        if n < config.intro_min_chars:
+            errors.append(f"intro too short: {n} < {config.intro_min_chars} chars")
+        elif n > config.intro_max_chars:
+            errors.append(f"intro too long: {n} > {config.intro_max_chars} chars")
+
+    event_body = (draft.event_body or "").strip()
+    if event_body:
+        n = len(event_body)
+        if n < config.event_body_min_chars:
+            errors.append(f"event_body too short: {n} < {config.event_body_min_chars} chars")
+        elif n > config.event_body_max_chars:
+            errors.append(f"event_body too long: {n} > {config.event_body_max_chars} chars")
+
+    summary = (draft.summary or "").strip()
+    if summary:
+        n = len(summary)
+        if n > config.summary_error_chars:
+            errors.append(f"結尾過長: {n} > {config.summary_error_chars} chars")
+        elif n > config.summary_warn_chars:
+            warnings.append(f"結尾偏長: {n} > {config.summary_warn_chars} chars")
+
+    if draft.faq:
+        n = len(draft.faq)
+        if n < config.faq_min_count:
+            errors.append(f"too few FAQ items: {n} < {config.faq_min_count}")
+        elif n > config.faq_max_count:
+            errors.append(f"too many FAQ items: {n} > {config.faq_max_count}")
+
+    if draft.quick_facts:
+        n = len(draft.quick_facts)
+        if n < config.quick_facts_min_count:
+            errors.append(f"too few quick_facts: {n} < {config.quick_facts_min_count}")
+        elif n > config.quick_facts_max_count:
+            errors.append(f"too many quick_facts: {n} > {config.quick_facts_max_count}")
 
     # --- image section required IFF the bundle has images (D9) -------------
     # Asymmetric on purpose: captions may legitimately exist without bundle
