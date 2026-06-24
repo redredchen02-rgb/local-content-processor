@@ -153,6 +153,9 @@ class Api:
         # call so concurrent handlers never share a SQLite handle.
         self._config_path = config_path
         self._base_dir = base_dir
+        # Shared read-only context for read-only methods (list_jobs, summary,
+        # get_job, etc.) — avoids reopening SQLite on every poll.
+        self._ro_ctx: _Ctx | None = None
         # Background job status, keyed by job_id (in-memory, polled by the GUI).
         self._status: dict[str, dict] = {}
         self._status_lock = threading.Lock()
@@ -164,6 +167,12 @@ class Api:
 
     def _ctx(self) -> _Ctx:
         return _Ctx(self._config_path, self._base_dir)
+
+    def _ro_ctx_get(self) -> _Ctx:
+        """Shared read-only context for read-only methods. Lazily created."""
+        if self._ro_ctx is None:
+            self._ro_ctx = _Ctx(self._config_path, self._base_dir)
+        return self._ro_ctx
 
     # --- Setup ---------------------------------------------------------------
 
@@ -390,6 +399,19 @@ class Api:
                     "status": done,
                     "result": result,
                 }
+            # Auto-cleanup after 5 minutes to prevent unbounded memory growth.
+            _job_id = job_id
+
+            def _cleanup() -> None:
+                import time as _time
+
+                _time.sleep(300)
+                with self._status_lock:
+                    entry = self._status.get(_job_id)
+                    if entry and entry.get("status") in ("done", "error"):
+                        self._status.pop(_job_id, None)
+
+            threading.Thread(target=_cleanup, daemon=True).start()
 
         threading.Thread(target=_worker, daemon=True).start()
         return {"job_id": escape_html(job_id), "status": "running"}
@@ -462,7 +484,7 @@ class Api:
         if st is not None:
             return st
         # No background task seen — fall back to the persisted record's state.
-        c = self._ctx()
+        c = self._ro_ctx_get()
         rec = c.store.get_job(job_id)
         if rec is None:
             return {"job_id": escape_html(job_id), "status": "unknown"}
@@ -499,7 +521,7 @@ class Api:
         """Return the SANITIZED draft for display (every attacker-shapeable field
         already escaped; source URLs inert). The GUI renders this dict with
         textContent — never innerHTML."""
-        c = self._ctx()
+        c = self._ro_ctx_get()
         draft = pl.load_draft(c.store, job_id)
         if draft is None:
             return _error_dict(_input_error(f"no draft for {job_id}"))
@@ -742,7 +764,7 @@ class Api:
     @bridge_safe
     def summary(self) -> dict:
         """Mirror `list --summary`: home counts-by-state (G7)."""
-        c = self._ctx()
+        c = self._ro_ctx_get()
         return {"summary": pl.batch_summary(c.store)}
 
     # --- Dashboard: accumulated metrics (read-only aggregation) ---------------
@@ -761,7 +783,7 @@ class Api:
         not compute time) — the GUI labels them accordingly and they are NOT an
         optimization hint."""
         try:
-            c = self._ctx()
+            c = self._ro_ctx_get()
             summary = pl.batch_summary(c.store)
             audit = aggregate_audit(c.audit.iter_events())
             gates = [
@@ -800,7 +822,7 @@ class Api:
         pre-fill it into the create-job input — the GUI MUST assign it only to an
         input ``.value`` (never innerHTML); submitting then re-runs the same
         crawl validation (allow_domains/robots) as manual entry."""
-        c = self._ctx()
+        c = self._ro_ctx_get()
         rows = [
             {
                 "id": escape_html(s.id),
@@ -840,7 +862,7 @@ class Api:
         """The reviewer whitelist for the dropdown (config.publisher.reviewers).
 
         Operator identifiers (not subject PII); escaped for safe rendering."""
-        c = self._ctx()
+        c = self._ro_ctx_get()
         return {"reviewers": [escape_html(r) for r in c.config.publisher.reviewers]}
 
     @bridge_safe
@@ -868,7 +890,7 @@ class Api:
 
             from .adapters.crawler.net_guard import safe_join
 
-            c = self._ctx()
+            c = self._ro_ctx_get()
             # Guard job_id against path traversal before building the raw dir.
             safe_job_dir = safe_join(c.store.jobs_root, job_id)
             raw_dir = safe_job_dir / "raw"

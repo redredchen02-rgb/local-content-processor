@@ -413,14 +413,9 @@ function jobRow(job) {
   const lx = lexState(job.state);
   const row = el("div");
   row.className = "job-row lane--" + (lx.tone || "neutral");
-  // whole row is the affordance (P0-7): clickable + keyboard-focusable. The
-  // visible "打开 ›" cue stays, so colour/elevation is never the only signal.
   row.setAttribute("role", "button");
   row.setAttribute("tabindex", "0");
-  row.addEventListener("click", function () { openJob(job.job_id); });
-  row.addEventListener("keydown", function (e) {
-    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openJob(job.job_id); }
-  });
+  row.dataset.jobId = job.job_id;
   const id = el("span", job.job_id); id.className = "job-id";
   row.appendChild(id);
   row.appendChild(badgeFor(job.state));
@@ -457,7 +452,7 @@ async function refreshInbox() {
   setText($("inbox-counts"), "载入中…");
   bandsEl.appendChild(loadingRow());
 
-  const listRes = await a.list_jobs(null);
+  const [listRes, sumRes] = await Promise.all([a.list_jobs(null), a.summary()]);
   clear(bandsEl);
   if (isError(listRes)) { renderError(bandsEl, listRes); setText($("inbox-counts"), ""); return; }
   const jobs = listRes.jobs || [];
@@ -523,7 +518,6 @@ async function refreshInbox() {
     bandsEl.appendChild(empty);
   }
 
-  const sumRes = await a.summary();
   const countsEl = $("inbox-counts");
   clear(countsEl);
   if (!isError(sumRes)) {
@@ -1737,8 +1731,19 @@ function bind() {
   $("setup-back").addEventListener("click", function () { showView("inbox"); refreshInbox(); });
   $("refresh-inbox").addEventListener("click", refreshInbox);
   $("btn-save-settings").addEventListener("click", saveSettings);
-  $("settings-base-url").addEventListener("input", advisoryBaseUrl);
+  $  $("settings-base-url").addEventListener("input", advisoryBaseUrl);
   bindCreate();
+  // Delegated click/keydown for inbox job rows (replaces per-row listeners).
+  $("inbox-bands").addEventListener("click", function (e) {
+    var row = e.target.closest(".job-row");
+    if (row && row.dataset.jobId) openJob(row.dataset.jobId);
+  });
+  $("inbox-bands").addEventListener("keydown", function (e) {
+    if (e.key === "Enter" || e.key === " ") {
+      var row = e.target.closest(".job-row");
+      if (row && row.dataset.jobId) { e.preventDefault(); openJob(row.dataset.jobId); }
+    }
+  });
   // Phase 1: mobile nav select
   bindNavSelect();
   // Phase 2: override loadingRow with skeleton version
