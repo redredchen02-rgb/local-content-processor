@@ -1595,8 +1595,9 @@ function openCreate(jobId) {
   showView("job");
   disarmConfirm();
   $("job-create").hidden = false;
-  clear($("job-banner")); clear($("job-actions")); clear($("job-packet")); clear($("job-status")); clear($("job-inflight"));
+  clear($("job-banner")); clear($("job-actions")); clear($("job-packet")); clear($("job-status")); clear($("job-inflight")); clear($("job-workflow"));
   setText($("job-title"), jobId ? "重新抓取 " + jobId : "新工作");
+  showStep(1);
   $("create-job-id").value = jobId || ""; _jobIdAutofilled = false;
   $("create-url").value = "";
   $("create-save-source").checked = false;
@@ -1816,6 +1817,120 @@ async function openSetup() {
   renderReadiness(await computeReadiness());
 }
 
+// --- U4: sidebar toggle (mobile overlay) ------------------------------------
+
+function openSidebar() {
+  document.body.classList.add("sidebar--open");
+  var ham = $("sidebar-hamburger");
+  if (ham) ham.setAttribute("aria-expanded", "true");
+  var mainEl = document.querySelector("main");
+  if (mainEl) mainEl.setAttribute("inert", "");
+  var first = document.querySelector("#sidebar .sidebar-nav button");
+  if (first) first.focus();
+}
+function closeSidebar() {
+  document.body.classList.remove("sidebar--open");
+  var ham = $("sidebar-hamburger");
+  if (ham) { ham.setAttribute("aria-expanded", "false"); ham.focus(); }
+  var mainEl = document.querySelector("main");
+  if (mainEl) mainEl.removeAttribute("inert");
+}
+function bindSidebar() {
+  var ham = $("sidebar-hamburger");
+  if (ham) ham.addEventListener("click", openSidebar);
+  var bd = $("sidebar-backdrop");
+  if (bd) bd.addEventListener("click", closeSidebar);
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && document.body.classList.contains("sidebar--open")) closeSidebar();
+  });
+  // close overlay after any sidebar nav link click
+  var navBtns = document.querySelectorAll("#sidebar .sidebar-nav button");
+  navBtns.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      if (document.body.classList.contains("sidebar--open")) closeSidebar();
+    });
+  });
+}
+
+// --- U4: 3-step wizard control ----------------------------------------------
+
+function showStep(n) {
+  currentWizardStep = n;
+  [1, 2, 3].forEach(function (i) {
+    var div = $("wizard-step-" + i);
+    if (div) div.hidden = i !== n;
+  });
+  // update wizard indicator nodes
+  var nodes = document.querySelectorAll(".wizard-node");
+  nodes.forEach(function (node, idx) {
+    var step = idx + 1;
+    node.className = "wizard-node " + (step < n ? "wizard-node--done" : step === n ? "wizard-node--active" : "wizard-node--pending");
+    node.textContent = step < n ? "✓" : String(step);
+  });
+  var prev = $("wizard-prev"); if (prev) prev.hidden = n === 1;
+  var next = $("wizard-next"); if (next) next.hidden = n === 3;
+  // move focus to first focusable child of new step
+  var stepDiv = $("wizard-step-" + n);
+  if (stepDiv) {
+    var focusable = stepDiv.querySelector("input, select, button, [tabindex]");
+    if (focusable) focusable.focus();
+  }
+}
+
+function renderWizardSummary(recrawl, jobId) {
+  var box = $("wizard-confirm-summary");
+  if (!box) return;
+  while (box.firstChild) box.removeChild(box.firstChild);
+  if (recrawl && jobId) {
+    var title = el("p"); title.style.fontWeight = "700";
+    setText(title, "重新抓取：" + jobId);
+    box.appendChild(title);
+  }
+  var isUrl = $("create-mode-url") && $("create-mode-url").checked;
+  var src = isUrl ? ($("create-url") ? $("create-url").value : "") : ($("create-dir") ? $("create-dir").value : "");
+  if (src) {
+    var r = el("div"); r.className = "field";
+    r.appendChild(el("strong", (isUrl ? "网址" : "路径") + "："));
+    r.appendChild(el("span", src));
+    box.appendChild(r);
+  }
+  var jid = $("create-job-id") ? $("create-job-id").value : "";
+  if (jid && !recrawl) {
+    var r2 = el("div"); r2.className = "field";
+    r2.appendChild(el("strong", "工作 id：")); r2.appendChild(el("span", jid));
+    box.appendChild(r2);
+  }
+}
+
+function bindWizard() {
+  var next = $("wizard-next");
+  if (next) next.addEventListener("click", function () {
+    if (currentWizardStep === 1) {
+      // validate source
+      var isUrl = $("create-mode-url") && $("create-mode-url").checked;
+      if (isUrl) {
+        var url = $("create-url") ? $("create-url").value.trim() : "";
+        var errEl = $("create-url-error");
+        if (!url) { if (errEl) { setText(errEl, "请填网址。"); errEl.focus(); } return; }
+        if (errEl) setText(errEl, "");
+      } else {
+        var dir = $("create-dir") ? $("create-dir").value.trim() : "";
+        var errEl2 = $("create-dir-error");
+        if (!dir) { if (errEl2) { setText(errEl2, "请填资料夹路径。"); errEl2.focus(); } return; }
+        if (errEl2) setText(errEl2, "");
+      }
+    }
+    if (currentWizardStep === 2) {
+      renderWizardSummary(false, null);
+    }
+    if (currentWizardStep < 3) showStep(currentWizardStep + 1);
+  });
+  var prev = $("wizard-prev");
+  if (prev) prev.addEventListener("click", function () {
+    if (currentWizardStep > 1) showStep(currentWizardStep - 1);
+  });
+}
+
 // --- wiring -----------------------------------------------------------------
 
 function bind() {
@@ -1830,6 +1945,8 @@ function bind() {
   $("btn-save-settings").addEventListener("click", saveSettings);
   $("settings-base-url").addEventListener("input", advisoryBaseUrl);
   bindCreate();
+  bindSidebar();
+  bindWizard();
   // Delegated click/keydown for inbox job rows (replaces per-row listeners).
   $("inbox-bands").addEventListener("click", function (e) {
     var row = e.target.closest(".job-row");
