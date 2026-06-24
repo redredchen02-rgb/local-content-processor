@@ -1073,6 +1073,8 @@ function confirmTray(triggerLabel, triggerCls, buildBody, commitLabel, onCommit,
   const body = el("div");
   body.className = "confirm-tray";
   body.hidden = true;
+  body.setAttribute("role", "alertdialog");
+  body.setAttribute("aria-modal", "true");
   buildBody(body);
   const acts = el("div"); acts.className = "confirm-actions";
   const cancel = button("取消", "btn-secondary");
