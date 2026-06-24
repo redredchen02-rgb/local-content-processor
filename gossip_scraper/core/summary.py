@@ -20,9 +20,15 @@ def generate_summary(item: GossipItem) -> str:
     # so short but real descriptions (e.g. "爆料黑幕揭秘") are not discarded.
     if item.description and len(item.description) >= 5:
         summary = item.description[:150]
-        # Clean up and ensure it ends properly
+        # Trim to a sentence boundary only when the last period falls in the final
+        # 20% of the window — otherwise we'd discard most of the text. If no close
+        # boundary exists, just append "..." to signal truncation.
         if not summary.endswith(("。", "！", "？", ".", "!", "?")):
-            summary = summary.rsplit("。", 1)[0] + "。" if "。" in summary else summary + "..."
+            last_p = summary.rfind("。")
+            if last_p >= len(summary) * 0.8:
+                summary = summary[: last_p + 1]
+            else:
+                summary = summary + "..."
         return summary
 
     # Generate from title based on category

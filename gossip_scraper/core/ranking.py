@@ -138,15 +138,18 @@ def rank(items: list[GossipItem], sort_by: str = "score") -> list[GossipItem]:
     if not items:
         return []
 
-    # Phase 1: compute per-platform heat ranges for normalization
+    # Phase 1: compute per-platform heat + rank ranges for normalization
     by_platform: dict[str, list[GossipItem]] = {}
     for it in items:
         by_platform.setdefault(it.platform, []).append(it)
 
     heat_ranges: dict[str, tuple[int, int]] = {}
+    rank_ranges: dict[str, tuple[int, int]] = {}
     for plat, plat_items in by_platform.items():
         heats = [it.heat for it in plat_items]
         heat_ranges[plat] = (min(heats), max(heats))
+        ranks = [it.rank for it in plat_items]
+        rank_ranges[plat] = (min(ranks), max(ranks))
 
     # Phase 2: compute velocity ranges for Baidu
     baidu_items = by_platform.get("baidu", [])
@@ -170,7 +173,7 @@ def rank(items: list[GossipItem], sort_by: str = "score") -> list[GossipItem]:
     for it in items:
         it.heat_score = _score_heat(it, heat_ranges)
         it.freshness_score = _score_freshness(
-            it, heat_ranges, velocity_range, time_range, now, len(items)
+            it, heat_ranges, rank_ranges, velocity_range, time_range, now, len(items)
         )
         it.surprise_score = _score_surprise(it, velocity_range, len(items))
         # Trend velocity bonus absorbed into surprise_score so sort_by='surprise' stays consistent
@@ -206,14 +209,18 @@ def _score_heat(item: GossipItem, ranges: dict[str, tuple[int, int]]) -> float:
 def _score_freshness(
     item: GossipItem,
     heat_ranges: dict[str, tuple[int, int]],
+    rank_ranges: dict[str, tuple[int, int]],
     velocity_range: tuple[float, float],
     time_range: tuple[float, float],
     now: float,
     total_items: int,
 ) -> float:
     """Freshness dimension: rank position + velocity + recency."""
-    # 1. Rank position: higher rank = newer (rank 1 = 1.0)
-    rank_fresh = max(0, 1.0 - (item.rank - 1) / max(total_items - 1, 1))
+    # 1. Rank position normalized within-platform: rank 1 on any platform = 1.0.
+    #    Using per-platform range avoids mixing Weibo's 50-slot scale with Baidu's
+    #    100-slot scale — an item at rank 25 should score ~0.5 on both platforms.
+    plat_rank_range = rank_ranges.get(item.platform, (item.rank, item.rank))
+    rank_fresh = 1.0 - _normalize(item.rank, plat_rank_range)
 
     # 2. Velocity (Baidu hotChange): high change = rising fast
     vel_fresh = 0.0
