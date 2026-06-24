@@ -14,6 +14,7 @@ import json
 import logging
 import time
 from pathlib import Path
+from typing import Any
 
 _LOG = logging.getLogger("gossip_scraper.health")
 
@@ -50,7 +51,7 @@ def record(
     return rate
 
 
-def _append(path: Path, rec: dict) -> None:
+def _append(path: Path, rec: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(rec, ensure_ascii=False) + "\n")

@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 from .__main__ import DEFAULT_PLATFORMS, SCRAPERS
+from .models import GossipItem
 from .scrapers.base import ScraperProtocol
 
 _SNAPSHOT_DIR = Path("gossip_history")
@@ -48,7 +49,7 @@ def save_snapshot() -> Path:
     return filepath
 
 
-async def _fetch_all(platforms: list[str], limit: int) -> list:
+async def _fetch_all(platforms: list[str], limit: int) -> list[GossipItem]:
     """Fetch from all platforms."""
     import asyncio
 
@@ -59,7 +60,6 @@ async def _fetch_all(platforms: list[str], limit: int) -> list:
     from .core.sentiment import enrich_sentiments
     from .core.summary import enrich_summaries
     from .core.trend import compute_velocity
-    from .models import GossipItem
 
     scrapers: list[tuple[str, ScraperProtocol]] = []
     for name in platforms:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -32,7 +33,7 @@ class GossipItem:
     category: str = ""
     merged_from: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "platform": self.platform,
             "rank": self.rank,

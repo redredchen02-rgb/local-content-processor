@@ -8,6 +8,8 @@ Alert triggers:
 
 from __future__ import annotations
 
+from typing import Any
+
 from ..models import GossipItem
 
 # Alert thresholds
@@ -16,7 +18,7 @@ HEAT_SURPRISE_THRESHOLD = 0.6  # Alert when both heat and surprise are high
 VELOCITY_THRESHOLD = 0.3  # Alert when rising fast
 
 
-def check_alerts(items: list[GossipItem]) -> list[dict]:
+def check_alerts(items: list[GossipItem]) -> list[dict[str, Any]]:
     """Check all items for alert conditions.
 
     Returns a list of alert dicts with item info and alert type."""
@@ -66,7 +68,7 @@ def check_alerts(items: list[GossipItem]) -> list[dict]:
     return alerts
 
 
-def format_alerts(alerts: list[dict]) -> str:
+def format_alerts(alerts: list[dict[str, Any]]) -> str:
     """Format alerts for console output."""
     if not alerts:
         return "  無警報"

@@ -124,7 +124,7 @@ strict_bytes = true
 # `strict = true` because mypy applies a per-override `strict` GLOBALLY (it would
 # force strict onto the cli/gui shells too). Scoped to everything but the shells.
 [[tool.mypy.overrides]]
-module = ["lcp.core.*", "lcp.pipeline", "lcp.adapters.*"]
+module = ["lcp.core.*", "lcp.pipeline", "lcp.adapters.*", "gossip_scraper.*"]
 disallow_any_generics = true
 disallow_subclassing_any = true
 disallow_untyped_calls = true

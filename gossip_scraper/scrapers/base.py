@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import html as _html
 import re
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 import httpx
 
@@ -94,10 +94,10 @@ async def fetch_text(
     follow_redirects: bool = True,
 ) -> str:
     """Fetch a URL and return response text. Retries on transient errors."""
-    return await _fetch_with_retry(
+    return cast(str, await _fetch_with_retry(
         url, headers=headers or {}, params=params,
         timeout=timeout, follow_redirects=follow_redirects, as_json=False,
-    )
+    ))
 
 
 def unescape_html(text: str) -> str:

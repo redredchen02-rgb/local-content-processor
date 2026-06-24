@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from urllib.parse import quote_plus
 
 from ..models import GossipItem
@@ -38,7 +39,7 @@ class WeiboScraper:
         return items
 
 
-def _tag_of(entry: dict) -> str:
+def _tag_of(entry: dict[str, Any]) -> str:
     """Extract the tag (hot/new/recommend/etc.) from a Weibo entry."""
     if entry.get("is_hot"):
         return "热"

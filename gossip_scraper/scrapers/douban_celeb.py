@@ -5,6 +5,8 @@ Celebrity gossip titles are derived by appending '相关' to each movie title.""
 
 from __future__ import annotations
 
+from typing import Any
+
 from ..models import GossipItem
 from .base import fetch_json
 
@@ -24,7 +26,7 @@ class DoubanCelebScraper:
         # Douban's celebrity search returns movies; we use it to extract
         # celebrity-related trending topics from the hot movies list.
         # The API caps each response at _PAGE_SIZE; paginate to reach `limit`.
-        entries: list[dict] = []
+        entries: list[dict[str, Any]] = []
         offset = 0
         while len(entries) < limit:
             batch_size = min(_PAGE_SIZE, limit - len(entries))

@@ -5,6 +5,8 @@ Paginates in batches of 20 (Douban API hard limit per request) to reach `limit`.
 
 from __future__ import annotations
 
+from typing import Any
+
 from ..models import GossipItem
 from .base import fetch_json
 
@@ -21,7 +23,7 @@ class DoubanMovieScraper:
     platform = "douban_movie"
 
     async def fetch(self, limit: int = 50) -> list[GossipItem]:
-        entries: list[dict] = []
+        entries: list[dict[str, Any]] = []
         offset = 0
         while len(entries) < limit:
             batch_size = min(_PAGE_SIZE, limit - len(entries))

@@ -10,10 +10,12 @@ Includes: hook title, key points, hashtags, call-to-action."""
 
 from __future__ import annotations
 
+from typing import Any
+
 from ..models import GossipItem
 
 
-def generate_post(item: GossipItem, platform: str = "weibo") -> dict:
+def generate_post(item: GossipItem, platform: str = "weibo") -> dict[str, Any]:
     """Generate a social media post for the given platform.
 
     Returns a dict with title, body, hashtags, and call_to_action."""
@@ -38,7 +40,7 @@ def _post_body(item: GossipItem, max_len: int = 150) -> str:
     return item.summary or item.title
 
 
-def _weibo_post(item: GossipItem) -> dict:
+def _weibo_post(item: GossipItem) -> dict[str, Any]:
     """Generate a Weibo-style post."""
     title = item.title
     summary = _post_body(item)
@@ -57,7 +59,7 @@ def _weibo_post(item: GossipItem) -> dict:
     }
 
 
-def _xiaohongshu_post(item: GossipItem) -> dict:
+def _xiaohongshu_post(item: GossipItem) -> dict[str, Any]:
     """Generate a Xiaohongshu-style post."""
     title = item.title
     summary = _post_body(item)
@@ -86,7 +88,7 @@ def _xiaohongshu_post(item: GossipItem) -> dict:
     }
 
 
-def _wechat_post(item: GossipItem) -> dict:
+def _wechat_post(item: GossipItem) -> dict[str, Any]:
     """Generate a WeChat Moments-style post."""
     title = item.title
     summary = _post_body(item, max_len=80)
@@ -102,7 +104,7 @@ def _wechat_post(item: GossipItem) -> dict:
     }
 
 
-def _twitter_post(item: GossipItem) -> dict:
+def _twitter_post(item: GossipItem) -> dict[str, Any]:
     """Generate a Twitter-style post (280 char limit)."""
     title = item.title
     # Truncate for Twitter
