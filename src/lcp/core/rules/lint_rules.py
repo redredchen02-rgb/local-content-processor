@@ -295,7 +295,7 @@ def lint_draft(
         errors.append(f"hype/clickbait tag(s) not objective: {hype_hits}")
 
     # --- keywords consistent with body -------------------------------------
-    body_text = _draft_text(draft).lower()
+    body_text = _draft_text(draft).lower() if draft.keywords else ""
     # Strip the optional type prefix ("人物:周冬雨" → "周冬雨") before checking
     # body presence; backward-compatible: plain keywords without ":" are unchanged.
     orphan_keywords = [

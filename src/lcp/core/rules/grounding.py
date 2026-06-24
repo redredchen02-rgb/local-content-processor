@@ -187,36 +187,20 @@ def _split_claims(draft: Draft) -> list[str]:
     never silently passes.  intro is an independent LLM-generated field; its
     factual claims must be verified as substrings of the source.
     Pure splitting on sentence boundaries / newlines — no URL parsing."""
+    def _keep(items: list[str]) -> list[str]:
+        return [s for s in items if len(s) >= _MIN_CLAIM_CHARS]
+
     claims: list[str] = []
-    # intro: independently LLM-generated, so its claims need grounding too.
-    for chunk in _sentences(draft.intro):
-        if len(chunk) >= _MIN_CLAIM_CHARS:
-            claims.append(chunk)
-    for chunk in _sentences(draft.event_body):
-        if len(chunk) >= _MIN_CLAIM_CHARS:
-            claims.append(chunk)
-    for item in draft.faq:
-        ans = item.answer.strip()
-        if len(ans) >= _MIN_CLAIM_CHARS:
-            claims.append(ans)
-    for section in (*draft.image_sections, *draft.video_sections):
-        cap = section.caption.strip()
-        if len(cap) >= _MIN_CLAIM_CHARS:
-            claims.append(cap)
-    for sub in draft.subheads:
-        s = sub.strip()
-        if len(s) >= _MIN_CLAIM_CHARS:
-            claims.append(s)
+    claims.extend(_keep(_sentences(draft.intro)))
+    claims.extend(_keep(_sentences(draft.event_body)))
+    claims.extend(_keep([item.answer.strip() for item in draft.faq]))
+    claims.extend(_keep([s.caption.strip() for s in (*draft.image_sections, *draft.video_sections)]))
+    claims.extend(_keep([sub.strip() for sub in draft.subheads]))
     # Unit 1 (B0 fix): quick_facts items + summary sentences are copywriter-
     # generated narrative content, so they are grounded too — an ungrounded
     # quick fact / summary routes to a human, never silently passes.
-    for qf in draft.quick_facts:
-        q = qf.strip()
-        if len(q) >= _MIN_CLAIM_CHARS:
-            claims.append(q)
-    for chunk in _sentences(draft.summary):
-        if len(chunk) >= _MIN_CLAIM_CHARS:
-            claims.append(chunk)
+    claims.extend(_keep([qf.strip() for qf in draft.quick_facts]))
+    claims.extend(_keep(_sentences(draft.summary)))
     return claims
 
 
