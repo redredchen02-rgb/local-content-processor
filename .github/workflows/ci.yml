@@ -18,9 +18,10 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"
+          cache: pip
 
       - name: Install ruff
-        run: pip install ruff
+        run: pip install ruff==0.11.13
 
       - name: Format check
         run: ruff format --check .
@@ -28,7 +29,7 @@ jobs:
       - name: Lint
         run: ruff check .
 
-  typecheck:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -36,37 +37,18 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"
+          cache: pip
 
-      - name: Install package + type deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[crawl,media,llm,dedup,gossip,dev]"
-
-      - name: Type-check (mypy)
-        run: mypy
-
-  security:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version: "3.11"
-
-      # Audit the resolved dependency closure. pip-audit's exit code IS the gate
-      # (it cannot be suppressed). On a fresh install the version ranges resolve
-      # to current releases, so this catches a known-vulnerable transitive dep at
-      # PR time, where remediation belongs. Reviewed no-fix advisories go in a
-      # dated --ignore-vuln list, never a blanket disable.
-      - name: Install package + audit tool
+      - name: Install package + deps
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[crawl,media,llm,dedup,gossip,dev]"
           pip install pip-audit
 
+      - name: Type-check (mypy)
+        run: mypy
+
       - name: Audit dependencies
-        # --skip-editable skips the local package itself (not on PyPI).
         run: pip-audit --skip-editable
 
   test:
@@ -77,19 +59,16 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"
+          cache: pip
 
       # ffprobe/ffmpeg are needed by the media tests (otherwise they skip).
       - name: Install ffmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
-      # Install the package editable with every functional extra the tests
-      # exercise (crawl=scrapy, media=pillow, llm=openai, dedup=datasketch).
       - name: Install package + test deps
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[crawl,media,llm,dedup,gossip,dev]"
 
-      # Coverage is collected here (the soft `fail_under` floor lives in
-      # pyproject's [tool.coverage.report]); a plain local `pytest` is unaffected.
       - name: Run tests
-        run: pytest -q --cov=lcp --cov-report=term-missing
+        run: pytest -q -n auto --cov=lcp --cov-report=term-missing
