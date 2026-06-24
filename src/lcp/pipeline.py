@@ -136,7 +136,7 @@ def _try_write_url_source(spec: SourceSpec) -> None:
         return
     try:
         _write_source(spec.job_dir, url=spec.url, platform="url", title="")
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort write; failure is non-fatal and logged
         logger.warning(
             "stage1: source.json write failed for new job %s (best-effort)", spec.job_id, exc_info=True
         )
@@ -166,7 +166,7 @@ def _try_overwrite_url_source(spec: SourceSpec) -> None:
             return  # gossip (non-"url") or absent/empty (unknown) → leave untouched
     try:
         _write_source(spec.job_dir, url=spec.url, platform="url", title="")
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort write; failure is non-fatal and logged
         logger.warning(
             "stage1: source.json overwrite failed for retry %s (best-effort)", spec.job_id, exc_info=True
         )
@@ -577,7 +577,7 @@ class Pipeline:
         if on_stage is not None:
             try:
                 on_stage("assemble")
-            except Exception:
+            except Exception:  # noqa: BLE001 - swallow UI callback errors; never block gate execution
                 pass
         draft = assemble(
             source_text,
@@ -631,7 +631,7 @@ class Pipeline:
         if on_stage is not None:
             try:
                 on_stage("lint")
-            except Exception:
+            except Exception:  # noqa: BLE001 - swallow UI callback errors; never block gate execution
                 pass
         has_images = bool(media_out_report.get("image_count", 0))
         lint_config = build_lint_config(self.config.content, self.config.categories)
@@ -752,7 +752,7 @@ class Pipeline:
         if on_stage is not None:
             try:
                 on_stage("crawl")
-            except Exception:
+            except Exception:  # noqa: BLE001 - swallow UI callback errors; never block gate execution
                 pass
         rec = self.stage1(spec, ts=ts).record
         if rec.state not in (JobState.CRAWLED, JobState.CRAWLED_WARN):

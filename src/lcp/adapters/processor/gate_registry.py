@@ -121,12 +121,21 @@ PARK_GATES: list[GateSpec] = [
 def run_gate_chain(
     gates: list[GateSpec],
     ctx: GateContext,
+    *,
+    on_stage: Callable[[str], None] | None = None,
 ) -> tuple[JobState | None, str | None]:
     """Run the ordered gate chain. Returns (parked_state, stopped_at_name).
 
     ``(None, None)`` means all gates passed. ``(state, name)`` means the gate
-    ``name`` parked the job at ``state``."""
+    ``name`` parked the job at ``state``. ``on_stage`` fires before each gate;
+    exceptions from the callback are swallowed so UI errors never block the
+    gate chain."""
     for gate in gates:
+        if on_stage is not None:
+            try:
+                on_stage(gate.name)
+            except Exception:  # noqa: BLE001 - swallow UI callback errors; never block gate execution
+                pass
         state = gate.run(ctx)
         if state is not None:
             return state, gate.name
