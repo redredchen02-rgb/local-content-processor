@@ -96,14 +96,21 @@ def _hybrid_similarity(a: str, b: str) -> float:
 
 
 def _lcs_length(a: str, b: str) -> int:
-    """Length of longest common substring via dynamic programming."""
+    """Length of longest common substring via two-row rolling DP (L9: dedup-quadratic-lcs).
+
+    Uses O(min(m,n)) space instead of O(m×n) by keeping only the previous row."""
     if not a or not b:
         return 0
-    m = [[0] * (len(b) + 1) for _ in range(len(a) + 1)]
+    # Ensure b is the shorter string for minimal space
+    if len(a) < len(b):
+        a, b = b, a
+    prev = [0] * (len(b) + 1)
     longest = 0
     for i in range(1, len(a) + 1):
+        curr = [0] * (len(b) + 1)
         for j in range(1, len(b) + 1):
             if a[i - 1] == b[j - 1]:
-                m[i][j] = m[i - 1][j - 1] + 1
-                longest = max(longest, m[i][j])
+                curr[j] = prev[j - 1] + 1
+                longest = max(longest, curr[j])
+        prev = curr
     return longest
