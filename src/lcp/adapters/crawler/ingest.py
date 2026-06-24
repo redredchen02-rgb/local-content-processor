@@ -15,6 +15,7 @@ from pathlib import Path
 
 from ...core.errors import InputValidationError
 from ...core.models import AssetKind, AssetRef, AssetState, SourceType
+from ..storage._fs import write_0600_bytes as _write_0600
 from ..storage.manifest import manifest_path, write_manifest
 from . import net_guard
 from .base import Crawler, RawJobBundle, SourceSpec
@@ -25,20 +26,6 @@ _IMAGE_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff"}
 _VIDEO_EXT = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 _TEXT_NAMES = ("body.txt", "content.txt", "text.txt", "source.txt")
 _TITLE_NAMES = ("title.txt",)
-
-
-def _write_0600(path: Path, data: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Open with O_CREAT|O_EXCL-free but enforce mode after write; umask 0077 at
-    # startup already yields 0600, the chmod is belt-and-suspenders.
-    with path.open("wb") as f:
-        f.write(data)
-        f.flush()
-        os.fsync(f.fileno())
-    try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
 
 
 def _kind_for(path: Path) -> AssetKind | None:

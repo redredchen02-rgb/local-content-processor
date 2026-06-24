@@ -44,6 +44,7 @@ requests; a single pywebview window could not).
 from __future__ import annotations
 
 import functools
+import json
 import logging
 import threading
 from collections.abc import Callable
@@ -64,6 +65,7 @@ from .adapters.storage.audit_aggregate import aggregate_audit, summarize_gaps
 from .adapters.storage.audit_log import AuditLog
 from .adapters.storage.job_store import JobStore
 from .adapters.storage.source_store import SourceStore
+from .cli_helpers import completion_advisory as _completion_advisory
 from .core import config as _config
 from .core.errors import EXIT_INTERNAL, LcpError
 from .core.models import SourceType
@@ -79,23 +81,7 @@ def _error_dict(err: LcpError) -> dict:
     return {"error": escape_html(str(err)), "exit_code": getattr(err, "exit_code", EXIT_INTERNAL)}
 
 
-def _completion_advisory(state: Any, *, dry_run: bool) -> str | None:
-    """Operator-facing hint when a run did not reach a packet (Unit 5). Mirrors
-    the CLI ``_completion_advisory`` 1:1 (the two shells are independent)."""
-    from .core.state import JobState
-
-    if dry_run and state is JobState.NEEDS_REVISION:
-        return (
-            "dry-run did not call the LLM, so image_sections/quick_facts/summary "
-            "are empty and the draft cannot reach PROCESSED — re-run WITHOUT "
-            "--dry-run (and with --ai-copy) for a complete review packet."
-        )
-    if state is JobState.NEEDS_REVISION:
-        return (
-            "draft parked for revision — see notes for the missing sections; a "
-            "complete draft needs --ai-copy (and captions only for image bundles)."
-        )
-    return None
+# --- async helpers (background crawl/process threads) ------------------------
 
 
 def bridge_safe(fn: Callable[..., dict]) -> Callable[..., dict]:
@@ -545,8 +531,6 @@ class Api:
         NOT cross the bridge as a raw exception (path/stack leak) — it returns the
         same "internal error" shape as dashboard_stats / _run_bg."""
         try:
-            import json
-
             c = self._ctx()
             report_path = c.store.job_dir(job_id) / "processed" / "validation_report.json"
             if not report_path.exists():
@@ -886,8 +870,6 @@ class Api:
         so its absence is not an error. Attacker-shapeable fields (failed-file names)
         are HTML-escaped."""
         try:
-            import json
-
             from .adapters.crawler.net_guard import safe_join
 
             c = self._ro_ctx_get()

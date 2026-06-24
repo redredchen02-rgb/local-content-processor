@@ -34,6 +34,13 @@ from ...core.models import (
     AssetState,
     SourceType,
 )
+from ...core.models import (
+    AssetKind,
+    AssetRef,
+    AssetState,
+    SourceType,
+)
+from ..storage._fs import write_0600_bytes as _write_0600
 from ...core.rules.extraction import classify_media_url
 from ...core.rules.extraction import extract_content as _core_extract
 from ..storage.manifest import write_manifest
@@ -369,17 +376,6 @@ def _assets_from_pipeline_output(
         _add(url, AssetKind.VIDEO, videos_store, vid_by_url)
     return assets
 
-
-def _write_0600(path: Path, data: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("wb") as f:
-        f.write(data)
-        f.flush()
-        os.fsync(f.fileno())
-    try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
 
 
 def main(argv: list[str] | None = None) -> int:

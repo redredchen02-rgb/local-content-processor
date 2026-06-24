@@ -45,6 +45,8 @@ def write_0600_bytes(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as f:
         f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
     try:
         os.chmod(path, 0o600)
     except OSError:

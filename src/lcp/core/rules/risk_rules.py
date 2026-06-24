@@ -182,7 +182,7 @@ class RiskDetector(Protocol):
     U1's chosen strength (rule-list vs NLI) implements THIS protocol; the gate
     skeleton (:func:`assess_risk`) and the adapter never change."""
 
-    def detect(self, content: "RiskInput") -> "tuple[list[RiskFlag], bool]": ...
+    def detect(self, content: "RiskInput", haystack: str | None = None) -> "tuple[list[RiskFlag], bool]": ...
 
 
 # --- Default baseline detector (rule / keyword) ------------------------------
@@ -276,10 +276,11 @@ class KeywordRiskDetector:
     pii_keywords: tuple[str, ...] = _PII_KEYWORDS
     campus_keywords: tuple[str, ...] = _CAMPUS_KEYWORDS
 
-    def detect(self, content: RiskInput) -> tuple[list[RiskFlag], bool]:
+    def detect(self, content: RiskInput, haystack: str | None = None) -> tuple[list[RiskFlag], bool]:
         if not content.available:
             return [], False  # fail-closed: caller escalates to review
-        haystack = f"{content.title}\n{content.body}".lower()
+        if haystack is None:
+            haystack = f"{content.title}\n{content.body}".lower()
         flags: list[RiskFlag] = []
 
         for category, words in self.redline_keywords.items():
@@ -359,7 +360,11 @@ def assess_risk(
 
     Pure: no I/O, deterministic given inputs."""
     det = detector if detector is not None else KeywordRiskDetector()
-    flags, available = det.detect(content)
+    haystack = f"{content.title}\n{content.body}".lower()
+    try:
+        flags, available = det.detect(content, haystack=haystack)
+    except TypeError:
+        flags, available = det.detect(content)
 
     if not available:
         return RiskResult(
@@ -382,7 +387,7 @@ def assess_risk(
     # a caller can pass a custom detector with overridden keywords and have them
     # honoured here rather than silently ignored.
     campus_kws = getattr(det, "campus_keywords", _CAMPUS_KEYWORDS)
-    campus_seen = _mentions_disabled_category(content, campus_kws)
+    campus_seen = _mentions_disabled_category(content, campus_kws, haystack=haystack)
     if campus_seen and not is_category_enabled(
         RiskCategory.CAMPUS_STUDENT, enabled_categories=enabled_categories
     ):
@@ -408,10 +413,12 @@ def assess_risk(
 def _mentions_disabled_category(
     content: RiskInput,
     keywords: tuple[str, ...] = _CAMPUS_KEYWORDS,
+    haystack: str | None = None,
 ) -> bool:
     """Cheap baseline scan for 學生校園 markers. Adapter/U1 may override by
     passing a category-tagged input later; for the baseline we keyword-scan."""
-    haystack = f"{content.title}\n{content.body}".lower()
+    if haystack is None:
+        haystack = f"{content.title}\n{content.body}".lower()
     return any(w.lower() in haystack for w in keywords)
 
 

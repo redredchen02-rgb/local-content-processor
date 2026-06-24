@@ -1527,11 +1527,16 @@ function bindCreate() {
     await loadSavedSources();
   });
   // U1: auto-fill job-id from URL hostname when the url input changes.
+  var _suggestTimer = null;
   $("create-url").addEventListener("input", function () {
-    if ($("create-mode-url").checked && (_jobIdAutofilled || !$("create-job-id").value.trim())) {
-      var suggestion = _suggestJobId(this.value.trim());
-      if (suggestion) { $("create-job-id").value = suggestion; _jobIdAutofilled = true; }
-    }
+    var self = this;
+    clearTimeout(_suggestTimer);
+    _suggestTimer = setTimeout(function () {
+      if ($("create-mode-url").checked && (_jobIdAutofilled || !$("create-job-id").value.trim())) {
+        var suggestion = _suggestJobId(self.value.trim());
+        if (suggestion) { $("create-job-id").value = suggestion; _jobIdAutofilled = true; }
+      }
+    }, 200);
   });
   // U1: once the user types in the job-id field, stop overwriting it.
   $("create-job-id").addEventListener("input", function () { _jobIdAutofilled = false; });

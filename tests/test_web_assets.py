@@ -80,7 +80,7 @@ def test_suggest_job_id_function_present():
 def test_url_input_triggers_suggest_job_id():
     # The URL input event listener calls _suggestJobId.
     assert "create-url" in APP_JS
-    assert "_suggestJobId(this.value.trim())" in APP_JS
+    assert "_suggestJobId(self.value.trim())" in APP_JS
 
 
 # --- U2: one-shot quick-mode (app.js + index.html) --------------------------
