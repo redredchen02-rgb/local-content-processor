@@ -7,7 +7,9 @@ and dry_run (the LLM is never called; no external mutation; result flagged)."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -16,6 +18,7 @@ from lcp.adapters.crawler.base import STATUS_CRAWLED, RawJobBundle, SourceSpec
 from lcp.adapters.crawler.bundle import build_manifest, sha256_text
 from lcp.adapters.processor._persist import persist_gate_state
 from lcp.adapters.storage.audit_log import AuditLog
+from lcp.adapters.storage.gossip_ingest import SOURCE_NAME, write_source
 from lcp.adapters.storage.job_store import JobStore
 from lcp.core.config import Config
 from lcp.core.errors import DependencyError, InputValidationError
@@ -83,6 +86,15 @@ def _spec(store, job_id):
         source_type=SourceType.LOCAL_DIR,
         job_dir=store.job_dir(job_id),
         local_dir=Path("/unused"),
+    )
+
+
+def _spec_url(store, job_id, url="https://example.com/article"):
+    return SourceSpec(
+        job_id=job_id,
+        source_type=SourceType.URL,
+        job_dir=store.job_dir(job_id),
+        url=url,
     )
 
 
@@ -177,6 +189,101 @@ def test_stage1_recrawl_allowed_for_crawl_failed(store, audit):
     assert rec.state is JobState.CRAWLED  # re-crawl succeeded in place
     assert (store.job_dir("jcf") / "raw" / "source.txt").exists()
     assert store.get_job("jcf").source_text_sha256 == sha256_text(CLEAN_SOURCE)
+
+
+# --- U2: source URL persistence via stage1 -----------------------------------
+
+
+def test_stage1_url_job_writes_source_json(store, audit):
+    """New standard-URL job → source.json written with platform='url' and correct URL."""
+    p = _pipeline(store, audit)
+    url = "https://example.com/news"
+    p.stage1(_spec_url(store, "ju1", url=url), ts=TS)
+
+    source = store.job_dir("ju1") / SOURCE_NAME
+    assert source.exists()
+    data = json.loads(source.read_text())
+    assert data["url"] == url
+    assert data["platform"] == "url"
+
+
+def test_stage1_url_job_retry_updates_source_json(store, audit):
+    """CRAWL_FAILED retry with corrected URL → source.json updated with new URL."""
+    p = _pipeline(store, audit)
+    # Simulate a first crawl that failed: create the job, write original source.json,
+    # and park it at CRAWL_FAILED (NEW → CRAWL_FAILED is the legal failure path).
+    store.create_job("ju2", created_at=TS)
+    write_source(store.ensure_job_dir("ju2"), url="https://example.com/old", platform="url", title="")
+    store.set_state("ju2", JobState.CRAWL_FAILED, updated_at=TS)
+
+    # Retry with corrected URL.
+    new_url = "https://example.com/corrected"
+    p.stage1(_spec_url(store, "ju2", url=new_url), ts=TS)
+
+    data = json.loads((store.job_dir("ju2") / SOURCE_NAME).read_text())
+    assert data["url"] == new_url
+    assert data["platform"] == "url"
+
+
+def test_stage1_gossip_source_json_not_overwritten(store, audit):
+    """R5: gossip source.json (platform='weibo') must not be touched on CRAWL_FAILED retry."""
+    p = _pipeline(store, audit)
+    store.create_job("jg", created_at=TS)
+    store.set_state("jg", JobState.CRAWL_FAILED, updated_at=TS)
+    # Pre-seed gossip source.json.
+    write_source(store.ensure_job_dir("jg"), url="https://weibo.com/post/123", platform="weibo", title="原文標題")
+
+    p.stage1(_spec_url(store, "jg", url="https://example.com/retry"), ts=TS)
+
+    data = json.loads((store.job_dir("jg") / SOURCE_NAME).read_text())
+    assert data["platform"] == "weibo"  # gossip metadata preserved
+    assert data["title"] == "原文標題"
+    assert data["url"] == "https://weibo.com/post/123"
+
+
+def test_stage1_fail_closed_absent_platform(store, audit):
+    """source.json with absent 'platform' field → fail-closed, file left untouched."""
+    p = _pipeline(store, audit)
+    store.create_job("jfc", created_at=TS)
+    store.set_state("jfc", JobState.CRAWL_FAILED, updated_at=TS)
+    # Write source.json without platform field.
+    src = store.ensure_job_dir("jfc") / SOURCE_NAME
+    src.write_text(json.dumps({"url": "https://original.com"}), encoding="utf-8")
+    src.chmod(0o600)
+
+    p.stage1(_spec_url(store, "jfc", url="https://example.com/retry"), ts=TS)
+
+    data = json.loads(src.read_text())
+    assert data.get("url") == "https://original.com"  # unchanged
+    assert "platform" not in data
+
+
+def test_stage1_local_dir_no_source_json(store, audit):
+    """LOCAL_DIR spec → no source.json written."""
+    p = _pipeline(store, audit)
+    p.stage1(_spec(store, "jld"), ts=TS)
+    assert not (store.job_dir("jld") / SOURCE_NAME).exists()
+
+
+def test_stage1_write_source_failure_does_not_abort_crawl(store, audit):
+    """write_source OSError is best-effort — crawl must still complete normally."""
+    p = _pipeline(store, audit)
+    with patch("lcp.pipeline._write_source", side_effect=OSError("disk full")):
+        result = p.stage1(_spec_url(store, "jerr"), ts=TS)
+    assert result.record.state is JobState.CRAWLED
+
+
+def test_stage1_scheme_guard_no_source_json_for_file_url(store, audit):
+    """file:// scheme → no source.json written (scheme allowlist guard)."""
+    p = _pipeline(store, audit)
+    spec = SourceSpec(
+        job_id="jsch",
+        source_type=SourceType.URL,
+        job_dir=store.job_dir("jsch"),
+        url="file:///etc/passwd",
+    )
+    p.stage1(spec, ts=TS)
+    assert not (store.job_dir("jsch") / SOURCE_NAME).exists()
 
 
 # --- dry_run: LLM not called, no external mutation, result flagged ------------
