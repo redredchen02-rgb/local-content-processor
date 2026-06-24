@@ -320,12 +320,18 @@ class Api:
         watermark: bool | None = None,
         template: str | None = None,
         ai_copy: bool = False,
+        *,
+        on_stage: Callable[[str], None] | None = None,
     ) -> dict:
         """Mirror `process`: risk + dedup gates -> assemble -> lint + ground.
 
         Honours dry_run (LLM not called). Stops at the first gate that parks the
         job and reports the resting state. watermark/template/ai_copy are
-        process-time inputs (1:1 with the CLI flags)."""
+        process-time inputs (1:1 with the CLI flags).
+
+        ``on_stage`` is NOT a bridge parameter (never sent by the JS frontend);
+        it is supplied only by the internal async callers so they can update the
+        live stage indicator while a background thread is running."""
         c = self._ctx()
         p = pl.Pipeline(c.config, c.store, c.audit, dry_run=bool(dry_run))
         res = p.process(
@@ -335,6 +341,7 @@ class Api:
             watermark=watermark,
             template=template or None,
             ai_copy=bool(ai_copy),
+            on_stage=on_stage,
         )
         return {
             "job_id": escape_html(job_id),
@@ -384,9 +391,14 @@ class Api:
 
     # --- Long tasks: background thread + polled status -----------------------
 
-    def _run_bg(self, job_id: str, fn) -> dict:
+    def _run_bg(self, job_id: str, fn, *, kind: str = "process") -> dict:
         """Run a long task (crawl/process) in a background thread; the GUI polls
         :meth:`job_status` for completion. Returns immediately with 'running'.
+
+        ``kind`` describes the operation type (``"crawl"``, ``"process"``,
+        ``"process_dry"``, ``"run"``); it is stored in the status dict so the
+        frontend can show the right step-indicator sequence. For ``"crawl"`` the
+        initial ``stage`` is set immediately (no on_stage callback is needed).
 
         DUPLICATE-WORKER GUARD: acquires the shared ``inflight`` slot (same
         registry the webserver sync handler uses) so an async *_async and a
@@ -399,7 +411,12 @@ class Api:
                 return existing or {"job_id": escape_html(job_id), "status": "running"}
             self.inflight.add(job_id)
         with self._status_lock:
-            self._status[job_id] = {"job_id": escape_html(job_id), "status": "running"}
+            self._status[job_id] = {
+                "job_id": escape_html(job_id),
+                "status": "running",
+                "kind": kind,
+                "stage": kind if kind == "crawl" else None,
+            }
 
         def _worker():
             try:
@@ -434,11 +451,12 @@ class Api:
             threading.Thread(target=_cleanup, daemon=True).start()
 
         threading.Thread(target=_worker, daemon=True, name=f"lcp-bg-{job_id}").start()
-        return {"job_id": escape_html(job_id), "status": "running"}
+        with self._status_lock:
+            return dict(self._status[job_id])
 
     def create_and_crawl_async(self, job_id: str, url: str) -> dict:
         """Background variant of create_and_crawl (long network task)."""
-        return self._run_bg(job_id, lambda: self.create_and_crawl(job_id, url))
+        return self._run_bg(job_id, lambda: self.create_and_crawl(job_id, url), kind="crawl")
 
     def process_async(
         self,
@@ -450,9 +468,16 @@ class Api:
         ai_copy: bool = False,
     ) -> dict:
         """Background variant of process (long LLM task)."""
+        def on_stage(name: str) -> None:
+            with self._status_lock:
+                if self._status.get(job_id, {}).get("status") == "running":
+                    self._status[job_id]["stage"] = name
+
+        kind = "process_dry" if dry_run else "process"
         return self._run_bg(
             job_id,
-            lambda: self.process(job_id, title, dry_run, watermark, template, ai_copy),
+            lambda: self.process(job_id, title, dry_run, watermark, template, ai_copy, on_stage=on_stage),
+            kind=kind,
         )
 
     @bridge_safe
@@ -460,6 +485,11 @@ class Api:
         """Sync helper: Stage 1 + Stage 2 up to draft target; called from
         run_until_draft_async. @bridge_safe so LcpError yields a proper error
         dict rather than the generic "internal error" from _run_bg's bare except."""
+        def on_stage(name: str) -> None:
+            with self._status_lock:
+                if self._status.get(job_id, {}).get("status") == "running":
+                    self._status[job_id]["stage"] = name
+
         c = self._ctx()
         crawler = build_crawler(c.config, c.audit, _now)
         spec = SourceSpec(
@@ -476,6 +506,7 @@ class Api:
             ts=_now(),
             ai_copy=bool(ai_copy),
             source_urls=[url],
+            on_stage=on_stage,
         )
         return {
             "job_id": escape_html(job_id),
@@ -491,14 +522,18 @@ class Api:
 
         Returns immediately with ``{status: "running"}``; the GUI polls
         :meth:`job_status` until ``status`` becomes ``done`` or ``error``."""
-        return self._run_bg(job_id, lambda: self._do_run_until_draft(job_id, url, ai_copy))
+        return self._run_bg(job_id, lambda: self._do_run_until_draft(job_id, url, ai_copy), kind="run")
 
     @bridge_safe
     def job_status(self, job_id: str) -> dict:
         """Read a background task's status: running | done | error | unknown.
 
         The persisted state (list_jobs/summary) is the source of truth; this is
-        just the in-memory progress of an in-flight background task."""
+        just the in-memory progress of an in-flight background task.
+
+        While ``status == "running"``, the response includes ``kind`` (the
+        operation type) and ``stage`` (the current gate, e.g. "risk", "assemble")
+        so the frontend can render a live step-indicator."""
         with self._status_lock:
             st = self._status.get(job_id)
         if st is not None:
