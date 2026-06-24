@@ -45,7 +45,7 @@ def audit(tmp_path):
 
 @pytest.fixture()
 def config():
-    return Config(publisher=PublisherConfig(reviewers=["alice"]))
+    return Config(publisher=PublisherConfig())
 
 
 def _write_index(store: JobStore, job_id: str, body: str) -> None:

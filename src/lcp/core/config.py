@@ -104,7 +104,6 @@ class LlmConfig(BaseModel):
 
 
 class PublisherConfig(BaseModel):
-    reviewers: list[str] = Field(default_factory=list)
     publish_enabled_by_default: bool = False
     require_human_approval: bool = True
 

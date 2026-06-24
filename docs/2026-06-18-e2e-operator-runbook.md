@@ -17,8 +17,6 @@ python3.11 -m venv .venv && ./.venv/bin/pip install -e ".[crawl,media,llm,dedup,
 
 Then edit `config.yaml`:
 
-- `publisher.reviewers` — **add at least one reviewer name** (else `approve`/
-  `resolve`/`backfill` refuse — they require a whitelisted reviewer).
 - `crawler.allow_domains` — only sources you own/may legally cite (URL crawls).
 - `llm.base_url` (OpenAI-compatible `/v1`) + `llm.allowed_hosts`; put the API key
   in the keyring (`keyring set local-content-processor llm`) or `LCP_LLM_API_KEY`.
@@ -43,8 +41,8 @@ lcp review-packet --job-id job-001 --source-url https://source.example/post/123
 #   -> review_pending; a body_sha256 is recorded
 
 # Sign-off (attribution, not auth) + record the human publish:
-lcp approve  --job-id job-001 --reviewer alice
-lcp backfill --job-id job-001 --reviewer alice \
+lcp approve  --job-id job-001
+lcp backfill --job-id job-001 \
     --url https://your-site.example/published/job-001 --attest
 #   -> published_recorded
 ```
@@ -58,8 +56,8 @@ resting state, the reasons (notes), and an advisory.
 |---|---|---|
 | `BLOCKED` | redline content (terminal) | do not recover in place; only `supersede` (with second confirmation for a redline) starts a fresh job |
 | `DUPLICATE` | matches the site index | `supersede` if it is genuinely new; else drop |
-| `NEEDS_HUMAN_REVIEW` (dedup/risk) | uncertain | `lcp resolve --job-id X --reviewer alice --reason "..."` (recorded override) |
-| `NEEDS_HUMAN_REVIEW` (grounding) | an ungrounded claim | fix the draft/source, then `lcp resolve --job-id X --reviewer alice --relint` |
+| `NEEDS_HUMAN_REVIEW` (dedup/risk) | uncertain | `lcp resolve --job-id X --reason "..."` (recorded override) |
+| `NEEDS_HUMAN_REVIEW` (grounding) | an ungrounded claim | fix the draft/source, then `lcp resolve --job-id X --relint` |
 | `NEEDS_REVISION` | lint (missing sections, title length, copied-too-much) | see the notes for which sections; re-run `process` with `--ai-copy` |
 
 **Dry-run caveat:** `--dry-run` never calls the LLM, so the copywriter sections
@@ -83,8 +81,8 @@ synthetic fixture — never real scraped subject PII.
 
 ## 4. Go/no-go checklist
 
-- [ ] `lcp init` run; `config.yaml` has ≥1 reviewer; LLM key in keyring/env.
+- [ ] `lcp init` run; `config.yaml` has LLM endpoint/model set; LLM key in keyring/env.
 - [ ] `lcp process --ai-copy` reaches `processed` (not `needs_revision`).
 - [ ] `review-packet` shows a `body_sha256`; `data/jobs/<id>/` artifacts parse.
 - [ ] `approve` then `backfill --attest` reaches `published_recorded`.
-- [ ] Any parked job was resolved by a **named** reviewer with a recorded reason.
+- [ ] Any parked job was resolved with a recorded reason.

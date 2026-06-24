@@ -4,13 +4,13 @@ The whole point of Unit 9's design is that all operator logic lives in `Api`,
 which has no pywebview dependency — so these tests import and drive `Api`
 directly (no window, no HTTP server, no event loop). We assert:
 
-  * CLI/GUI parity: make_review_packet -> approve(whitelisted) -> backfill(attest)
+  * CLI/GUI parity: make_review_packet -> approve -> backfill(attest)
     walks the same states as the CLI loop (tests/test_cli_skeleton.py).
-  * Edge cases: non-whitelisted reviewer and approving a NEEDS_HUMAN_REVIEW job
-    both return error dicts with NO state transition.
+  * Edge cases: approving a NEEDS_HUMAN_REVIEW job returns an error dict
+    with NO state transition.
   * XSS: a draft/title with <script>/<img onerror> comes back ESCAPED from
     get_packet (the dangerous markup is inert, not raw).
-  * list/summary shapes; reviewers()/disclaimer() values.
+  * list/summary shapes; disclaimer() values.
   * Static guards: app.js has no innerHTML / no http://0.0.0.0; gui.py does not
     import webview at module top-level; the server host is 127.0.0.1.
 """
@@ -31,19 +31,17 @@ APP_JS = Path(__file__).resolve().parents[1] / "src" / "lcp" / "web" / "app.js"
 INDEX_HTML = Path(__file__).resolve().parents[1] / "src" / "lcp" / "web" / "index.html"
 
 
-def _write_config(tmp_path, base, reviewers=("alice",)):
+def _write_config(tmp_path, base):
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
-        yaml.safe_dump(
-            {"storage": {"base_dir": base}, "publisher": {"reviewers": list(reviewers)}}
-        ),
+        yaml.safe_dump({"storage": {"base_dir": base}}),
         encoding="utf-8",
     )
     return str(cfg)
 
 
-def _api(tmp_path, base, reviewers=("alice",)):
-    cfg = _write_config(tmp_path, base, reviewers)
+def _api(tmp_path, base):
+    cfg = _write_config(tmp_path, base)
     return Api(config_path=cfg)
 
 
@@ -61,26 +59,21 @@ def test_full_signoff_loop_via_api(tmp_path):
     assert res["state"] == "review_pending"
     assert store.get_job("j1").state is JobState.REVIEW_PENDING
 
-    # 2. non-whitelisted reviewer -> error dict, NO transition.
-    res = api.approve("j1", "mallory")
-    assert "error" in res and res["exit_code"] == 2
-    assert store.get_job("j1").state is JobState.REVIEW_PENDING
-
-    # 3. whitelisted approve -> APPROVED.
-    res = api.approve("j1", "alice")
+    # 2. approve -> APPROVED.
+    res = api.approve("j1")
     assert "error" not in res
     assert res["state"] == "approved"
     assert store.get_job("j1").state is JobState.APPROVED
     # disclaimer rides along with the sign-off, verbatim.
     assert res["disclaimer"] == DISCLAIMER
 
-    # 4. backfill WITHOUT attestation stays APPROVED (loop open).
-    res = api.backfill("j1", "alice", "https://site.example/x", attested=False)
+    # 3. backfill WITHOUT attestation stays APPROVED (loop open).
+    res = api.backfill("j1", "https://site.example/x", False)
     assert "error" in res
     assert store.get_job("j1").state is JobState.APPROVED
 
-    # 5. backfill WITH attestation -> PUBLISHED_RECORDED.
-    res = api.backfill("j1", "alice", "https://site.example/x", attested=True)
+    # 4. backfill WITH attestation -> PUBLISHED_RECORDED.
+    res = api.backfill("j1", "https://site.example/x", True)
     assert "error" not in res
     assert res["state"] == "published_recorded"
     assert store.get_job("j1").state is JobState.PUBLISHED_RECORDED
@@ -89,39 +82,15 @@ def test_full_signoff_loop_via_api(tmp_path):
 # --- Edge: refusals do not transition ---------------------------------------
 
 
-def test_api_backfill_non_whitelisted_rejected(tmp_path):
-    """P3 regression: backfill via the Api requires a whitelisted reviewer."""
-    base = str(tmp_path)
-    store = _processed_job_with_draft(base, "jbf")
-    api = _api(tmp_path, base)
-    api.make_review_packet("jbf")
-    api.approve("jbf", "alice")
-    res = api.backfill("jbf", "mallory", "https://site.example/x", attested=True)
-    assert "error" in res
-    assert res["exit_code"] == 2
-    assert store.get_job("jbf").state is JobState.APPROVED
-
-
 def test_reject_via_api(tmp_path):
     base = str(tmp_path)
     store = _processed_job_with_draft(base, "jr")
     api = _api(tmp_path, base)
     api.make_review_packet("jr")
-    res = api.reject("jr", "alice", "off-topic")
+    res = api.reject("jr", "off-topic")
     assert "error" not in res
     assert res["state"] == "rejected"
     assert store.get_job("jr").state is JobState.REJECTED
-
-
-def test_approve_non_whitelisted_no_transition(tmp_path):
-    base = str(tmp_path)
-    store = _processed_job_with_draft(base, "j2")
-    api = _api(tmp_path, base)
-    api.make_review_packet("j2")
-    res = api.approve("j2", "eve")
-    assert "error" in res
-    assert "whitelist" in res["error"].lower() or res["exit_code"] == 2
-    assert store.get_job("j2").state is JobState.REVIEW_PENDING
 
 
 def test_approve_needs_human_review_refused_by_state_machine(tmp_path):
@@ -137,7 +106,7 @@ def test_approve_needs_human_review_refused_by_state_machine(tmp_path):
     persist_gate_state(store, "jh", JobState.NEEDS_HUMAN_REVIEW, updated_at=ts)
 
     api = _api(tmp_path, base)
-    res = api.approve("jh", "alice")
+    res = api.approve("jh")
     assert "error" in res
     # No transition: still parked at NEEDS_HUMAN_REVIEW.
     assert store.get_job("jh").state is JobState.NEEDS_HUMAN_REVIEW
@@ -424,14 +393,7 @@ def test_list_jobs_surfaces_interrupted_job(tmp_path):
     assert row["interrupt_exhausted"] is False
 
 
-# --- reviewers / disclaimer -------------------------------------------------
-
-
-def test_reviewers_returns_whitelist(tmp_path):
-    base = str(tmp_path)
-    api = _api(tmp_path, base, reviewers=("alice", "bob"))
-    res = api.reviewers()
-    assert res["reviewers"] == ["alice", "bob"]
+# --- disclaimer -------------------------------------------------
 
 
 def test_disclaimer_is_verbatim(tmp_path):

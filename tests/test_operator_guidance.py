@@ -60,7 +60,7 @@ def test_cli_and_gui_advisory_are_identical():
 def test_process_surfaces_missing_section_reasons_in_notes(store, audit):
     # Without --ai-copy the copywriter sections stay empty, so lint parks the job
     # AND the notes name the missing canonical sections (PII-free labels).
-    config = Config(publisher=PublisherConfig(reviewers=["alice"]))
+    config = Config(publisher=PublisherConfig())
     seed_clean_index(store)
     p = build_pipeline(store, audit, config=config)
     p.stage1(spec_for(store, "g1"), ts=TS)

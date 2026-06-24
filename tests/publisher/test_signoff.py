@@ -1,11 +1,10 @@
 """Sign-off + responsibility-loop tests (Unit 8).
 
-Cover: whitelist enforcement (+ audited rejection), attribution-not-auth
-disclaimer + observed OS user, body-hash binding (editing the body after freeze
-is detectable), approve -> APPROVED, backfill (attest required) -> recorded /
-stays APPROVED without attest, supersede -> SUPERSEDED + SIGNOFF_INVALIDATED +
-new-job link, and the state-machine gate (no path to APPROVED from
-BLOCKED/DUPLICATE/NEEDS_HUMAN_REVIEW)."""
+Cover: attribution-not-auth disclaimer + observed OS user, body-hash binding
+(editing the body after freeze is detectable), approve -> APPROVED, backfill
+(attest required) -> recorded / stays APPROVED without attest, supersede ->
+SUPERSEDED + SIGNOFF_INVALIDATED + new-job link, and the state-machine gate
+(no path to APPROVED from BLOCKED/DUPLICATE/NEEDS_HUMAN_REVIEW)."""
 
 from __future__ import annotations
 
@@ -39,7 +38,7 @@ REVIEWER = "alice"
 
 @pytest.fixture()
 def config():
-    return Config(publisher=PublisherConfig(reviewers=[REVIEWER, "bob"]))
+    return Config(publisher=PublisherConfig())
 
 
 @pytest.fixture()
@@ -132,19 +131,6 @@ def test_approve_audit_binds_body_title_cover_hashes(config, store, audit):
     assert evt["extra"]["observed_os_user"]
 
 
-# --- Whitelist enforcement ---------------------------------------------------
-
-
-def test_reviewer_not_in_whitelist_is_rejected_and_audited(config, store, audit):
-    _review_pending_job(store, audit, "jw")
-    with pytest.raises(InputValidationError):
-        signoff.approve("jw", "mallory", config=config, store=store, audit=audit, ts=TS)
-    # State unchanged; a rejection event was audited.
-    assert store.get_job("jw").state is JobState.REVIEW_PENDING
-    rejects = [l for l in audit._read_lines() if l["event"] == EVENT_SIGNOFF_REJECT]
-    assert any(l["extra"]["reason"] == "reviewer_not_whitelisted" for l in rejects)
-
-
 # --- Backfill without attestation stays APPROVED (loop open) ------------------
 
 
@@ -180,24 +166,6 @@ def test_backfill_requires_nonempty_url(config, store, audit):
             reviewer=REVIEWER,
         )
     assert store.get_job("ju").state is JobState.APPROVED
-
-
-def test_backfill_non_whitelisted_reviewer_rejected(config, store, audit):
-    """P3 regression: backfill requires a whitelisted reviewer like approve."""
-    _review_pending_job(store, audit, "jbw")
-    signoff.approve("jbw", REVIEWER, config=config, store=store, audit=audit, ts=TS)
-    with pytest.raises(InputValidationError):
-        signoff.backfill_published_url(
-            "jbw",
-            "https://site.example/x",
-            config=config,
-            store=store,
-            audit=audit,
-            ts=TS,
-            attested=True,
-            reviewer="mallory",
-        )
-    assert store.get_job("jbw").state is JobState.APPROVED
 
 
 # --- Hash binding: editing the BODY after freeze is detectable ----------------
@@ -581,7 +549,7 @@ def test_resolve_grounding_hold_relint_clean_promotes(store, audit):
     # Use loose Unit-1 constraints so this test stays focused on the
     # grounding-hold→relint→PROCESSED path, not field-length rules.
     loose_config = Config(
-        publisher=PublisherConfig(reviewers=[REVIEWER, "bob"]),
+        publisher=PublisherConfig(),
         content=ContentConfig(
             intro_min_chars=1,
             intro_max_chars=9999,
@@ -679,21 +647,6 @@ def test_resolve_requires_nhr_state(config, store, audit):
             ts=TS,
             reason="x",
         )
-
-
-def test_resolve_non_whitelisted_rejected(config, store, audit):
-    _nhr_job(store, "jnw", ReviewReason.RISK)
-    with pytest.raises(InputValidationError):
-        signoff.resolve(
-            "jnw",
-            "mallory",
-            config=config,
-            store=store,
-            audit=audit,
-            ts=TS,
-            reason="x",
-        )
-    assert store.get_job("jnw").state is JobState.NEEDS_HUMAN_REVIEW
 
 
 def test_supersede_nhr_is_allowed(config, store, audit):

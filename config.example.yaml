@@ -68,7 +68,6 @@ llm:
   # allow_http_hosts: []   # explicit loopback/private hosts allowed over plain http (internal only)
 
 publisher:
-  reviewers: []            # whitelist of reviewer names allowed to approve/reject
   publish_enabled_by_default: false
   require_human_approval: true
 

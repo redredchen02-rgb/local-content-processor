@@ -54,7 +54,7 @@ def test_injected_job_reaches_review_pending(tmp_path):
     jid = report.created[0]
     assert store.get_job(jid).state is JobState.NEW
 
-    config = Config(publisher=PublisherConfig(reviewers=["alice"]))
+    config = Config(publisher=PublisherConfig())
     p = build_pipeline(store, audit, config=config)
     # An explicit working title isolates "does the gate chain run" from title
     # GENERATION (gossip hot-search phrases are too short for lint's 25-35 char
@@ -81,7 +81,7 @@ def test_injected_job_runs_real_gate_chain_to_processed(tmp_path):
         store,
         ts=TS,
     ).created[0]
-    p = build_pipeline(store, audit, config=Config(publisher=PublisherConfig(reviewers=["alice"])))
+    p = build_pipeline(store, audit, config=Config(publisher=PublisherConfig()))
     res = p.run_until(
         _spec_from_ingest(store, jid),
         target=pl.TARGET_DRAFT,

@@ -73,7 +73,7 @@ def test_save_settings_merges_and_preserves_other_sections(tmp_path, monkeypatch
         yaml.safe_dump(
             {
                 "storage": {"base_dir": "./data"},
-                "publisher": {"reviewers": ["alice"]},
+                "crawler": {"allow_domains": ["keep-domain.example"]},
                 "llm": {"keyring_username": "llm", "allowed_hosts": ["keep.example.com"]},
             }
         ),
@@ -85,7 +85,7 @@ def test_save_settings_merges_and_preserves_other_sections(tmp_path, monkeypatch
 
     data = yaml.safe_load(cfg.read_text(encoding="utf-8"))
     assert data["storage"]["base_dir"] == "./data"
-    assert data["publisher"]["reviewers"] == ["alice"]
+    assert data["crawler"]["allow_domains"] == ["keep-domain.example"]
     # both the pre-existing host and the new one are kept (no dupes)
     assert "keep.example.com" in data["llm"]["allowed_hosts"]
     assert HOST in data["llm"]["allowed_hosts"]
@@ -201,7 +201,7 @@ def test_get_settings_allow_domains_are_html_escaped(tmp_path, monkeypatch):
 
 def test_get_settings_returns_a_known_fixed_key_set(tmp_path, monkeypatch):
     """Scope guard (review): Phase 0 adds EXACTLY one key (allow_domains) — no
-    other config (reviewers/storage/...) leaks into the settings bridge dict."""
+    other config (storage, etc.) leaks into the settings bridge dict."""
     monkeypatch.setattr(keyring, "get_password", lambda *a, **k: None)
     _write_crawler_config(tmp_path, ["a.example"])
     res = _api(tmp_path).get_settings()

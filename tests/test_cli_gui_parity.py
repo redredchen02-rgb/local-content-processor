@@ -69,7 +69,6 @@ _GUI_ONLY: frozenset[str] = frozenset(
         "process_async",  # async background kickoff
         "run_until_draft_async",  # async background kickoff (one-shot Stage1+Stage2)
         "templates",  # data endpoint, not an operator action
-        "reviewers",  # data endpoint
         "disclaimer",  # data endpoint
         "get_settings",  # settings read
         "save_settings",  # settings write (CLI uses config.yaml directly)

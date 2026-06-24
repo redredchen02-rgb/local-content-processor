@@ -23,9 +23,7 @@ TOKEN = "test-token-abcdefghijklmnop"
 def _api(tmp_path):
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
-        yaml.safe_dump(
-            {"storage": {"base_dir": str(tmp_path)}, "publisher": {"reviewers": ["alice"]}}
-        ),
+        yaml.safe_dump({"storage": {"base_dir": str(tmp_path)}}),
         encoding="utf-8",
     )
     return Api(config_path=str(cfg))
@@ -101,12 +99,6 @@ def test_list_jobs_null_arg_binds_to_none(server):
     resp, data = _post(server.public_port, "list_jobs", [None])
     assert resp.status == 200
     assert json.loads(data) == server.api.list_jobs(None)
-
-
-def test_no_arg_call_works(server):
-    resp, data = _post(server.public_port, "reviewers", [])
-    assert resp.status == 200
-    assert json.loads(data)["reviewers"] == ["alice"]
 
 
 # --- arity guard + typed-error contract ------------------------------------
@@ -365,7 +357,6 @@ EXPECTED_ROUTES = frozenset(
         "saved_sources",
         "add_saved_source",
         "delete_saved_source",
-        "reviewers",
         "disclaimer",
         "get_settings",
         "save_settings",

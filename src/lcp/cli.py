@@ -106,8 +106,8 @@ def cli(ctx, config_path, dry_run, as_json, verbose, quiet, output_dir):
 def init(ctx):
     """Scaffold a runnable workspace: config.yaml (0600) + an empty site index.
 
-    Fixes the first-run blockers — without a config.yaml you have no reviewer
-    whitelist/settings, and without a site_index.jsonl every clean job parks at
+    Fixes the first-run blockers — without a config.yaml you have no LLM
+    settings, and without a site_index.jsonl every clean job parks at
     the dedup honesty gate. Idempotent: never clobbers an existing config.yaml."""
     obj = ctx.obj
     config_path = Path(obj.get("config_path") or "config.yaml")
@@ -143,7 +143,7 @@ def init(ctx):
         click.echo(
             "init: "
             + "; ".join(parts)
-            + ". Next: edit config.yaml (add a reviewer), then `lcp run`."
+            + ". Next: edit config.yaml (set LLM endpoint/model), then `lcp run`."
         )
 
 
@@ -417,14 +417,14 @@ def review_packet(ctx, job_id, source_urls):
 
 @cli.command()
 @click.option("--job-id", "job_id", required=True)
-@click.option("--reviewer", required=True, help="Reviewer (must be whitelisted)")
+@click.option("--reviewer", default="", help="Reviewer name (attribution only, not authenticated)")
 @click.pass_context
 def approve(ctx, job_id, reviewer):
     """Approve a REVIEW_PENDING job: REVIEW_PENDING -> APPROVED.
 
     Sign-off is ATTRIBUTION, not authentication (a verbatim disclaimer is
-    recorded). The reviewer must be in config.publisher.reviewers. Does NOT
-    publish — APPROVED is not complete until you `backfill` the URL (R37)."""
+    recorded). Does NOT publish — APPROVED is not complete until you `backfill`
+    the URL (R37)."""
     c = Ctx(ctx.obj)
     # Load the persisted Stage-2 draft and pass it so signoff re-verifies the
     # frozen body hash — a draft tampered after freeze must NOT approve.
@@ -454,7 +454,7 @@ def approve(ctx, job_id, reviewer):
 
 @cli.command()
 @click.option("--job-id", "job_id", required=True)
-@click.option("--reviewer", required=True, help="Reviewer (must be whitelisted)")
+@click.option("--reviewer", default="", help="Reviewer name (attribution only, not authenticated)")
 @click.option("--reason", required=True, help="Why it is rejected")
 @click.pass_context
 def reject(ctx, job_id, reviewer, reason):
@@ -477,7 +477,7 @@ def reject(ctx, job_id, reviewer, reason):
 
 @cli.command()
 @click.option("--job-id", "job_id", required=True)
-@click.option("--reviewer", required=True, help="Reviewer (must be whitelisted)")
+@click.option("--reviewer", default="", help="Reviewer name (attribution only, not authenticated)")
 @click.option(
     "--relint",
     is_flag=True,
@@ -513,7 +513,7 @@ def resolve(ctx, job_id, reviewer, relint, reason):
 
 @cli.command()
 @click.option("--job-id", "job_id", required=True)
-@click.option("--reviewer", required=True, help="Reviewer (must be whitelisted)")
+@click.option("--reviewer", default="", help="Reviewer name (attribution only, not authenticated)")
 @click.option("--url", required=True, help="The published URL you pasted")
 @click.option(
     "--attest/--no-attest",
@@ -524,9 +524,9 @@ def resolve(ctx, job_id, reviewer, relint, reason):
 def backfill(ctx, job_id, reviewer, url, attest):
     """Record a publish: APPROVED -> PUBLISHED_RECORDED (responsibility loop).
 
-    The machine never publishes (R26). This only RECORDS that a whitelisted human
-    pasted the URL AND ticked the attestation (--attest). Without --attest the job
-    STAYS APPROVED (the loop is open, R37)."""
+    The machine never publishes (R26). This only RECORDS that a human pasted the
+    URL AND ticked the attestation (--attest). Without --attest the job STAYS
+    APPROVED (the loop is open, R37)."""
     c = Ctx(ctx.obj)
     new_state = signoff.backfill_published_url(
         job_id,

@@ -2,8 +2,9 @@
 
 WHAT sign-off IS — and is NOT:
   * It is ATTRIBUTION, not AUTHENTICATION. On a single-user local machine there
-    is no real auth; we record who CLAIMED to review (`reviewer_stated`, picked
-    from a config whitelist) AND the OBSERVED OS user (`pwd.getpwuid(os.getuid())
+    is no real auth; we record who CLAIMED to review (`reviewer_stated` — a
+    caller-supplied attribution string, not validated against any whitelist) AND
+    the OBSERVED OS user (`pwd.getpwuid(os.getuid())
     .pw_name` — harder to forge than the getpass/env-trusting alternative). Both
     are stamped into the append-only audit, alongside a VERBATIM disclaimer
     (:data:`DISCLAIMER`) so the limitation is on the record, not implied.
@@ -150,16 +151,6 @@ def observed_os_user() -> str:
             return "unknown"
 
 
-def _require_whitelisted(config: Config, reviewer: str) -> None:
-    if not config.publisher.reviewers:
-        return
-    if reviewer not in config.publisher.reviewers:
-        raise InputValidationError(
-            f"reviewer not in whitelist: {reviewer!r} "
-            f"(configured reviewers: {sorted(config.publisher.reviewers)!r})"
-        )
-
-
 def _freeze_hashes(store: JobStore, job_id: str) -> dict[str, Any]:
     manifest = read_review_manifest(store, job_id)
     if manifest is None or "freeze" not in manifest:
@@ -182,7 +173,6 @@ def approve(
 ) -> SignoffRecord:
     """Approve a REVIEW_PENDING job: REVIEW_PENDING -> APPROVED.
 
-    Refuses (InputValidationError, audited) if the reviewer is not whitelisted.
     Refuses (the state machine raises) for any non-REVIEW_PENDING source state —
     so BLOCKED / DUPLICATE / NEEDS_HUMAN_REVIEW have NO path to APPROVED.
 
@@ -194,24 +184,6 @@ def approve(
     into the audit event so the sign-off provably covers that artifact. Does NOT
     publish (R26) — APPROVED is the most a machine action ever reaches."""
     observed = observed_os_user()
-    try:
-        _require_whitelisted(config, reviewer)
-    except InputValidationError:
-        audit.append(
-            ts=ts,
-            stage="signoff",
-            event=EVENT_SIGNOFF_REJECT,
-            job_id=job_id,
-            actor=observed,
-            extra={
-                "reviewer_stated": reviewer,
-                "observed_os_user": observed,
-                "reason": "reviewer_not_whitelisted",
-                "disclaimer": DISCLAIMER,
-            },
-        )
-        raise
-
     freeze = _freeze_hashes(store, job_id)
     body_sha = freeze.get("body_sha256")
     title_sha = freeze.get("title_sha256")
@@ -316,8 +288,7 @@ def reject(
 ) -> SignoffRecord:
     """Reject a REVIEW_PENDING / APPROVED / NEEDS_HUMAN_REVIEW job -> REJECTED.
 
-    Whitelist + state-machine enforced like `approve`. A FREEZE record is only
-    required when rejecting from REVIEW_PENDING / APPROVED (those jobs always have
+    A FREEZE record is only required when rejecting from REVIEW_PENDING / APPROVED (those jobs always have
     a review packet, and we bind the rejected artifact's body hash). A
     NEEDS_HUMAN_REVIEW job (risk/dedup/grounding hold) has NO packet, so it would
     otherwise be stuck — rejecting it must NOT require a freeze; the state machine
@@ -325,24 +296,6 @@ def reject(
     recorded under a PII-safe key (`reject_note`); keep it free of scraped text —
     it is the reviewer's own words, not subject PII."""
     observed = observed_os_user()
-    try:
-        _require_whitelisted(config, reviewer)
-    except InputValidationError:
-        audit.append(
-            ts=ts,
-            stage="signoff",
-            event=EVENT_SIGNOFF_REJECT,
-            job_id=job_id,
-            actor=observed,
-            extra={
-                "reviewer_stated": reviewer,
-                "observed_os_user": observed,
-                "reason": "reviewer_not_whitelisted",
-                "disclaimer": DISCLAIMER,
-            },
-        )
-        raise
-
     record = store.get_job(job_id)
     if record is None:
         raise InputValidationError(f"unknown job: {job_id}")
@@ -410,11 +363,9 @@ def resolve(
         ``reason`` and record it (reviewer + reason) so the override is on the
         audit record, not silent.
 
-    Whitelist-enforced like approve/reject. The job MUST currently be in
-    NEEDS_HUMAN_REVIEW. Returns a SignoffRecord (decision="resolved")."""
+    The job MUST currently be in NEEDS_HUMAN_REVIEW. Returns a SignoffRecord
+    (decision="resolved")."""
     observed = observed_os_user()
-    _require_whitelisted(config, reviewer)
-
     record = store.get_job(job_id)
     if record is None:
         raise InputValidationError(f"unknown job: {job_id}")
@@ -517,9 +468,7 @@ def backfill_published_url(
 ) -> JobState:
     """Close the responsibility loop: APPROVED -> PUBLISHED_RECORDED (plan R37).
 
-    Requires a WHITELISTED reviewer (like approve/reject — recording a publish is
-    an accountable operator action) PLUS BOTH a non-empty published URL AND an
-    operator attestation tick
+    Requires BOTH a non-empty published URL AND an operator attestation tick
     (`attested=True`) confirming the published version IS the signed-off version.
     Without the tick (or with an empty URL) the job STAYS APPROVED — the machine
     does not publish and cannot complete the loop on its own (R26/R37).
@@ -531,10 +480,6 @@ def backfill_published_url(
 
     Not reentrant: do not call concurrently on the same job. The file write and
     state transition are separate operations with no distributed lock between them."""
-    # Recording a publish is an accountable action -> require a whitelisted
-    # reviewer, exactly like approve/reject.
-    _require_whitelisted(config, reviewer)
-
     record = store.get_job(job_id)
     if record is None:
         raise InputValidationError(f"unknown job: {job_id}")

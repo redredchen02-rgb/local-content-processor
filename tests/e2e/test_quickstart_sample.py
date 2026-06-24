@@ -54,7 +54,7 @@ def config():
     # content for determinism; field-length correctness is tested in
     # tests/rules/test_lint_rules.py (not the goal of this quickstart e2e).
     return Config(
-        publisher=PublisherConfig(reviewers=["alice"]),
+        publisher=PublisherConfig(),
         content=LOOSE_CONTENT_CONFIG,
     )
 

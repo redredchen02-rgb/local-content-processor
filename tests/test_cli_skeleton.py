@@ -94,12 +94,12 @@ def _processed_job_with_draft(base, job_id="j1"):
 
 
 def test_full_signoff_loop_via_cli(tmp_path):
-    """review-packet -> approve (whitelist) -> backfill (attest) through the CLI,
+    """review-packet -> approve -> backfill (attest) through the CLI,
     proving CLI/GUI parity for every operator action (Unit 9 mirrors these)."""
     base = str(tmp_path)
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
-        yaml.safe_dump({"storage": {"base_dir": base}, "publisher": {"reviewers": ["alice"]}}),
+        yaml.safe_dump({"storage": {"base_dir": base}}),
         encoding="utf-8",
     )
     store = _processed_job_with_draft(base, "j1")
@@ -110,20 +110,13 @@ def test_full_signoff_loop_via_cli(tmp_path):
 
     assert store.get_job("j1").state is JobState.REVIEW_PENDING
 
-    # 2. non-whitelisted reviewer -> input error, no transition.
+    # 2. approve -> APPROVED.
     assert (
-        main(["--config", str(cfg), "approve", "--job-id", "j1", "--reviewer", "mallory"])
-        == EXIT_INPUT
-    )
-    assert store.get_job("j1").state is JobState.REVIEW_PENDING
-
-    # 3. whitelisted approve -> APPROVED.
-    assert (
-        main(["--config", str(cfg), "approve", "--job-id", "j1", "--reviewer", "alice"]) == EXIT_OK
+        main(["--config", str(cfg), "approve", "--job-id", "j1"]) == EXIT_OK
     )
     assert store.get_job("j1").state is JobState.APPROVED
 
-    # 4. backfill without --attest stays APPROVED (loop open).
+    # 3. backfill without --attest stays APPROVED (loop open).
     assert (
         main(
             [
@@ -132,8 +125,6 @@ def test_full_signoff_loop_via_cli(tmp_path):
                 "backfill",
                 "--job-id",
                 "j1",
-                "--reviewer",
-                "alice",
                 "--url",
                 "https://site.example/x",
             ]
@@ -142,7 +133,7 @@ def test_full_signoff_loop_via_cli(tmp_path):
     )
     assert store.get_job("j1").state is JobState.APPROVED
 
-    # 5. backfill with --attest -> PUBLISHED_RECORDED.
+    # 4. backfill with --attest -> PUBLISHED_RECORDED.
     assert (
         main(
             [
@@ -151,8 +142,6 @@ def test_full_signoff_loop_via_cli(tmp_path):
                 "backfill",
                 "--job-id",
                 "j1",
-                "--reviewer",
-                "alice",
                 "--url",
                 "https://site.example/x",
                 "--attest",
@@ -175,7 +164,7 @@ def test_cli_approve_rejects_body_tampered_after_freeze(tmp_path):
     base = str(tmp_path)
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
-        yaml.safe_dump({"storage": {"base_dir": base}, "publisher": {"reviewers": ["alice"]}}),
+        yaml.safe_dump({"storage": {"base_dir": base}}),
         encoding="utf-8",
     )
     store = _processed_job_with_draft(base, "jt")
@@ -196,7 +185,7 @@ def test_cli_approve_rejects_body_tampered_after_freeze(tmp_path):
     save_draft(store, "jt", tampered)
 
     # Approve must FAIL (hash mismatch) and NOT transition.
-    rc = main(["--config", str(cfg), "approve", "--job-id", "jt", "--reviewer", "alice"])
+    rc = main(["--config", str(cfg), "approve", "--job-id", "jt"])
     assert rc == EXIT_INPUT
     assert store.get_job("jt").state is JobState.REVIEW_PENDING
 
@@ -211,7 +200,7 @@ def test_cli_resolve_drives_nhr_to_processed(tmp_path):
     base = str(tmp_path)
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
-        yaml.safe_dump({"storage": {"base_dir": base}, "publisher": {"reviewers": ["alice"]}}),
+        yaml.safe_dump({"storage": {"base_dir": base}}),
         encoding="utf-8",
     )
     ts = "2026-06-16T00:00:00Z"
@@ -260,7 +249,7 @@ def test_cli_blocked_recovery_requires_redline_override(tmp_path):
     base = str(tmp_path)
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
-        yaml.safe_dump({"storage": {"base_dir": base}, "publisher": {"reviewers": ["alice"]}}),
+        yaml.safe_dump({"storage": {"base_dir": base}}),
         encoding="utf-8",
     )
     ts = "2026-06-16T00:00:00Z"

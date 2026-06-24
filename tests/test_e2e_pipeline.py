@@ -47,7 +47,7 @@ def audit(tmp_path):
 def config():
     # A whitelisted reviewer so approve/backfill can complete; categories stay
     # empty (Config default) so lint skips the category check.
-    return Config(publisher=PublisherConfig(reviewers=["alice"]))
+    return Config(publisher=PublisherConfig())
 
 
 def _process_to_processed(store, audit, config, job_id="e2e"):

@@ -16,10 +16,10 @@ from lcp.cli import Ctx, main
 from lcp.core.errors import InputValidationError
 
 
-def _write_config(path, *, reviewers=("alice",), base_dir):
+def _write_config(path, *, allow_domains=("example.com",), base_dir):
     path.write_text(
         yaml.safe_dump(
-            {"storage": {"base_dir": base_dir}, "publisher": {"reviewers": list(reviewers)}}
+            {"storage": {"base_dir": base_dir}, "crawler": {"allow_domains": list(allow_domains)}}
         ),
         encoding="utf-8",
     )
@@ -28,9 +28,9 @@ def _write_config(path, *, reviewers=("alice",), base_dir):
 def test_ctx_auto_loads_cwd_config_when_no_config_flag(tmp_path, monkeypatch):
     # The regression: a cwd config.yaml must be read when no --config is given.
     monkeypatch.chdir(tmp_path)
-    _write_config(tmp_path / "config.yaml", reviewers=["alice"], base_dir=str(tmp_path / "data"))
+    _write_config(tmp_path / "config.yaml", allow_domains=["example.com"], base_dir=str(tmp_path / "data"))
     ctx = Ctx({})  # no config_path -> must pick up ./config.yaml, not defaults
-    assert ctx.config.publisher.reviewers == ["alice"]
+    assert ctx.config.crawler.allow_domains == ["example.com"]
 
 
 def test_ctx_no_config_no_file_uses_defaults(tmp_path, monkeypatch):
@@ -38,24 +38,24 @@ def test_ctx_no_config_no_file_uses_defaults(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert not (tmp_path / "config.yaml").exists()
     ctx = Ctx({})
-    assert ctx.config.publisher.reviewers == []  # restrictive default
+    assert ctx.config.crawler.allow_domains == []  # empty = open-crawl default
 
 
 def test_explicit_config_path_is_honoured(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     custom = tmp_path / "custom.yaml"
-    _write_config(custom, reviewers=["bob"], base_dir=str(tmp_path / "data"))
+    _write_config(custom, allow_domains=["other.example"], base_dir=str(tmp_path / "data"))
     ctx = Ctx({"config_path": str(custom)})
-    assert ctx.config.publisher.reviewers == ["bob"]
+    assert ctx.config.crawler.allow_domains == ["other.example"]
 
 
 def test_explicit_beats_cwd_config(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    _write_config(tmp_path / "config.yaml", reviewers=["alice"], base_dir=str(tmp_path / "data"))
+    _write_config(tmp_path / "config.yaml", allow_domains=["cwd.example"], base_dir=str(tmp_path / "data"))
     custom = tmp_path / "custom.yaml"
-    _write_config(custom, reviewers=["bob"], base_dir=str(tmp_path / "data"))
+    _write_config(custom, allow_domains=["explicit.example"], base_dir=str(tmp_path / "data"))
     ctx = Ctx({"config_path": str(custom)})
-    assert ctx.config.publisher.reviewers == ["bob"]  # explicit wins over cwd
+    assert ctx.config.crawler.allow_domains == ["explicit.example"]  # explicit wins over cwd
 
 
 def test_dir_named_config_yaml_falls_through_to_defaults(tmp_path, monkeypatch):
@@ -65,7 +65,7 @@ def test_dir_named_config_yaml_falls_through_to_defaults(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "config.yaml").mkdir()
     ctx = Ctx({})
-    assert ctx.config.publisher.reviewers == []  # defaults, no crash
+    assert ctx.config.crawler.allow_domains == []  # defaults, no crash
 
 
 def test_explicit_missing_config_still_raises(tmp_path, monkeypatch):
@@ -82,10 +82,10 @@ def test_init_then_command_honours_config(tmp_path, monkeypatch):
     assert main(["init"]) == 0
     cfg = tmp_path / "config.yaml"
     assert cfg.exists()
-    # Edit it the way the init message tells the operator to (add a reviewer).
+    # Edit it the way the init message tells the operator to (add an allow_domains entry).
     data = yaml.safe_load(cfg.read_text(encoding="utf-8")) or {}
-    data.setdefault("publisher", {})["reviewers"] = ["carol"]
+    data.setdefault("crawler", {})["allow_domains"] = ["example.com"]
     cfg.write_text(yaml.safe_dump(data), encoding="utf-8")
     # A command-level Ctx with no --config now sees the edited config.
     ctx = Ctx({})
-    assert ctx.config.publisher.reviewers == ["carol"]
+    assert ctx.config.crawler.allow_domains == ["example.com"]

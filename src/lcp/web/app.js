@@ -922,13 +922,12 @@ async function openJob(jobId) {
   }
   renderBanner(rec.state, rec.review_reason);
   // Parallelise independent API calls to halve time-to-interactive.
-  const [ingestRes, reviewers, packetRes] = await Promise.all([
+  const [ingestRes, packetRes] = await Promise.all([
     a.get_ingest_report(jobId),
-    a.reviewers(),
     a.get_packet(jobId),
   ]);
   renderIngestReportFromRes(ingestRes);
-  renderActions(rec.state, rec.review_reason, reviewers);
+  renderActions(rec.state, rec.review_reason);
   await renderPacketFromRes(jobId, packetRes);
   await renderWorkflowPanel(jobId, rec.state, rec.review_reason);
 }
@@ -1113,16 +1112,6 @@ function renderBanner(state, reason) {
   c.appendChild(box);
 }
 
-function reviewerSelect(reviewers) {
-  const sel = el("select");
-  sel.className = "reviewer";
-  (reviewers.reviewers || []).forEach(function (name) {
-    const opt = el("option", name);
-    opt.value = name;
-    sel.appendChild(opt);
-  });
-  return sel;
-}
 function templateSelect() {
   // A <select> of 栏目 templates. Default empty option = no template (the
   // assemble path runs exactly as before). Populated async from a.templates();
@@ -1145,16 +1134,6 @@ function templateSelect() {
   }
   return sel;
 }
-function reviewersEmpty(reviewers) {
-  return !reviewers || isError(reviewers) || !(reviewers.reviewers && reviewers.reviewers.length);
-}
-function reviewerOnboarding(container) {
-  const box = el("div"); box.className = "banner banner--attention";
-  box.appendChild(el("strong", "还不能签核"));
-  box.appendChild(el("p", "尚未设定审阅者名单。请在 config.yaml 的 publisher.reviewers 加入名字（一次性技术设定）——这是合规归属决定，不在此 GUI 修改。"));
-  container.appendChild(box);
-}
-
 // --- in-DOM confirm tray (arm -> commit -> disarm; one at a time) -----------
 
 let armedTray = null;
@@ -1209,22 +1188,15 @@ function removeBackdrop() {
   }
 }
 
-async function renderActions(state, reason, reviewers) {
+async function renderActions(state, reason) {
   const c = $("job-actions");
   clear(c);
   disarmConfirm();
   const actions = stateActions(state);
   if (actions.length === 0) return; // terminal / processing: zero buttons (fail-closed)
 
-  const SIGNOFF = { approve: 1, reject: 1, backfill: 1, openHold: 1 };
-  const needsReviewer = actions.some(function (act) { return SIGNOFF[act.method]; });
-  if (needsReviewer && reviewersEmpty(reviewers)) {
-    reviewerOnboarding(c);
-    if (actions.some(function (act) { return act.method === "supersede"; })) c.appendChild(supersedeRow());
-    return;
-  }
   actions.forEach(function (act) {
-    const row = buildActionRow(act, reviewers, reason);
+    const row = buildActionRow(act, reason);
     if (row) c.appendChild(row);
   });
 }
@@ -1269,7 +1241,7 @@ function supersedeRedlineRow() {
   return row;
 }
 
-function buildActionRow(act, reviewers, reason) {
+function buildActionRow(act, reason) {
   const row = el("div");
   row.className = "action-row";
   const a = api();
@@ -1323,31 +1295,26 @@ function buildActionRow(act, reviewers, reason) {
   }
 
   if (act.method === "openHold") {
-    return holdPanel(reviewers, reason);
+    return holdPanel(reason);
   }
 
   if (act.method === "approve") {
-    const sel = reviewerSelect(reviewers);
     const btn = button("核可 Approve", "btn-primary");
-    btn.addEventListener("click", async function () { if (!a) return; afterAction(await a.approve(currentJobId, sel.value), "已核可"); });
-    row.appendChild(el("span", "审阅者："));
-    row.appendChild(sel);
+    btn.addEventListener("click", async function () { if (!a) return; afterAction(await a.approve(currentJobId), "已核可"); });
     row.appendChild(btn);
     row.appendChild(disclaimerNote());
     return row;
   }
 
   if (act.method === "reject") {
-    const sel = reviewerSelect(reviewers);
     const reason = textInput("退件理由（必填）");
     const tray = confirmTray("退件 Reject", "btn-danger",
       function (body) {
         body.appendChild(el("p", "退回后此工作进入「已退件·终止」，无法复原（只能作废另开新）。"));
-        body.appendChild(labeled("审阅者：", sel));
         body.appendChild(reason);
       },
       "确定退回",
-      async function () { if (!a) return; afterAction(await a.reject(currentJobId, sel.value, reason.value), "已退件"); },
+      async function () { if (!a) return; afterAction(await a.reject(currentJobId, reason.value), "已退件"); },
       function () { if (!reason.value.trim()) { setText($("job-status"), "请先填退件理由。"); return false; } return true; }
     );
     row.appendChild(tray);
@@ -1363,12 +1330,10 @@ function buildActionRow(act, reviewers, reason) {
   }
 
   if (act.method === "backfill") {
-    const sel = reviewerSelect(reviewers);
     const url = textInput("已上架的网址");
     const attest = checkbox();
     const tray = confirmTray("回填网址并具结", "btn-primary",
       function (body) {
-        body.appendChild(labeled("审阅者：", sel));
         body.appendChild(labeled("已上架网址：", url));
         const al = el("label"); al.appendChild(attest); al.appendChild(el("span", " 我确认上架内容＝已签核版本"));
         body.appendChild(al);
@@ -1379,7 +1344,7 @@ function buildActionRow(act, reviewers, reason) {
       // no-op detection keys on the returned ERROR dict (signoff raises on
       // no-tick / empty-url), NOT on an `attested` boolean — afterAction renders
       // that error via the stable backfill phrases.
-      async function () { if (!a) return; afterAction(await a.backfill(currentJobId, sel.value, url.value, attest.checked), "已登记上架"); }
+      async function () { if (!a) return; afterAction(await a.backfill(currentJobId, url.value, attest.checked), "已登记上架"); }
     );
     row.appendChild(tray);
     return row;
@@ -1395,11 +1360,10 @@ function disclaimerNote() {
   return box;
 }
 
-function holdPanel(reviewers, reason) {
+function holdPanel(reason) {
   // the hold reason is on the banner already; here we build the resolution panel
   const panel = el("div");
   panel.className = "hold-panel";
-  const sel = reviewerSelect(reviewers);
   let relint = false;
 
   if (reason === "grounding") {
@@ -1423,10 +1387,8 @@ function holdPanel(reviewers, reason) {
   btn.addEventListener("click", async function () {
     const a = api(); if (!a) return;
     if (!relint && !reasonInput.value.trim()) { setText($("job-status"), "人工放行须写理由。"); return; }
-    afterAction(await a.resolve(currentJobId, sel.value, relint, relint ? null : reasonInput.value), "已处理 hold");
+    afterAction(await a.resolve(currentJobId, relint, relint ? null : reasonInput.value), "已处理 hold");
   });
-  panel.appendChild(el("span", "审阅者："));
-  panel.appendChild(sel);
   panel.appendChild(reasonInput);
   panel.appendChild(btn);
   return panel;
@@ -1714,23 +1676,21 @@ async function saveSettings() {
   renderReadiness(await computeReadiness());
 }
 
-// readiness: P1 endpoint, P2 key (GUI-editable); P3 allowlist, P4 reviewers
-// (config.yaml-only, R33). Phase 0 exposes allow_domains so P3 is a real bool;
+// readiness: P1 endpoint, P2 key (GUI-editable); P3 allowlist.
+// Phase 0 exposes allow_domains so P3 is a real bool;
 // 'unknown' is a defensive fallback only if a backend ever drops the key.
 async function computeReadiness() {
   const a = api();
   if (!a) return { error: true };
   const s = await a.get_settings();
-  const r = await a.reviewers();
-  if (isError(s)) { applyPill(false, false); return { error: true, exit_code: s.exit_code, msg: s.error, config_path: s.config_path }; }
+  if (isError(s)) { applyPill(false, true); return { error: true, exit_code: s.exit_code, msg: s.error, config_path: s.config_path }; }
   const p1 = !!(s.base_url && s.model);
   const p2 = s.api_key_set === true;
   // Empty allow_domains means all domains are permitted (open crawl mode).
   // Only show "missing" if the key is absent entirely (pre-Phase-0).
   const p3 = ("allow_domains" in s) ? true : "unknown";
-  const p4 = !isError(r) && !!(r.reviewers && r.reviewers.length > 0);
-  applyPill(p1 && p2, p4);
-  return { p1: p1, p2: p2, p3: p3, p4: p4, config_path: s.config_path, pipelineReady: p1 && p2, signoffReady: p4 };
+  applyPill(p1 && p2, true);
+  return { p1: p1, p2: p2, p3: p3, config_path: s.config_path, pipelineReady: p1 && p2, signoffReady: true };
 }
 
 function applyPill(pipelineReady, signoffReady) {
@@ -1764,10 +1724,10 @@ function renderReadiness(r) {
   // gate banner — variant A / B / C. C-partial (p3 'unknown') only pre-Phase-0;
   // never shows green when something is unconfirmed.
   let variant, title;
-  const n = [r.p1, r.p2, r.p3 === true, r.p4].filter(Boolean).length;
-  if (!r.p1 || !r.p2) { variant = "attention"; title = "⚠ 设定未完成 — " + n + "/4 就绪"; }
+  const n = [r.p1, r.p2, r.p3 === true].filter(Boolean).length;
+  if (!r.p1 || !r.p2) { variant = "attention"; title = "⚠ 设定未完成 — " + n + "/3 就绪"; }
   else if (r.p3 === "unknown") { variant = "attention"; title = "◐ 大致就绪——允许清单无法核对（首次抓取才是真测试）"; }
-  else if (r.p3 !== true || !r.p4) { variant = "attention"; title = "⚠ 还需一次性技术设定（见下方交接）"; }
+  else if (r.p3 !== true) { variant = "attention"; title = "⚠ 还需一次性技术设定（见下方交接）"; }
   else { variant = "success"; title = "● 全部就绪"; }
   renderBanner_(c, variant, title, "");
 
@@ -1775,16 +1735,15 @@ function renderReadiness(r) {
   list.appendChild(readyRow("模型 endpoint", r.p1, "process 需要它；没设处理时会报「还没设定好」", "可在此编辑"));
   list.appendChild(readyRow("模型 API key", r.p2, "同上；存在 OS keyring", "可在此编辑"));
   list.appendChild(readyRow("爬虫允许清单 allow_domains", r.p3, "空清单＝允许所有网址；填入域名则限制为白名单", "config.yaml only（合规边界）"));
-  list.appendChild(readyRow("审阅者白名单 reviewers", r.p4, "空名单会让全部签核被阻", "config.yaml only（签核归属）"));
   c.appendChild(list);
 
-  if (r.p3 !== true || !r.p4) {
+  if (r.p3 !== true) {
     const card = el("div"); card.className = "handoff";
     card.appendChild(el("strong", "在 config.yaml 加入（一次性技术设定，GUI 不改这些）："));
     const path = el("p"); path.appendChild(el("span", "档案："));
     path.appendChild(el("code", r.config_path || "config.yaml")); card.appendChild(path);
     const pre = el("pre");
-    pre.textContent = "crawler:\n  allow_domains:\n    - your-allowlisted-site.example\npublisher:\n  reviewers:\n    - 你的名字";
+    pre.textContent = "crawler:\n  allow_domains:\n    - your-allowlisted-site.example";
     card.appendChild(pre);
     card.appendChild(el("p", "改完点「重新检查」。署名＝署名，非身分验证。"));
     const recheck = button("重新检查", "btn-secondary");

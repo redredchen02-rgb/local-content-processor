@@ -42,7 +42,7 @@ def audit(tmp_path):
 
 @pytest.fixture()
 def config():
-    return Config(publisher=PublisherConfig(reviewers=["alice"]))
+    return Config(publisher=PublisherConfig())
 
 
 def _process_to_processed(store, audit, config, job_id="fs"):

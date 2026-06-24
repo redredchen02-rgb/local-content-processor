@@ -61,7 +61,7 @@ def audit(tmp_path):
 
 @pytest.fixture()
 def config():
-    return Config(publisher=PublisherConfig(reviewers=["alice"]))
+    return Config(publisher=PublisherConfig())
 
 
 def test_blocked_redline_supersede_recovery(store, audit, config):

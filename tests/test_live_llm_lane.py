@@ -52,7 +52,7 @@ def _live_config() -> Config:
             model=os.environ["LCP_LIVE_LLM_MODEL"],
             allowed_hosts=[host],
         ),
-        publisher=PublisherConfig(reviewers=["alice"]),
+        publisher=PublisherConfig(),
     )
 
 

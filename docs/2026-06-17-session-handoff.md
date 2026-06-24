@@ -16,7 +16,6 @@ Branch: `feat/operator-gui-uiux`. Every commit listed below is **pushed**.
 ## Local config (gitignored `config.yaml` — NOT committed; lives only on this machine)
 
 - `llm.base_url` + `llm.model`: set; `api_key` in OS keyring (`api_key_set: true`).
-- `publisher.reviewers: ["defuzi"]` — added so sign-off is no longer blocked.
 - `crawler.allow_domains: ["51cg1.com"]` — added earlier this session.
 
 ## Operator action still pending

@@ -15,7 +15,7 @@
 - [ ] 窗口能开，无崩溃；`app.css` / `app.js` / `lex.js` 都加载（无 CSP 报错——开 devtools console 看）
 - [ ] 顶栏中文 + 安全字形（`● ○ ! ✓ ✕ ✎ ⚑ ?`）不出现豆腐块（□）
 - [ ] sticky header 不与内容重叠；基本布局成立
-- [ ] 用 dry-run 走一遍最短闭环：建工作 → `process` 勾「安全预览」→ 建立审阅包 → 核可（需先在 config.yaml 设 reviewers）
+- [ ] 用 dry-run 走一遍最短闭环：建工作 → `process` 勾「安全预览」→ 建立审阅包 → 核可
 - [ ] 若任何一项崩裂，记录下来——P0 设计可能需据此调整（这正是前置它的目的）
 
 ## P0 — 弃用关键验证（SC1–SC4 的真窗口部分）
@@ -32,7 +32,6 @@
   - [ ] reason=`risk`/`dedup` → 只见「人工放行（须写理由）」，**无** approve-anyway
   - [ ] dedup 永远显示「查重仅代表本工具处理过、非全站」诚实警语
 - [ ] **SC4 Inbox**：blocked/duplicate 在「被机器拦下」band **展开可见**、不静默消失；「已结案」band 可折叠
-- [ ] **G6 空 reviewer**：把 config.yaml 的 `publisher.reviewers` 清空 → 签核区被「还不能签核…去 config.yaml 加名字」banner 取代（不是灰按钮）；「就绪」pill 显示「⚠ 需设定」
 - [ ] **导航**：顶栏「收件匣 / + 新工作 / 设定」切换正常；选择工作 = 打开（不再有共享 #job-id 文本框）；终态动作后回 Inbox 计数实时更新
 - [ ] **错误人话**：故意填坏网址 / 不存在的 job → 看到「你填的内容要修」+ 可展开「技术细节」，不见 `error (N)`
 - [ ] **回填特例**：approved 工作不勾「我确认…」点回填 → 「尚未完成：你没勾…工作仍停在已签核」（非成功、非原始错误）
@@ -50,8 +49,8 @@
 ## P2 — onboarding（G6 的真窗口部分）
 
 - [ ] **首跑自动开 SETUP**：清空 LLM 设定（或全新机器）启动 → 自动落在「设定」页、base_url 聚焦、就绪清单显示缺项
-- [ ] **4 变体 gate banner 无假绿**：只设 base_url/key（allowlist/reviewers 空）→ banner 显示「还需一次性技术设定」+ 列出缺项 + config.yaml 交接卡（可整段复制的 `<pre>`）；**绝不**显示「全部就绪」绿条
-- [ ] **真绿仅四项齐**：config.yaml 补上 allow_domains + reviewers → 点「重新检查」→ banner 变绿「全部就绪」，顶栏 pill 变「● 就绪」
+- [ ] **3 变体 gate banner 无假绿**：只设 base_url/key（allowlist 空）→ banner 显示「还需一次性技术设定」+ 列出缺项 + config.yaml 交接卡（可整段复制的 `<pre>`）；**绝不**显示「全部就绪」绿条
+- [ ] **真绿仅三项齐**：base_url/key 已设 + config.yaml 补上 allow_domains → 点「重新检查」→ banner 变绿「全部就绪」，顶栏 pill 变「● 就绪」
 - [ ] **软门控**：未就绪时「+ 新工作」的建立按钮被挡 + 一行提示（而非深处撞 exit 3）
 - [ ] **advisory 校验**：base_url 输入框边打边给提示（如缺 `/v1`、http 非 loopback）；存档时仍以服务器为准
 

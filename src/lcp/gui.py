@@ -630,10 +630,10 @@ class Api:
             return _INTERNAL_ERROR_DICT
 
     @bridge_safe
-    def approve(self, job_id: str, reviewer: str) -> dict:
-        """Mirror `approve`: REVIEW_PENDING -> APPROVED. Reviewer MUST be in the
-        config whitelist; non-REVIEW_PENDING source states are refused by the
-        state machine (BLOCKED/NEEDS_HUMAN_REVIEW have NO path to APPROVED)."""
+    def approve(self, job_id: str, reviewer: str = "") -> dict:
+        """Mirror `approve`: REVIEW_PENDING -> APPROVED. Non-REVIEW_PENDING source
+        states are refused by the state machine (BLOCKED/NEEDS_HUMAN_REVIEW have
+        NO path to APPROVED). `reviewer` is attribution only — not validated."""
         c = self._ctx()
         # Load the persisted draft and pass it so signoff re-verifies the
         # frozen body hash — a draft tampered after freeze must NOT approve.
@@ -657,13 +657,15 @@ class Api:
         }
 
     @bridge_safe
-    def reject(self, job_id: str, reviewer: str, reason: str) -> dict:
-        """Mirror `reject`: REVIEW_PENDING -> REJECTED (terminal)."""
+    def reject(self, job_id: str, reason: str, reviewer: str = "") -> dict:
+        """Mirror `reject`: REVIEW_PENDING -> REJECTED (terminal). `reviewer` is
+        attribution only — not validated. Moved to last position so `reason` (no
+        default) precedes `reviewer` (has default)."""
         c = self._ctx()
         rec = signoff.reject(
             job_id,
-            reviewer,
-            reason,
+            reviewer=reviewer,
+            reason=reason,
             config=c.config,
             store=c.store,
             audit=c.audit,
@@ -679,15 +681,15 @@ class Api:
     def resolve(
         self,
         job_id: str,
-        reviewer: str,
         relint: bool = False,
         reason: str | None = None,
+        reviewer: str = "",
     ) -> dict:
         """Mirror `resolve`: drive NEEDS_HUMAN_REVIEW -> PROCESSED.
 
         Grounding hold + relint=True: lint re-runs; a clean lint promotes.
         Risk/dedup hold (or grounding without relint): explicit reason required
-        (a recorded human override). Reviewer MUST be whitelisted."""
+        (a recorded human override). `reviewer` is attribution only."""
         c = self._ctx()
         rec = signoff.resolve(
             job_id,
@@ -706,11 +708,11 @@ class Api:
         }
 
     @bridge_safe
-    def backfill(self, job_id: str, reviewer: str, url: str, attested: bool) -> dict:
-        """Mirror `backfill`: APPROVED -> PUBLISHED_RECORDED ONLY with a
-        whitelisted reviewer, a non-empty URL AND the attestation tick. Without
-        the tick the job stays APPROVED (the machine never publishes — R26/R37).
-        The URL is never resolved."""
+    def backfill(self, job_id: str, url: str, attested: bool, reviewer: str = "") -> dict:
+        """Mirror `backfill`: APPROVED -> PUBLISHED_RECORDED ONLY with a non-empty
+        URL AND the attestation tick. Without the tick the job stays APPROVED (the
+        machine never publishes — R26/R37). The URL is never resolved. `reviewer`
+        is attribution only — moved to last position (optional)."""
         c = self._ctx()
         new_state = signoff.backfill_published_url(
             job_id,
@@ -908,16 +910,6 @@ class Api:
         c = self._ctx()
         removed = c.sources.delete_source(source_id)
         return {"id": escape_html(source_id), "removed": removed}
-
-    # --- Config-driven UI inputs ---------------------------------------------
-
-    @bridge_safe
-    def reviewers(self) -> dict:
-        """The reviewer whitelist for the dropdown (config.publisher.reviewers).
-
-        Operator identifiers (not subject PII); escaped for safe rendering."""
-        c = self._ro_ctx_get()
-        return {"reviewers": [escape_html(r) for r in c.config.publisher.reviewers]}
 
     @bridge_safe
     def disclaimer(self) -> dict:
