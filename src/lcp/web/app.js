@@ -233,11 +233,7 @@ function renderInfo(container, title, detail) {
 // --- async transport: poll job_status until settled, fix G1 freeze ----------
 
 const POLL_MS = 1500;
-const POLL_CAP = 120; // ~90s; the spinner must never spin forever
-function capFor(kind) {
-  return POLL_CAP;
-}
-const pollers = {}; // jobId -> {kind, ticks, startedAt, errors, box, timer}
+const POLL_CAP = 120; // 120 × 1.5s = 180s (3 min); the spinner must never spin forever
 
 function clearPoller(jobId) {
   const p = pollers[jobId];
@@ -301,7 +297,7 @@ function enterProgress(jobId, kind) {
 function startPoll(jobId, kind) {
   clearPoller(jobId);
   const ui = mountSpinner(kind);
-  pollers[jobId] = { kind: kind, ticks: 0, errors: 0, ui: ui, timer: null, cap: capFor(kind) };
+  pollers[jobId] = { kind: kind, ticks: 0, errors: 0, ui: ui, timer: null, cap: POLL_CAP };
   pollTick(jobId);
 }
 
