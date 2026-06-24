@@ -290,6 +290,28 @@ decision table; does **not** make the accuracy decision):
 ./.venv/bin/python spikes/detection_accuracy/run_eval.py --json
 ```
 
+## Companion: gossip_scraper
+
+`gossip_scraper` is a standalone cross-platform hot-topic aggregator bundled
+alongside `lcp`. It scrapes trending items from Weibo, Baidu, Bilibili, Douyin,
+Tieba, Netease, and several RSS feeds, then deduplicates, enriches, and ranks
+them for review or gossip-ingest into the `lcp` pipeline.
+
+```sh
+# Prerequisites: pip install ".[gossip]"  (adds httpx)
+python -m gossip_scraper                   # top 20 trending items
+python -m gossip_scraper --top 10          # top 10 after ranking
+python -m gossip_scraper --json            # machine-readable JSON
+python -m gossip_scraper --generate        # generate Weibo post drafts
+python -m gossip_scraper --alerts          # show alert-level items only
+python -m gossip_scraper --category entertainment  # filter by category
+```
+
+The pipeline: fetch all platforms → dedup (title-LCS) → enrich (region,
+category, velocity, sentiment, summary) → 3-dimension rank (heat + freshness
++ surprise) → output. Trend velocity compares composite cross-platform ranks
+across runs via `.gossip_history.json` in the project root.
+
 ## Layout
 
 ```
@@ -300,6 +322,11 @@ src/lcp/
   cli.py       thin CLI shell (every operator action)
   gui.py       the Api bridge (one method per operator action; mirrors the CLI)
   webserver.py loopback http.server webui: serves web/ + Api methods as /api/* JSON
+gossip_scraper/
+  __main__.py  entry point (python -m gossip_scraper)
+  core/        enrichers: category, geo, sentiment, summary, trend, ranking, dedup
+  scrapers/    per-platform scrapers (weibo, baidu, bilibili, douyin, tieba, …)
+  models.py    GossipItem dataclass
 docs/          plans, brainstorms, security (pii-inventory.md)
 spikes/        detection_accuracy/ measurement harness
 tests/         pytest suite

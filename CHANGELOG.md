@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gossip_scraper` companion package**: cross-platform hot-topic aggregator
+  (Weibo, Baidu, Bilibili, Douyin, Tieba, Netease, RSS feeds); pipeline: fetch →
+  dedup (title-LCS) → enrich (region, category, velocity, sentiment, summary) →
+  3-dimension rank (heat 40% + freshness 20% + surprise 40%) → output. Installable
+  via `pip install ".[gossip]"`; entry point `python -m gossip_scraper`
+- **Editorial SOP integration**: AI copywriter now generates `category` +
+  `KEYWORD_*` fields (person/place/platform/event/type); 10-step GUI workflow panel;
+  Telegram fire-and-forget notify; ingest-report CLI/GUI display
+- **`lcp gui` CSRF defence**: fail-closed Host-allowlist → per-launch token →
+  Origin/Sec-Fetch-Site chain protects the localhost socket API (replaces the
+  in-process pywebview bridge)
+
+### Changed
+
+- **Trend velocity now saves composite ranks**: `compute_velocity()` is read-only;
+  call `save_velocity_history()` after `rank()` so next-run comparisons use the
+  cross-platform composite rank, not the per-platform scraper position
+- **`cli.py` helper dedup**: `_completion_advisory` and `_auto_job_id` extracted
+  to `cli_helpers.py`; both shells import from there
+
+### Fixed
+
+- **Generator summary precedence**: `generate_summary()` description threshold
+  lowered from 20 → 5 chars so short but real descriptions are preferred over
+  category-based template text; `generate_post()` now explicitly prefers raw
+  description over generated summary for richer social-post body content
+
 ## [0.2.0] - 2026-06-23
 
 ### Added

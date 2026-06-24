@@ -83,7 +83,7 @@ This validates the canonical `persisted_current → PROCESSING → target` edge,
 ## Running Tests
 
 ```sh
-./.venv/bin/python -m pytest -q          # full suite (~1043 tests)
+./.venv/bin/python -m pytest -q          # full suite (~1285 tests)
 ./.venv/bin/mypy                         # type gate
 pre-commit run --all-files               # lint + format
 ```
