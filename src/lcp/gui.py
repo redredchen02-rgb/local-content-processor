@@ -413,7 +413,7 @@ class Api:
 
             threading.Thread(target=_cleanup, daemon=True).start()
 
-        threading.Thread(target=_worker, daemon=True).start()
+        threading.Thread(target=_worker, daemon=True, name=f"lcp-bg-{job_id}").start()
         return {"job_id": escape_html(job_id), "status": "running"}
 
     def create_and_crawl_async(self, job_id: str, url: str) -> dict:
