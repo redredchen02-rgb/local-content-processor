@@ -65,7 +65,7 @@ from .adapters.storage.audit_aggregate import aggregate_audit, summarize_gaps
 from .adapters.storage.audit_log import AuditLog
 from .adapters.storage.job_store import JobStore
 from .adapters.storage.source_store import SourceStore
-from .cli_helpers import completion_advisory as _completion_advisory
+from .cli_helpers import _completion_advisory
 from .core import config as _config
 from .core.errors import EXIT_INTERNAL, LcpError
 from .core.models import SourceType
