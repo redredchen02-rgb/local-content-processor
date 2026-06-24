@@ -1722,7 +1722,7 @@ function bind() {
   $("setup-back").addEventListener("click", function () { showView("inbox"); refreshInbox(); });
   $("refresh-inbox").addEventListener("click", refreshInbox);
   $("btn-save-settings").addEventListener("click", saveSettings);
-  $  $("settings-base-url").addEventListener("input", advisoryBaseUrl);
+  $("settings-base-url").addEventListener("input", advisoryBaseUrl);
   bindCreate();
   // Delegated click/keydown for inbox job rows (replaces per-row listeners).
   $("inbox-bands").addEventListener("click", function (e) {
