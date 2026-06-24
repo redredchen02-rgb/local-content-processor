@@ -249,7 +249,15 @@ function stageLabel(kind) {
   return "处理中…";
 }
 
-function mountSpinner(kind) {
+const STEP_SEQUENCES = {
+  crawl: ["crawl"],
+  process: ["risk", "media", "dedup", "assemble", "lint"],
+  process_dry: ["risk", "media", "dedup", "assemble", "lint"],
+  run: ["crawl", "risk", "media", "dedup", "assemble", "lint"],
+};
+const STEP_NAMES = { crawl: "抓取", risk: "风险", media: "媒体", dedup: "查重", assemble: "组稿", lint: "审核" };
+
+function mountStepBar(kind) {
   const c = $("job-inflight");
   clear(c);
   const reduce = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
@@ -265,12 +273,24 @@ function mountSpinner(kind) {
   head.appendChild(el("span", " " + stageLabel(kind)));
   head.appendChild(elapsed);
   box.appendChild(head);
+  const steps = STEP_SEQUENCES[kind] || [];
+  if (steps.length > 0) {
+    const bar = el("div");
+    bar.className = "step-bar";
+    steps.forEach(function (s) {
+      const item = el("span", STEP_NAMES[s] || s);
+      item.className = "step-item is-pending";
+      item.setAttribute("data-step", s);
+      bar.appendChild(item);
+    });
+    box.appendChild(bar);
+  }
   box.appendChild(el("p", "这会花点时间——视窗不会卡死，可切回收件匣。"));
   c.appendChild(box);
-  return { box: box, elapsed: elapsed, glyph: glyph, reduce: reduce };
+  return { box: box, elapsed: elapsed, glyph: glyph, reduce: reduce, kind: kind };
 }
 
-function updateSpinner(p) {
+function updateStepBar(p, stage) {
   if (!p.ui) return;
   const secs = Math.floor((p.ticks * POLL_MS) / 1000);
   const mm = String(Math.floor(secs / 60));
@@ -280,6 +300,12 @@ function updateSpinner(p) {
     const g = ["◐", "◓", "◑", "◒"];
     setText(p.ui.glyph, g[p.ticks % 4]);
   }
+  const steps = STEP_SEQUENCES[p.ui.kind] || [];
+  const activeIdx = stage != null ? steps.indexOf(stage) : -1;
+  const items = p.ui.box.querySelectorAll(".step-item");
+  items.forEach(function (item, i) {
+    item.className = "step-item " + (i < activeIdx ? "is-done" : i === activeIdx ? "is-active" : "is-pending");
+  });
 }
 
 function enterProgress(jobId, kind) {
@@ -296,8 +322,8 @@ function enterProgress(jobId, kind) {
 
 function startPoll(jobId, kind) {
   clearPoller(jobId);
-  const ui = mountSpinner(kind);
-  pollers[jobId] = { kind: kind, ticks: 0, errors: 0, ui: ui, timer: null, cap: POLL_CAP };
+  const ui = mountStepBar(kind);
+  pollers[jobId] = { kind: kind, ticks: 0, errors: 0, ui: ui, timer: null, cap: POLL_CAP, lastStage: null };
   pollTick(jobId);
 }
 
@@ -330,7 +356,8 @@ async function pollTick(jobId) {
   switch (resp && resp.status) {
     case "running":
       p.ticks += 1;
-      updateSpinner(p);
+      p.lastStage = (resp.stage != null) ? resp.stage : p.lastStage;
+      updateStepBar(p, p.lastStage);
       if (p.ticks >= (p.cap || POLL_CAP)) { capReached(jobId); return; }
       schedule(jobId);
       return;
@@ -438,6 +465,14 @@ function jobRow(job) {
     row.appendChild(flag);
   }
   if (job.updated_at) { const w = el("span", job.updated_at); w.className = "job-when"; row.appendChild(w); }
+  // U4: live gate stage badge while a background task is active for this job
+  const poller = pollers[job.job_id];
+  if (poller && poller.lastStage) {
+    const lbl = STEP_NAMES[poller.lastStage] || poller.lastStage;
+    const live = el("span", "► " + lbl);
+    live.className = "live-stage-badge";
+    row.appendChild(live);
+  }
   const open = button("打开 ›", "btn-secondary");
   open.addEventListener("click", function (e) { e.stopPropagation(); openJob(job.job_id); });
   row.appendChild(open);

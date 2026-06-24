@@ -217,6 +217,17 @@ input[type="text"], select { flex: 1; min-width: 11rem; padding: var(--sp-1); }
   display: inline-block; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* step-bar: horizontal gate progress in the inflight box */
+.step-bar { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-top: var(--sp-2); }
+.step-item { font-size: var(--fs-300); padding: 2px var(--sp-2); border-radius: var(--radius-sm); border: 1px solid; }
+.step-item.is-done { border-color: var(--c-go-bd); color: var(--c-go-tx); background: var(--c-go-bg); }
+.step-item.is-active { border-color: var(--c-progress-bd); color: var(--c-progress-tx); background: var(--c-progress-bg); font-weight: var(--fw-medium); }
+.step-item.is-pending { border-color: var(--c-neutral-bd); color: var(--ink-500); background: transparent; opacity: 0.55; }
+
+/* U4: live gate badge in inbox row while background task is active */
+.live-stage-badge { font-size: var(--fs-300); color: var(--c-progress-tx); background: var(--c-progress-bg);
+  border: 1px solid var(--c-progress-bd); border-radius: var(--radius-sm); padding: 1px var(--sp-1); white-space: nowrap; }
+
 /* review packet; frozen skin = immutable trust artifact (SC6) */
 .packet { border: 1px solid var(--line); border-radius: var(--radius-md); padding: var(--sp-3); margin-top: var(--sp-3); position: relative; box-shadow: var(--shadow-sm); }
 .packet .field { margin: var(--sp-1) 0; }
