@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from .base import fetch_text
+from .base import fetch_text, unescape_html
 from ..models import GossipItem
 
 _BBC_RSS = "https://feeds.bbci.co.uk/zhongwen/trad/rss.xml"
@@ -32,6 +32,7 @@ def _parse_rss(xml: str, limit: int) -> list[GossipItem]:
             continue
         title = title_m.group(1).strip()
         title = re.sub(r"<!\[CDATA\[(.*?)\]\]>", r"\1", title)
+        title = unescape_html(title)
         # Skip the channel title itself
         if title in ("BBC Chinese", "BBC 中文"):
             continue
@@ -41,6 +42,7 @@ def _parse_rss(xml: str, limit: int) -> list[GossipItem]:
             desc = desc_m.group(1).strip()
             desc = re.sub(r"<!\[CDATA\[(.*?)\]\]>", r"\1", desc)
             desc = re.sub(r"<[^>]+>", "", desc).strip()[:200]
+            desc = unescape_html(desc)
         items.append(
             GossipItem(
                 platform="bbc_chinese",

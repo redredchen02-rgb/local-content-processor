@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from .base import fetch_text
+from .base import fetch_text, unescape_html
 from ..models import GossipItem
 
 _BING_NEWS = "https://www.bing.com/news/search"
@@ -34,6 +34,7 @@ def _parse_rss(xml: str, limit: int) -> list[GossipItem]:
             continue
         title = title_m.group(1).strip()
         title = re.sub(r"<!\[CDATA\[(.*?)\]\]>", r"\1", title)
+        title = unescape_html(title)
         # Skip the feed title
         if "Bing" in title or "热门" in title[:5]:
             continue

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from .base import fetch_text
+from .base import fetch_text, unescape_html
 from ..models import GossipItem
 
 _RFI_RSS = "https://www.rfi.fr/cn/rss"
@@ -33,6 +33,7 @@ def _parse_rss(xml: str, limit: int) -> list[GossipItem]:
             continue
         title = title_m.group(1).strip()
         title = re.sub(r"<!\[CDATA\[(.*?)\]\]>", r"\1", title)
+        title = unescape_html(title)
         url = link_m.group(1).strip() if link_m else ""
         desc = ""
         if desc_m:

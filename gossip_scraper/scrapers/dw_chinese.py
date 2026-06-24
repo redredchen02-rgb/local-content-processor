@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from .base import fetch_text
+from .base import fetch_text, unescape_html
 from ..models import GossipItem
 
 _DW_RSS = "https://rss.dw.com/rdf/rss-chi-all"
@@ -37,6 +37,7 @@ def _parse_rdf(xml: str, limit: int) -> list[GossipItem]:
             continue
         title = title_m.group(1).strip()
         title = re.sub(r"<!\[CDATA\[(.*?)\]\]>", r"\1", title)
+        title = unescape_html(title)
         # Skip channel titles
         if "DW" in title or "Deutsche Welle" in title:
             continue

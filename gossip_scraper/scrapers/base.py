@@ -6,6 +6,7 @@ eliminate the per-scraper hand-rolled httpx client + headers boilerplate."""
 
 from __future__ import annotations
 
+import html as _html
 from typing import Any, Protocol
 
 import httpx
@@ -58,3 +59,8 @@ async def fetch_text(
         resp = await client.get(url, headers=merged, params=params)
         resp.raise_for_status()
         return resp.text
+
+
+def unescape_html(text: str) -> str:
+    """Unescape HTML entities (&amp; → &, &lt; → <, etc.)."""
+    return _html.unescape(text)
