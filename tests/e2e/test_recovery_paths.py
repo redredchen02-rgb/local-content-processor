@@ -27,6 +27,7 @@ Five coverage gaps from the parallel-optimization-sweep plan (L12):
 from __future__ import annotations
 
 import pytest
+from unittest.mock import patch
 
 from lcp import pipeline as pl
 from lcp.adapters.publisher import signoff
@@ -176,3 +177,49 @@ def test_needs_revision_reprocess_recovery(store, audit, config):
         f"expected PROCESSED after reprocess with valid title, got {res2.final_state}: {res2.notes}"
     )
     assert store.get_job("nr").state is JobState.PROCESSED
+
+
+def test_process_batch_exception_strands_marker_for_reconcile(store, audit, config):
+    """process_batch catches per-job exceptions (BLE001 boundary) and leaves the
+    .processing marker in place — the crashed job surfaces via reconcile() as
+    interrupted rather than being silently lost (process-batch-strands-processing-marker).
+
+    Simulated: two CRAWLED jobs; process() is patched to raise on job_1 AFTER the
+    caller has pre-planted its .processing marker (replicating a mid-Stage-2 crash).
+    job_2 processes normally — batch isolation is verified."""
+    seed_clean_index(store)
+    p = build_pipeline(store, audit, config=config)
+
+    p.stage1(spec_for(store, "crash_job"), ts=TS)
+    p.stage1(spec_for(store, "ok_job"), ts=TS)
+
+    # Pre-plant a stale .processing marker for crash_job (dead-pid: crash leftover).
+    from lcp.adapters.storage.job_store import PROCESSING_MARKER
+
+    marker_path = store.job_dir("crash_job") / PROCESSING_MARKER
+    marker_path.write_text("2000000000", encoding="utf-8")  # dead pid
+
+    # Patch process() to raise for crash_job only; ok_job goes through normally.
+    real_process = p.process
+
+    def _raise_for_crash(job_id, **kw):
+        if job_id == "crash_job":
+            raise RuntimeError("simulated mid-Stage-2 crash")
+        return real_process(job_id, **kw)
+
+    with patch.object(p, "process", side_effect=_raise_for_crash):
+        results = pl.process_batch(p, JobState.CRAWLED, ts=TS, title=TITLE, ai_copy=True)
+
+    # Only ok_job produced a result — process_batch continued past the failure.
+    assert len(results) == 1
+    assert results[0].job_id == "ok_job"
+    assert results[0].final_state is JobState.PROCESSED
+
+    # crash_job still has its .processing marker (not cleared by the exception path).
+    assert store.is_processing("crash_job"), "stale marker must remain for reconcile() to detect"
+
+    # reconcile() surfaces crash_job as interrupted (the dead-pid marker is a crash leftover).
+    interrupted = p.reconcile()
+    assert any(i.job_id == "crash_job" for i in interrupted), (
+        f"crash_job not in reconcile output: {[i.job_id for i in interrupted]}"
+    )

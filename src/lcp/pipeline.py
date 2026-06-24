@@ -132,7 +132,7 @@ class ProcessResult:
     draft: Draft | None
     final_state: JobState
     dry_run: bool
-    # "risk" | "dedup" | "assemble" | "lint" | "error" | None (passed)
+    # "risk" | "media" | "dedup" | "assemble" | "lint" | "error" | None (passed)
     stopped_at: str | None = None
     notes: list[str] = field(default_factory=list)
 
