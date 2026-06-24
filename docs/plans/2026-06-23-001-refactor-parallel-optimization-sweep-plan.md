@@ -1,10 +1,11 @@
 ---
 title: "refactor: collision-free parallel optimization sweep"
 type: refactor
-status: active
+status: completed
 date: 2026-06-23
+completed: 2026-06-24
 origin: multi-agent discovery workflow (15 file-disjoint finders + adversarial verifiers)
-progress: "L12 e2e tests shipped 2026-06-24 (test_recovery_paths.py: 5 tests — supersede/redline, reject, audit-chain, batch, needs-revision-reprocess). Wave A/B/C largely shipped across prior sessions."
+progress: "All actionable items shipped 2026-06-24. L9 HIGH+med: velocity split, generator precedence, enricher coverage, summary-rsplit, freshness-per-platform-rank. L10: inflight guard for crawl_ingested, reconcile_one O(1), persist import hoist, internal-error constant. L11: gossip_scraper mypy strict. L12: 5 e2e recovery tests. L13: docs/changelog/test-count updates. Deferred: extract-worklist-functions [low/quality] (large blast radius), adapters-container-dead-path [med/quality] (architectural decision, not a fix)."
 ---
 
 # refactor: collision-free parallel optimization sweep
