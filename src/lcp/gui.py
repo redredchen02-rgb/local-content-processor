@@ -249,10 +249,12 @@ class Api:
         found=False so the standard create dialog is not used as a gossip retry path.
         The URL is returned raw (not HTML-escaped) — app.js sets it via .value=,
         which is safe by construction; escape_html would corrupt & in query params."""
+        from .adapters.crawler.net_guard import safe_join
+
         c = self._ro_ctx_get()
         if c.store.get_job(job_id) is None:
             return {"found": False, "url": None}
-        source_path = c.store.job_dir(job_id) / gi.SOURCE_NAME
+        source_path = safe_join(c.store.jobs_root, job_id) / gi.SOURCE_NAME
         if not source_path.exists():
             return {"found": False, "url": None}
         try:
@@ -263,6 +265,10 @@ class Api:
             return {"found": False, "url": None}
         url = data.get("url")
         if not isinstance(url, str) or not url:
+            return {"found": False, "url": None}
+        from urllib.parse import urlparse
+
+        if urlparse(url).scheme.lower() not in {"http", "https"}:
             return {"found": False, "url": None}
         return {"found": True, "url": url}
 

@@ -54,7 +54,6 @@ from .adapters.storage.gossip_ingest import (
     SOURCE_NAME,
     IngestReport,
     ingest_items,
-    read_source_url as _read_source_url,
     write_source as _write_source,
 )
 from .adapters.processor._persist import persist_gate_state
@@ -161,6 +160,9 @@ def _try_overwrite_url_source(spec: SourceSpec) -> None:
             data = json.loads(source_path.read_text(encoding="utf-8"))
             platform = data.get("platform", "") if isinstance(data, dict) else ""
         except (OSError, json.JSONDecodeError):
+            logger.warning(
+                "stage1: source.json unreadable for retry %s (fail-closed)", spec.job_id, exc_info=True
+            )
             return  # unreadable → unknown origin → fail-closed
         if platform != "url":
             return  # gossip (non-"url") or absent/empty (unknown) → leave untouched
