@@ -810,6 +810,32 @@ class Pipeline:
             # clear, since it is not a recognised crash-interruption shape.
         return interrupted
 
+    def reconcile_one(
+        self, job_id: str, *, max_attempts: int = DEFAULT_MAX_INTERRUPT_ATTEMPTS
+    ) -> InterruptedJob | None:
+        """Single-job variant of reconcile(): O(1) instead of O(n).
+
+        Returns the InterruptedJob if the job has a stale .processing marker,
+        or None if the job is not interrupted. Used by get_job() to avoid a
+        full worklist scan just to check one job (get-job-reconcile-full-scan)."""
+        rec = self.store.get_job(job_id)
+        if rec is None or not self.store.is_processing(job_id):
+            return None
+        owner = self.store.processing_owner_pid(job_id)
+        if owner is not None and (owner == os.getpid() or _pid_alive(owner)):
+            return None
+        if rec.state in RECONCILABLE_STATES:
+            attempts = self.store.read_interrupt_count(job_id)
+            return InterruptedJob(
+                job_id=job_id,
+                state=rec.state,
+                attempts=attempts,
+                exhausted=attempts > max_attempts,
+            )
+        if rec.state in _MARKER_ONLY_CLEAR_STATES:
+            self.store.clear_processing(job_id)
+        return None
+
 
 # --- pull-style worklist + batch summary (flow G5/G7) -----------------------
 

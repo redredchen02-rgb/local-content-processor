@@ -87,7 +87,7 @@ NOTIFICATION_PLACEHOLDER = "__LCP_NOTIFICATION_ENABLED__"  # noqa: S105 - a sent
 # must not run two Stage-1/Stage-2 passes that race the caller-owned `.processing`
 # marker. The async variants are guarded inside Api._run_bg instead (they finish on
 # a background thread, so the seam cannot bracket their work). See the plan, Unit 2.
-_INFLIGHT_GUARDED = frozenset({"process", "create_and_crawl", "ingest_dir"})
+_INFLIGHT_GUARDED = frozenset({"process", "create_and_crawl", "crawl_ingested", "ingest_dir"})
 
 
 def allowed_hosts(port: int) -> frozenset[str]:
