@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from .base import fetch_text, unescape_html
+from .base import fetch_text, unescape_html, tag_from_title
 from ..models import GossipItem
 
 _BBC_RSS = "https://feeds.bbci.co.uk/zhongwen/trad/rss.xml"
@@ -50,18 +50,10 @@ def _parse_rss(xml: str, limit: int) -> list[GossipItem]:
                 title=title,
                 url=url,
                 heat=max(1, (len(item_blocks) - i) * 4000),
-                tag=_tag_from_title(title),
+                tag=tag_from_title(title),
                 description=desc,
             )
         )
     return items
 
 
-def _tag_from_title(title: str) -> str:
-    if "突发" in title or "刚刚" in title:
-        return "突发"
-    if "独家" in title:
-        return "独家"
-    if "热" in title:
-        return "热"
-    return ""

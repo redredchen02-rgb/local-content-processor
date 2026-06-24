@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .base import fetch_json
+from .base import fetch_json, tag_from_title
 from ..models import GossipItem
 
 _SINA_NEWS = "https://feed.mix.sina.com.cn/api/roll/get"
@@ -40,17 +40,9 @@ class SinaScraper:
                     title=title,
                     url=url,
                     heat=max(1, (len(items_list) - i) * 5000),
-                    tag=_tag_from_title(title),
+                    tag=tag_from_title(title),
                 )
             )
         return items
 
 
-def _tag_from_title(title: str) -> str:
-    if "突发" in title or "刚刚" in title:
-        return "突发"
-    if "独家" in title:
-        return "独家"
-    if "热" in title:
-        return "热"
-    return ""

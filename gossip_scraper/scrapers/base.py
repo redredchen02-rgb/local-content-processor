@@ -102,3 +102,14 @@ async def fetch_text(
 def unescape_html(text: str) -> str:
     """Unescape HTML entities (&amp; → &, &lt; → <, etc.)."""
     return _html.unescape(text)
+
+
+def tag_from_title(title: str) -> str:
+    """Extract a short tag from a Chinese news title. Shared across scrapers."""
+    if "突发" in title or "刚刚" in title:
+        return "突发"
+    if "独家" in title:
+        return "独家"
+    if "热" in title:
+        return "热"
+    return ""
