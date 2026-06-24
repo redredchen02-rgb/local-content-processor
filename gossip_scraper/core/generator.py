@@ -30,7 +30,7 @@ def generate_post(item: GossipItem, platform: str = "weibo") -> dict:
 def _weibo_post(item: GossipItem) -> dict:
     """Generate a Weibo-style post."""
     title = item.title
-    summary = item.summary or item.description[:100] if item.description else title
+    summary = item.summary or (item.description[:100] if item.description else title)
 
     # Generate hashtags based on category
     hashtags = _generate_hashtags(item)
@@ -49,7 +49,7 @@ def _weibo_post(item: GossipItem) -> dict:
 def _xiaohongshu_post(item: GossipItem) -> dict:
     """Generate a Xiaohongshu-style post."""
     title = item.title
-    summary = item.summary or item.description[:100] if item.description else title
+    summary = item.summary or (item.description[:100] if item.description else title)
 
     # Xiaohongshu uses more emojis and casual tone
     emoji_map = {
@@ -78,7 +78,7 @@ def _xiaohongshu_post(item: GossipItem) -> dict:
 def _wechat_post(item: GossipItem) -> dict:
     """Generate a WeChat Moments-style post."""
     title = item.title
-    summary = item.summary or item.description[:80] if item.description else title
+    summary = item.summary or (item.description[:80] if item.description else title)
 
     body = f"{title}\n\n{summary}"
 
