@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import html as _html
+import re
 from typing import Any, Protocol
 
 import httpx
@@ -113,3 +114,48 @@ def tag_from_title(title: str) -> str:
     if "热" in title:
         return "热"
     return ""
+
+
+def parse_rss_items(
+    xml: str,
+    platform: str,
+    limit: int = 50,
+    skip_titles: frozenset[str] | None = None,
+    base_heat: int = 4000,
+) -> list[GossipItem]:
+    """Parse RSS <item> blocks into GossipItems. Handles CDATA + HTML entities.
+
+    ``skip_titles``: exact-match titles to skip (e.g. the channel title).
+    Each scraper can provide its own skip list."""
+    items: list[GossipItem] = []
+    blocks = re.findall(r"<item[^>]*>(.*?)</item>", xml, re.DOTALL)
+    for i, block in enumerate(blocks[:limit]):
+        title_m = re.search(r"<title>(.*?)</title>", block)
+        link_m = re.search(r"<link>(.*?)</link>", block)
+        desc_m = re.search(r"<description>(.*?)</description>", block, re.DOTALL)
+        if not title_m:
+            continue
+        title = title_m.group(1).strip()
+        title = re.sub(r"<!\[CDATA\[(.*?)\]\]>", r"\1", title)
+        title = unescape_html(title)
+        if skip_titles and title in skip_titles:
+            continue
+        url = link_m.group(1).strip() if link_m else ""
+        desc = ""
+        if desc_m:
+            desc = desc_m.group(1).strip()
+            desc = re.sub(r"<!\[CDATA\[(.*?)\]\]>", r"\1", desc)
+            desc = re.sub(r"<[^>]+>", "", desc).strip()[:200]
+            desc = unescape_html(desc)
+        items.append(
+            GossipItem(
+                platform=platform,
+                rank=i + 1,
+                title=title,
+                url=url,
+                heat=max(1, (len(blocks) - i) * base_heat),
+                tag=tag_from_title(title),
+                description=desc,
+            )
+        )
+    return items
