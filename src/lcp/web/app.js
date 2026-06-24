@@ -1502,10 +1502,20 @@ function openCreate(jobId) {
   clear($("job-banner")); clear($("job-actions")); clear($("job-packet")); clear($("job-status")); clear($("job-inflight"));
   setText($("job-title"), jobId ? "重新抓取 " + jobId : "新工作");
   $("create-job-id").value = jobId || ""; _jobIdAutofilled = false;
+  $("create-url").value = "";
   $("create-save-source").checked = false;
   $("create-save-label").value = "";
   setText($("create-status"), "");
   loadSavedSources();
+  if (jobId) {
+    BRIDGE.get_source_url(jobId).then(function (res) {
+      // Only auto-fill if the operator hasn't typed anything yet.
+      if (res && res.found && !$("create-url").value.trim()) {
+        $("create-url").value = res.url;
+        setCreateMode(true);
+      }
+    });
+  }
 }
 
 async function maybeSaveSource(ref) {
