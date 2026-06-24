@@ -73,6 +73,9 @@ from .core.models import SourceType
 logger = logging.getLogger(__name__)
 
 
+_INTERNAL_ERROR_DICT: dict = {"error": "internal error", "exit_code": EXIT_INTERNAL}
+
+
 def _error_dict(err: LcpError) -> dict:
     """Map an LcpError to a bridge-safe dict (no stack, no secrets leaked).
 
@@ -375,7 +378,7 @@ class Api:
                 # "running" forever. Return the same bridge-safe error shape fn()
                 # itself would (no raw exception text crosses the bridge).
                 logger.exception("background task failed for job %s", job_id)
-                result = {"error": "internal error", "exit_code": EXIT_INTERNAL}
+                result = _INTERNAL_ERROR_DICT
             done = "error" if "error" in result else "done"
             with self.inflight_lock:
                 self.inflight.discard(job_id)
@@ -553,7 +556,7 @@ class Api:
             # Unreadable / malformed report -> advisory simply absent.
             return {"job_id": escape_html(job_id), "has_report": False}
         except Exception:  # noqa: BLE001 - bridge boundary, never leak a stack
-            return {"error": "internal error", "exit_code": EXIT_INTERNAL}
+            return _INTERNAL_ERROR_DICT
 
     @bridge_safe
     def approve(self, job_id: str, reviewer: str) -> dict:
@@ -790,7 +793,7 @@ class Api:
             # thread is concurrently appending to. A non-LcpError IO/decode error
             # (locked/corrupt file) must NOT cross the bridge as a raw exception
             # (stack/path leak); return the same bridge-safe shape as _run_bg.
-            return {"error": "internal error", "exit_code": EXIT_INTERNAL}
+            return _INTERNAL_ERROR_DICT
 
     # --- Saved sources: input reuse (PII-exception table) ---------------------
 
@@ -901,7 +904,7 @@ class Api:
         except (OSError, ValueError):
             return {"job_id": escape_html(job_id), "report": None}
         except Exception:  # noqa: BLE001 - bridge boundary
-            return {"error": "internal error", "exit_code": EXIT_INTERNAL}
+            return _INTERNAL_ERROR_DICT
 
     # --- Telegram notification (SOP step 10) ------------------------------------
 

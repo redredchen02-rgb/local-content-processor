@@ -47,6 +47,7 @@ from .adapters.processor.draft_linter import build_lint_config, run_draft_lint_g
 from .adapters.publisher.review_packet import ReviewPacket, build_review_packet
 from .adapters.storage.audit_log import EVENT_INTERRUPTED_DETECTED, AuditLog
 from .adapters.storage.gossip_ingest import DEFAULT_MAX_ITEMS, IngestReport, ingest_items
+from .adapters.processor._persist import persist_gate_state
 from .adapters.storage.job_store import JobRecord, JobStore
 from .core.config import Config
 from .core.draft import Draft, DraftStatus
@@ -412,8 +413,6 @@ class Pipeline:
             # so the operator can see the failure and re-run after fixing config.
             # persist_gate_state re-marks + clears its own marker.
             _raised_service_error = True
-            from .adapters.processor._persist import persist_gate_state
-
             persist_gate_state(
                 self.store,
                 job_id,
@@ -541,7 +540,6 @@ class Pipeline:
         # short-circuit BEFORE grounding/lint, carrying the assembler's reason
         # (otherwise the truncation review_reason is silently lost). ---
         if draft.status is DraftStatus.NEEDS_REVISION:
-            from .adapters.processor._persist import persist_gate_state
 
             persist_gate_state(self.store, job_id, JobState.NEEDS_REVISION, updated_at=ts)
             if draft.review_reason:
@@ -590,7 +588,6 @@ class Pipeline:
             )
 
         # --- all gates passed: PROCESSING -> PROCESSED ---
-        from .adapters.processor._persist import persist_gate_state
 
         persist_gate_state(self.store, job_id, JobState.PROCESSED, updated_at=ts)
         return ProcessResult(

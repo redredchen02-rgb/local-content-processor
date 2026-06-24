@@ -361,7 +361,9 @@ class _Handler(BaseHTTPRequestHandler):
             self._dispatch_guarded(name)
         except Exception:  # noqa: BLE001 - last-resort net: never leak a stack
             logger.exception("API dispatch failed for %s", name)
-            self._send_json({"error": "internal error", "exit_code": EXIT_INTERNAL})
+            from .gui import _INTERNAL_ERROR_DICT
+
+            self._send_json(_INTERNAL_ERROR_DICT)
 
     def _dispatch_guarded(self, name: str) -> None:
         # Parse {"args": [...]} — a malformed body is a typed input error, not a 500.
