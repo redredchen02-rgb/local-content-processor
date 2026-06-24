@@ -41,18 +41,10 @@ def manifest_path(job_dir: str | os.PathLike[str]) -> Path:
 
 
 def _atomic_write(path: Path, text: str) -> None:
-    """temp file in the same dir + fsync + os.replace (atomic on POSIX)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.tmp.{os.getpid()}")
-    try:
-        with tmp.open("w", encoding="utf-8") as f:
-            f.write(text)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)  # atomic
-    finally:
-        if tmp.exists():
-            tmp.unlink()
+    """Delegates to the canonical storage._fs.atomic_write_0600."""
+    from ._fs import atomic_write_0600
+
+    atomic_write_0600(path, text)
 
 
 def read_manifest(job_dir: str | os.PathLike[str]) -> Manifest | None:
