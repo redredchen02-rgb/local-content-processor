@@ -26,10 +26,13 @@ but the process result is flagged ``dry_run=True`` so the shell can label it."""
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
 
 from .adapters.container import Adapters as Adapters
 from .adapters.crawler.base import (
@@ -46,12 +49,20 @@ from .adapters.llm.client import LlmClient
 from .adapters.processor.draft_linter import build_lint_config, run_draft_lint_gate
 from .adapters.publisher.review_packet import ReviewPacket, build_review_packet
 from .adapters.storage.audit_log import EVENT_INTERRUPTED_DETECTED, AuditLog
-from .adapters.storage.gossip_ingest import DEFAULT_MAX_ITEMS, IngestReport, ingest_items
+from .adapters.storage.gossip_ingest import (
+    DEFAULT_MAX_ITEMS,
+    SOURCE_NAME,
+    IngestReport,
+    ingest_items,
+    read_source_url as _read_source_url,
+    write_source as _write_source,
+)
 from .adapters.processor._persist import persist_gate_state
 from .adapters.storage.job_store import JobRecord, JobStore
 from .core.config import Config
 from .core.draft import Draft, DraftStatus
 from .core.errors import DependencyError, ExternalServiceError, InputValidationError, LcpError
+from .core.models import SourceType
 from .core.rules.risk_rules import RiskInput
 from .core.state import TERMINAL_STATES, TRANSIENT_STATES, JobState
 
@@ -111,6 +122,54 @@ _CRAWL_STATUS_TO_STATE: dict[str, JobState] = {
     # CRAWLED_WARN so the operator can decide (we never silently drop it).
     STATUS_NEEDS_REVISION: JobState.CRAWLED_WARN,
 }
+
+
+_URL_SCHEMES = {"http", "https"}
+
+
+def _try_write_url_source(spec: SourceSpec) -> None:
+    """Persist source.json for a NEW standard-URL job. Best-effort: log on failure, never raise."""
+    if spec.source_type is not SourceType.URL or not spec.url:
+        return
+    if urlparse(spec.url).scheme.lower() not in _URL_SCHEMES:
+        logger.debug("stage1: skipping source.json — unsupported scheme for %s", spec.job_id)
+        return
+    try:
+        _write_source(spec.job_dir, url=spec.url, platform="url", title="")
+    except Exception:
+        logger.warning(
+            "stage1: source.json write failed for new job %s (best-effort)", spec.job_id, exc_info=True
+        )
+
+
+def _try_overwrite_url_source(spec: SourceSpec) -> None:
+    """Overwrite source.json on CRAWL_FAILED retry; fail-closed for gossip/unknown files.
+
+    Guard logic:
+    - file absent → write (new standard-URL job that never had a source.json)
+    - file with platform='url' → overwrite (operator may have corrected the URL)
+    - file with platform absent/empty → leave untouched (unknown origin, fail-closed)
+    - file with any other platform (e.g. 'weibo') → leave untouched (gossip, R5 guard)
+    """
+    if spec.source_type is not SourceType.URL or not spec.url:
+        return
+    if urlparse(spec.url).scheme.lower() not in _URL_SCHEMES:
+        return
+    source_path = spec.job_dir / SOURCE_NAME
+    if source_path.exists():
+        try:
+            data = json.loads(source_path.read_text(encoding="utf-8"))
+            platform = data.get("platform", "") if isinstance(data, dict) else ""
+        except (OSError, json.JSONDecodeError):
+            return  # unreadable → unknown origin → fail-closed
+        if platform != "url":
+            return  # gossip (non-"url") or absent/empty (unknown) → leave untouched
+    try:
+        _write_source(spec.job_dir, url=spec.url, platform="url", title="")
+    except Exception:
+        logger.warning(
+            "stage1: source.json overwrite failed for retry %s (best-effort)", spec.job_id, exc_info=True
+        )
 
 
 @dataclass(frozen=True)
@@ -283,11 +342,16 @@ class Pipeline:
         existing = self.store.get_job(spec.job_id)
         if existing is None:
             self.store.create_job(spec.job_id, created_at=ts)
+            # create_job already calls ensure_job_dir so the directory exists here.
+            _try_write_url_source(spec)
         elif existing.state is JobState.CRAWL_FAILED:
             # A failed crawl left no bundle to clobber; retry in place by resetting
             # to NEW (CRAWL_FAILED -> NEW is the state machine's retry edge). Without
             # this, the documented GUI 重新抓取 path dead-ended — supersede refuses
             # CRAWL_FAILED too, so the only recovery was delete + a fresh id.
+            # Write source.json BEFORE set_state so a crash leaves the job at
+            # CRAWL_FAILED with the updated URL rather than NEW with a stale URL.
+            _try_overwrite_url_source(spec)
             self.store.set_state(spec.job_id, JobState.NEW, updated_at=ts)
         elif existing.state is not JobState.NEW:
             # An existing already-crawled job: refuse before any crawl/mutation.
@@ -326,6 +390,7 @@ class Pipeline:
         watermark: bool | None = None,
         template: str | None = None,
         ai_copy: bool = False,
+        on_stage: Callable[[str], None] | None = None,
     ) -> ProcessResult:
         """Stage 2: risk gate -> media validation -> dedup gate -> assemble
         (dry_run aware) -> lint + grounding. Stops at the FIRST gate that parks
@@ -405,6 +470,7 @@ class Pipeline:
                 watermark=watermark,
                 template=template,
                 ai_copy=ai_copy,
+                on_stage=on_stage,
             )
         except (ExternalServiceError, DependencyError):
             # An LLM/network failure or missing dependency (e.g. API key not
@@ -451,6 +517,7 @@ class Pipeline:
         watermark: bool | None = None,
         template: str | None = None,
         ai_copy: bool = False,
+        on_stage: Callable[[str], None] | None = None,
     ) -> ProcessResult:
         """Stage-2 gate sequence (called inside the .processing marker scope).
 
@@ -483,7 +550,7 @@ class Pipeline:
             media_config=self.config.media,
             watermark_config=self.config.watermark,
         )
-        parked_state, stopped_at = run_gate_chain(PARK_GATES, ctx)
+        parked_state, stopped_at = run_gate_chain(PARK_GATES, ctx, on_stage=on_stage)
         if parked_state is not None:
             return ProcessResult(
                 job_id=job_id,
@@ -507,6 +574,11 @@ class Pipeline:
         template_values = (
             {"category": template or "", "title": title or ""} if resolved_template else None
         )
+        if on_stage is not None:
+            try:
+                on_stage("assemble")
+            except Exception:
+                pass
         draft = assemble(
             source_text,
             self.llm_client,
@@ -556,6 +628,11 @@ class Pipeline:
         # --- lint + grounding gate ---
         # Derive has_images from the actual media gate result (D9): image_sections
         # is required IFF the bundle has images. has_videos stays the caller hint.
+        if on_stage is not None:
+            try:
+                on_stage("lint")
+            except Exception:
+                pass
         has_images = bool(media_out_report.get("image_count", 0))
         lint_config = build_lint_config(self.config.content, self.config.categories)
         lint_out = run_draft_lint_gate(
@@ -652,6 +729,7 @@ class Pipeline:
         ai_copy: bool = True,
         template: str | None = None,
         watermark: bool | None = None,
+        on_stage: Callable[[str], None] | None = None,
     ) -> RunResult:
         """Run the pipeline up to `target` ('draft' or 'review').
 
@@ -671,6 +749,11 @@ class Pipeline:
         if target not in (TARGET_DRAFT, TARGET_REVIEW):
             raise InputValidationError(f"--until must be 'draft' or 'review' (got {target!r})")
 
+        if on_stage is not None:
+            try:
+                on_stage("crawl")
+            except Exception:
+                pass
         rec = self.stage1(spec, ts=ts).record
         if rec.state not in (JobState.CRAWLED, JobState.CRAWLED_WARN):
             return RunResult(
@@ -690,6 +773,7 @@ class Pipeline:
             ai_copy=ai_copy,
             template=template,
             watermark=watermark,
+            on_stage=on_stage,
         )
         if proc.final_state is not JobState.PROCESSED:
             notes = list(proc.notes)
