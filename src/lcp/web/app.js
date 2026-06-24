@@ -155,20 +155,36 @@ const HOLD_STATES = ["blocked", "duplicate", "needs_human_review", "needs_revisi
 
 let currentView = "inbox";
 let currentJobId = null;
+let currentWizardStep = 1;
 const VIEWS = ["inbox", "dashboard", "job", "setup"];
 const NAV = { inbox: "nav-inbox", dashboard: "nav-dashboard", setup: "nav-setup" };
 
 function showView(name) {
+  if (name === currentView) return; // same-view guard: skip animation
   currentView = name;
   VIEWS.forEach(function (v) {
-    $("view-" + v).hidden = v !== name;
+    var section = $("view-" + v);
+    if (v === name) {
+      section.hidden = false;
+      requestAnimationFrame(function () {
+        section.classList.add("view-entering");
+        section.addEventListener("animationend", function () {
+          section.classList.remove("view-entering");
+        }, { once: true });
+      });
+    } else {
+      section.hidden = true;
+    }
   });
   Object.keys(NAV).forEach(function (v) {
     const btn = $(NAV[v]);
-    if (name === v) btn.setAttribute("aria-current", "page");
-    else btn.removeAttribute("aria-current");
+    if (btn) {
+      if (name === v) btn.setAttribute("aria-current", "page");
+      else btn.removeAttribute("aria-current");
+    }
   });
-  // sync mobile nav select
+  var search = $("inbox-search");
+  if (search) search.placeholder = name === "inbox" ? "搜索工作…" : "只在收件匣中搜索";
   var sel = $("nav-select");
   if (sel && (name === "inbox" || name === "dashboard" || name === "setup")) sel.value = name;
 }
@@ -327,6 +343,13 @@ function startPoll(jobId, kind) {
   pollTick(jobId);
 }
 
+// Like startPoll but stays in inbox view (no step bar, no view switch).
+function startPollInbox(jobId, kind) {
+  clearPoller(jobId);
+  pollers[jobId] = { kind: kind, ticks: 0, errors: 0, ui: null, timer: null, cap: POLL_CAP, lastStage: null };
+  pollTick(jobId);
+}
+
 function schedule(jobId) {
   const p = pollers[jobId];
   if (!p) return;
@@ -358,7 +381,15 @@ async function pollTick(jobId) {
       p.ticks += 1;
       p.lastStage = (resp.stage != null) ? resp.stage : p.lastStage;
       updateStepBar(p, p.lastStage);
-      if (p.ticks >= (p.cap || POLL_CAP)) { capReached(jobId); return; }
+      if (p.ticks >= (p.cap || POLL_CAP)) {
+        if (p.ui === null) {
+          // Inbox-path poller: no #job-inflight to write; just notify + refresh.
+          clearPoller(jobId); showToast("处理时间较长，请稍后查看收件匣", "info"); refreshInbox();
+        } else {
+          capReached(jobId);
+        }
+        return;
+      }
       schedule(jobId);
       return;
     case "done": {
@@ -472,6 +503,32 @@ function jobRow(job) {
     const live = el("span", "► " + lbl);
     live.className = "live-stage-badge";
     row.appendChild(live);
+  }
+  // U5: per-row quick-action for single-job processing/retrying from the inbox
+  let quickLabel = null;
+  let quickKind = null;
+  let quickAction = null;
+  if (job.state === "crawled" || job.state === "crawled_warn") {
+    quickLabel = "处理"; quickKind = "process";
+    quickAction = function (a) { return a.process_async(job.job_id, "", false, null, null, true); };
+  } else if (job.state === "process_failed" || job.state === "needs_revision") {
+    quickLabel = "重试处理"; quickKind = "process";
+    quickAction = function (a) { return a.process_async(job.job_id, "", false, null, null, true); };
+  } else if (job.state === "crawl_failed") {
+    quickLabel = "重新抓取"; quickKind = "crawl";
+    quickAction = function (a) { return a.create_and_crawl_async(job.job_id, ""); };
+  }
+  if (quickLabel && !pollers[job.job_id]) {
+    const qbtn = button(quickLabel, "btn-secondary");
+    qbtn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      setBusy(qbtn, true);
+      const a = api();
+      if (!a) { setBusy(qbtn, false); showToast("API 未就绪，请刷新页面", "error"); return; }
+      quickAction(a);
+      startPollInbox(job.job_id, quickKind);
+    });
+    row.appendChild(qbtn);
   }
   const open = button("打开 ›", "btn-secondary");
   open.addEventListener("click", function (e) { e.stopPropagation(); openJob(job.job_id); });
@@ -1544,12 +1601,12 @@ function openCreate(jobId) {
   loadSavedSources();
   if (jobId) {
     BRIDGE.get_source_url(jobId).then(function (res) {
-      // Only auto-fill if the operator hasn't typed anything yet.
-      if (res && res.found && !$("create-url").value.trim()) {
+      // Only auto-fill if the operator hasn't typed anything yet and hasn't switched mode.
+      if (res && res.found && !$("create-url").value.trim() && !$("create-mode-dir").checked) {
         $("create-url").value = res.url;
         setCreateMode(true);
       }
-    });
+    }).catch(function () {});
   }
 }
 
