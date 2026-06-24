@@ -109,7 +109,7 @@ input[type="text"], select { flex: 1; min-width: 11rem; padding: var(--sp-1); }
 .badge--busy { background: var(--c-progress-bg); color: var(--c-progress-tx); }
 .badge--caution, .badge--review, .badge--retry { background: var(--c-attention-bg); color: var(--c-attention-tx); }
 .badge--stop { background: var(--c-stop-bg); color: var(--c-stop-tx); }
-.badge--ready, .badge--go, .badge--done { background: var(--c-go-bg); color: var(--c-go-tx); }
+.badge--ready, .badge--done { background: var(--c-go-bg); color: var(--c-go-tx); }
 .badge--frozen { background: var(--c-frozen-bg); color: var(--c-frozen-tx); }
 .badge--void { background: var(--c-void-bg); color: var(--c-void-tx); text-decoration: line-through; }
 
@@ -139,7 +139,7 @@ input[type="text"], select { flex: 1; min-width: 11rem; padding: var(--sp-1); }
 .job-row.lane--caution, .job-row.lane--review, .job-row.lane--retry { --lane: var(--c-attention-bd); }
 .job-row.lane--frozen { --lane: var(--c-frozen-bd); }
 .job-row.lane--busy { --lane: var(--c-progress-bd); }
-.job-row.lane--ready, .job-row.lane--go, .job-row.lane--done { --lane: var(--c-go-bd); }
+.job-row.lane--ready, .job-row.lane--done { --lane: var(--c-go-bd); }
 .job-row.lane--void { --lane: var(--c-void-bd); }
 /* the machine id recedes to metadata; the human reason is the primary scan target (P0-4) */
 .job-id { font-family: var(--font-mono); font-size: var(--fs-300); color: var(--ink-500); letter-spacing: .02em; }
@@ -184,7 +184,6 @@ input[type="text"], select { flex: 1; min-width: 11rem; padding: var(--sp-1); }
 .workflow-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
 .step { display: flex; align-items: baseline; gap: var(--sp-2); font-size: var(--fs-400); color: var(--ink-700); }
 .step-mark { min-width: 1.2em; font-weight: 600; }
-.step-label { }
 .step--done .step-mark { color: var(--c-go-tx); }
 .step--done .step-label { color: var(--ink-500); text-decoration: line-through; }
 .step--blocked .step-mark { color: var(--c-stop-tx); }
@@ -321,6 +320,9 @@ input.is-error { border-color: var(--c-stop-bd); }
   .view { transition: none; }
   .btn-primary:active, .btn-secondary:active { transform: none; }
   .scroll-top { transition: none; }
+  .skeleton::after { animation: none; }
+  .toast { animation: none; }
+  .toast.is-leaving { animation: none; display: none; }
 }
 
 /* ===== DASHBOARD (4th view): accumulated metrics ===== */
@@ -376,11 +378,6 @@ input.is-error { border-color: var(--c-stop-bd); }
 .skeleton-table { height: 12rem; border-radius: var(--radius-md); }
 .skeleton-stat { height: 5rem; border-radius: var(--radius-md); }
 @keyframes shimmer { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
-@media (prefers-reduced-motion: reduce) {
-  .skeleton::after { animation: none; }
-  .toast { animation: none; }
-  .toast.is-leaving { animation: none; display: none; }
-}
 
 /* ===== PHASE 3: DASHBOARD VISUAL UPGRADES ===== */
 /* KPI stat cards */
@@ -389,7 +386,6 @@ input.is-error { border-color: var(--c-stop-bd); }
   padding: var(--sp-4); box-shadow: var(--shadow-sm); border-left: 3px solid var(--c-neutral-bd); }
 .kpi-card--go { border-left-color: var(--c-go-bd); }
 .kpi-card--stop { border-left-color: var(--c-stop-bd); }
-.kpi-card--progress { border-left-color: var(--c-progress-bd); }
 .kpi-card--frozen { border-left-color: var(--c-frozen-bd); }
 .kpi-value { font-size: var(--fs-900); font-weight: var(--fw-bold); line-height: var(--lh-tight);
   font-variant-numeric: tabular-nums; color: var(--ink-900); }
@@ -403,7 +399,6 @@ input.is-error { border-color: var(--c-stop-bd); }
 .gate-bar-fill--attention { background: var(--c-attention-bd); }
 .gate-bar-fill--stop { background: var(--c-stop-bd); }
 .gate-bar-fill--go { background: var(--c-go-bd); }
-.gate-bar-fill--progress { background: var(--c-progress-bd); }
 /* stacked state distribution bar */
 .stacked-bar { display: flex; height: 12px; border-radius: var(--radius-pill); overflow: hidden; border: 1px solid var(--line); margin: var(--sp-3) 0; }
 .stacked-seg { transition: width .4s ease; min-width: 2px; }

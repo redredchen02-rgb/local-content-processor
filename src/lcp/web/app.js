@@ -577,21 +577,6 @@ function skeletonRows(count) {
   }
   return wrap;
 }
-function skeletonBand() {
-  var s = el("div"); s.className = "skeleton skeleton-band"; return s;
-}
-function skeletonTable() {
-  var s = el("div"); s.className = "skeleton skeleton-table"; return s;
-}
-function skeletonStats(count) {
-  var wrap = el("div");
-  wrap.className = "kpi-grid";
-  for (var i = 0; i < (count || 4); i++) {
-    var s = el("div"); s.className = "skeleton skeleton-stat";
-    wrap.appendChild(s);
-  }
-  return wrap;
-}
 
 // --- DASHBOARD: accumulated metrics (read-only) -----------------------------
 
@@ -1746,8 +1731,6 @@ function bind() {
   });
   // Phase 1: mobile nav select
   bindNavSelect();
-  // Phase 2: override loadingRow with skeleton version
-  _origLoadingRow = loadingRow;
   // Phase 4: inbox search
   bindInboxSearch();
   // Phase 4: command palette
@@ -1777,7 +1760,11 @@ var _inboxJobs = [];
 function bindInboxSearch() {
   var inp = $("inbox-search");
   if (!inp) return;
-  inp.addEventListener("input", function () { filterInbox(inp.value); });
+  var timer = null;
+  inp.addEventListener("input", function () {
+    clearTimeout(timer);
+    timer = setTimeout(function () { filterInbox(inp.value); }, 150);
+  });
 }
 function filterInbox(query) {
   query = (query || "").toLowerCase().trim();
