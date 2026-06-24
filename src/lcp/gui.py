@@ -236,6 +236,37 @@ class Api:
         }
 
     @bridge_safe
+    def get_source_url(self, job_id: str) -> dict:
+        """Read the persisted source URL for a standard-URL job (GUI-only, read-only).
+
+        Used by the re-crawl dialog to pre-populate the URL field for crawl_failed
+        jobs. Returns {"found": True, "url": <url>} when a URL is stored, or
+        {"found": False, "url": None} when absent, unknown, or from a gossip job.
+
+        Path traversal guard: verifies the job exists in the DB before touching
+        any filesystem path.
+        Gossip guard: gossip source.json has platform != "url"; those jobs return
+        found=False so the standard create dialog is not used as a gossip retry path.
+        The URL is returned raw (not HTML-escaped) — app.js sets it via .value=,
+        which is safe by construction; escape_html would corrupt & in query params."""
+        c = self._ro_ctx_get()
+        if c.store.get_job(job_id) is None:
+            return {"found": False, "url": None}
+        source_path = c.store.job_dir(job_id) / gi.SOURCE_NAME
+        if not source_path.exists():
+            return {"found": False, "url": None}
+        try:
+            data = json.loads(source_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {"found": False, "url": None}
+        if not isinstance(data, dict) or data.get("platform") != "url":
+            return {"found": False, "url": None}
+        url = data.get("url")
+        if not isinstance(url, str) or not url:
+            return {"found": False, "url": None}
+        return {"found": True, "url": url}
+
+    @bridge_safe
     def ingest_dir(self, job_id: str, directory: str) -> dict:
         """Mirror `ingest`: ingest a local material folder (no network)."""
         c = self._ctx()

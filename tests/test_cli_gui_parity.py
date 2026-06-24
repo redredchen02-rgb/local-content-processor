@@ -82,6 +82,7 @@ _GUI_ONLY: frozenset[str] = frozenset(
         "get_job",  # read-only data (CLI accesses via list)
         "get_packet",  # read-only data (CLI accesses via review-packet)
         "job_status",  # read-only data (CLI accesses via list)
+        "get_source_url",  # read-only re-crawl URL lookup (GUI dialog only)
     }
 )
 

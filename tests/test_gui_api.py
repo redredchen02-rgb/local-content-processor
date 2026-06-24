@@ -972,3 +972,102 @@ def test_get_ingest_report_path_traversal_raises(tmp_path):
     result = api.get_ingest_report("../../../etc/passwd")
     # @bridge_safe maps InputValidationError to {"error": ..., "exit_code": 2}
     assert "error" in result and result["exit_code"] == 2
+
+
+# --- U3: get_source_url API --------------------------------------------------
+
+
+def _make_source_json(job_dir: Path, url: str, platform: str, title: str = "") -> None:
+    import json
+
+    src = job_dir / "source.json"
+    src.write_text(json.dumps({"url": url, "platform": platform, "title": title}), encoding="utf-8")
+    src.chmod(0o600)
+
+
+def _setup_url_api(tmp_path):
+    import yaml
+
+    cfg = tmp_path / "config.yaml"
+    base = str(tmp_path)
+    cfg.write_text(yaml.safe_dump({"storage": {"base_dir": base}}), encoding="utf-8")
+    from lcp.adapters.storage.job_store import JobStore
+
+    store = JobStore(base_dir=base)
+    api = Api(config_path=str(cfg))
+    return store, api
+
+
+def test_get_source_url_returns_url_for_standard_url_job(tmp_path):
+    """Standard URL job with platform='url' → found=True and correct URL."""
+    store, api = _setup_url_api(tmp_path)
+    store.create_job("j1", created_at="2026-01-01T00:00:00Z")
+    _make_source_json(store.job_dir("j1"), url="https://example.com/news", platform="url")
+
+    result = api.get_source_url("j1")
+
+    assert result["found"] is True
+    assert result["url"] == "https://example.com/news"
+
+
+def test_get_source_url_gossip_job_returns_not_found(tmp_path):
+    """Gossip job (platform='weibo') → found=False (gossip guard)."""
+    store, api = _setup_url_api(tmp_path)
+    store.create_job("j2", created_at="2026-01-01T00:00:00Z")
+    _make_source_json(store.job_dir("j2"), url="https://weibo.com/p/123", platform="weibo", title="吃瓜")
+
+    result = api.get_source_url("j2")
+
+    assert result["found"] is False
+    assert result["url"] is None
+
+
+def test_get_source_url_unknown_job_returns_not_found(tmp_path):
+    """Non-existent job_id → found=False (path traversal guard via DB check)."""
+    _, api = _setup_url_api(tmp_path)
+
+    result = api.get_source_url("does-not-exist")
+
+    assert result["found"] is False
+    assert result["url"] is None
+
+
+def test_get_source_url_missing_source_json_returns_not_found(tmp_path):
+    """Existing job but no source.json → found=False."""
+    store, api = _setup_url_api(tmp_path)
+    store.create_job("j3", created_at="2026-01-01T00:00:00Z")
+    # ensure_job_dir creates the dir but no source.json
+
+    result = api.get_source_url("j3")
+
+    assert result["found"] is False
+    assert result["url"] is None
+
+
+def test_get_source_url_malformed_json_returns_not_found(tmp_path):
+    """Unreadable/malformed source.json → found=False (fail-closed)."""
+    store, api = _setup_url_api(tmp_path)
+    store.create_job("j4", created_at="2026-01-01T00:00:00Z")
+    src = store.job_dir("j4") / "source.json"
+    src.write_text("not json {{", encoding="utf-8")
+    src.chmod(0o600)
+
+    result = api.get_source_url("j4")
+
+    assert result["found"] is False
+    assert result["url"] is None
+
+
+def test_get_source_url_absent_platform_returns_not_found(tmp_path):
+    """source.json without 'platform' field → found=False (fail-closed for unknown origin)."""
+    import json
+
+    store, api = _setup_url_api(tmp_path)
+    store.create_job("j5", created_at="2026-01-01T00:00:00Z")
+    src = store.job_dir("j5") / "source.json"
+    src.write_text(json.dumps({"url": "https://example.com"}), encoding="utf-8")
+    src.chmod(0o600)
+
+    result = api.get_source_url("j5")
+
+    assert result["found"] is False
