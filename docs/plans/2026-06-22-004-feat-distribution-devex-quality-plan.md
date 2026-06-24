@@ -1,7 +1,7 @@
 ---
 title: "feat: distribution, developer experience & quality boundaries"
 type: feat
-status: active
+status: completed
 date: 2026-06-22
 origin: docs/brainstorms/2026-06-22-lcp-extensibility-robustness-requirements.md
 ---
