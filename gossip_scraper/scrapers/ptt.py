@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import re
 
-from .base import fetch_text
 from ..models import GossipItem
+from .base import fetch_text
 
 _PTT_GOSSIP = "https://www.ptt.cc/bbs/Gossiping/index.html"
 _EXTRA_HEADERS = {

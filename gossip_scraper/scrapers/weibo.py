@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from urllib.parse import quote_plus
 
-from .base import fetch_json
 from ..models import GossipItem
+from .base import fetch_json
 
 _WEIBO_API = "https://weibo.com/ajax/side/hotSearch"
 _EXTRA_HEADERS = {

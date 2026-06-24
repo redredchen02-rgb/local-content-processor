@@ -14,6 +14,7 @@ from gossip_scraper.core.trend import (
     _DEFAULT_HISTORY_DIR,
     _item_key,
     compute_velocity,
+    save_velocity_history,
 )
 from gossip_scraper.models import GossipItem
 
@@ -90,7 +91,7 @@ def test_load_history_tolerates_corrupt_json(tmp_path: Path) -> None:
 
 def test_save_history_atomic_no_tmp_leftover(tmp_path: Path) -> None:
     items = [_item("话题A", rank=1), _item("话题B", rank=2)]
-    compute_velocity(items, history_dir=tmp_path)
+    save_velocity_history(items, history_dir=tmp_path)
 
     history_file = tmp_path / ".gossip_history.json"
     tmp_file = tmp_path / ".gossip_history.json.tmp"
@@ -100,7 +101,7 @@ def test_save_history_atomic_no_tmp_leftover(tmp_path: Path) -> None:
 
 def test_save_history_readable_json(tmp_path: Path) -> None:
     items = [_item("话题A", rank=1)]
-    compute_velocity(items, history_dir=tmp_path)
+    save_velocity_history(items, history_dir=tmp_path)
 
     data = json.loads((tmp_path / ".gossip_history.json").read_text(encoding="utf-8"))
     assert isinstance(data, dict)
@@ -113,9 +114,10 @@ def test_save_history_readable_json(tmp_path: Path) -> None:
 
 
 def test_velocity_survives_platform_switch(tmp_path: Path) -> None:
-    # First run: topic carried by weibo at rank 5
+    # First run: topic carried by weibo at rank 5; save composite rank after ranking.
     run1 = [_item("某明星出轨大瓜", platform="weibo", rank=5)]
     compute_velocity(run1, history_dir=tmp_path)
+    save_velocity_history(run1, history_dir=tmp_path)
 
     # Second run: same topic, now carried by baidu (platform changed), rank improved to 2
     run2 = [_item("某明星出轨大瓜", platform="baidu", rank=2)]

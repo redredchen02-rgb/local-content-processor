@@ -19,10 +19,14 @@ _DEFAULT_HISTORY_DIR = Path(__file__).resolve().parent.parent.parent
 
 
 def compute_velocity(items: list[GossipItem], history_dir: Path | None = None) -> list[GossipItem]:
-    """Compute trend velocity for each item based on rank changes.
+    """Compute trend velocity for each item based on rank changes from the previous run.
 
     Velocity = (last_rank - current_rank) / time_delta
-    Positive = rising, negative = falling, zero = new or unchanged."""
+    Positive = rising, negative = falling, zero = new or unchanged.
+
+    Reads history only — does not write. Call save_velocity_history() after ranking
+    so the saved rank reflects the composite cross-platform rank, not the per-platform
+    scraper position (which varies by platform scale and has no cross-platform meaning)."""
     if not items:
         return items
 
@@ -40,10 +44,18 @@ def compute_velocity(items: list[GossipItem], history_dir: Path | None = None) -
             # New topic — assign high velocity (it just appeared)
             it.trend_velocity = 0.5
 
-    # Save current rankings for next run
-    _save_history(items, hist_dir, now)
-
     return items
+
+
+def save_velocity_history(items: list[GossipItem], history_dir: Path | None = None) -> None:
+    """Persist current composite ranks for next-run velocity comparison.
+
+    Call AFTER rank() so it.rank reflects the composite cross-platform score rank,
+    not the raw per-platform scraper position."""
+    if not items:
+        return
+    hist_dir = history_dir or _DEFAULT_HISTORY_DIR
+    _save_history(items, hist_dir, time.time())
 
 
 def _item_key(item: GossipItem) -> str:

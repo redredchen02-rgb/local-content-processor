@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from .base import fetch_json, tag_from_title
 from ..models import GossipItem
+from .base import fetch_json, tag_from_title
 
 _SINA_NEWS = "https://feed.mix.sina.com.cn/api/roll/get"
 _EXTRA_HEADERS = {

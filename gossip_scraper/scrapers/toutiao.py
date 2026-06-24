@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from urllib.parse import quote_plus
 
-from .base import fetch_json
 from ..models import GossipItem
+from .base import fetch_json
 
 _TOUTIAO_HOT = "https://www.toutiao.com/hot-event/hot-board/"
 _EXTRA_HEADERS = {

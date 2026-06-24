@@ -5,8 +5,8 @@ Celebrity gossip titles are derived by appending '相关' to each movie title.""
 
 from __future__ import annotations
 
-from .base import fetch_json
 from ..models import GossipItem
+from .base import fetch_json
 
 _DOUBAN_SEARCH = "https://movie.douban.com/j/search_subjects"
 _EXTRA_HEADERS = {

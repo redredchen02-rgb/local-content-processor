@@ -5,8 +5,8 @@ Paginates in batches of 20 (Douban API hard limit per request) to reach `limit`.
 
 from __future__ import annotations
 
-from .base import fetch_json
 from ..models import GossipItem
+from .base import fetch_json
 
 _DOUBAN_MOVIE = "https://movie.douban.com/j/search_subjects"
 _EXTRA_HEADERS = {

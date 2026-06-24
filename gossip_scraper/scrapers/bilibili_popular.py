@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from .base import fetch_json
 from ..models import GossipItem
+from .base import fetch_json
 
 _BILIBILI_POPULAR = "https://api.bilibili.com/x/web-interface/popular"
 _EXTRA_HEADERS = {

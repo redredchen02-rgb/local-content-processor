@@ -16,8 +16,9 @@ def generate_summary(item: GossipItem) -> str:
     if item.summary:
         return item.summary
 
-    # If we have a description, use it as the base
-    if item.description and len(item.description) > 20:
+    # Any substantive description beats a template — lower threshold from >20 to >=5
+    # so short but real descriptions (e.g. "爆料黑幕揭秘") are not discarded.
+    if item.description and len(item.description) >= 5:
         summary = item.description[:150]
         # Clean up and ensure it ends properly
         if not summary.endswith(("。", "！", "？", ".", "!", "?")):

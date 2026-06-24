@@ -6,8 +6,8 @@ import json
 import re
 from urllib.parse import quote_plus
 
-from .base import fetch_text
 from ..models import GossipItem
+from .base import fetch_text
 
 _BAIDU_HOT = "https://top.baidu.com/board?tab=realtime"
 

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from .base import fetch_json, tag_from_title
 from ..models import GossipItem
+from .base import fetch_json, tag_from_title
 
 _NETEASE_HOT = "https://m.163.com/fe/api/hot/news/flow"
 _EXTRA_HEADERS = {

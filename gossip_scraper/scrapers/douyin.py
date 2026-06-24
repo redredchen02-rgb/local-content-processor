@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
-from .base import fetch_json
 from ..models import GossipItem
+from .base import fetch_json
 
 _DOUYIN_HOT = "https://www.iesdouyin.com/web/api/v2/hotsearch/billboard/word/"
 _EXTRA_HEADERS = {

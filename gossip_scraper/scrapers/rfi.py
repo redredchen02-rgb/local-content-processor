@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from .base import fetch_text, parse_rss_items
 from ..models import GossipItem
+from .base import fetch_text, parse_rss_items
 
 _RFI_RSS = "https://www.rfi.fr/cn/rss"
 

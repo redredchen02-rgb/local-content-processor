@@ -29,7 +29,7 @@ from .core.geo import enrich_regions
 from .core.ranking import rank
 from .core.sentiment import enrich_sentiments
 from .core.summary import enrich_summaries
-from .core.trend import compute_velocity
+from .core.trend import compute_velocity, save_velocity_history
 from .models import GossipItem
 from .scrapers.baidu import BaiduScraper
 from .scrapers.base import ScraperProtocol
@@ -153,6 +153,9 @@ async def run(
 
     # --- Phase 3: 3-dimension ranking ---
     all_items = rank(all_items, sort_by=sort_by)
+    # Persist composite ranks so next run's velocity reflects cross-platform standing,
+    # not the raw per-platform scraper position that varied during Phase 2.5.
+    save_velocity_history(all_items)
 
     # --- Phase 4: Output ---
     if top:

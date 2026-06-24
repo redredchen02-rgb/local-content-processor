@@ -27,10 +27,21 @@ def generate_post(item: GossipItem, platform: str = "weibo") -> dict:
         return _weibo_post(item)
 
 
+def _post_body(item: GossipItem, max_len: int = 150) -> str:
+    """Resolve the best available body text for a social post.
+
+    Prefers raw description (real source content) over the generated summary
+    (which may be a category template like "娛樂八卦：{title}"). Falls back to
+    the generated summary, then to the title."""
+    if item.description and len(item.description) >= 5:
+        return item.description[:max_len]
+    return item.summary or item.title
+
+
 def _weibo_post(item: GossipItem) -> dict:
     """Generate a Weibo-style post."""
     title = item.title
-    summary = item.summary or (item.description[:100] if item.description else title)
+    summary = _post_body(item)
 
     # Generate hashtags based on category
     hashtags = _generate_hashtags(item)
@@ -49,7 +60,7 @@ def _weibo_post(item: GossipItem) -> dict:
 def _xiaohongshu_post(item: GossipItem) -> dict:
     """Generate a Xiaohongshu-style post."""
     title = item.title
-    summary = item.summary or (item.description[:100] if item.description else title)
+    summary = _post_body(item)
 
     # Xiaohongshu uses more emojis and casual tone
     emoji_map = {
@@ -78,7 +89,7 @@ def _xiaohongshu_post(item: GossipItem) -> dict:
 def _wechat_post(item: GossipItem) -> dict:
     """Generate a WeChat Moments-style post."""
     title = item.title
-    summary = item.summary or (item.description[:80] if item.description else title)
+    summary = _post_body(item, max_len=80)
 
     body = f"{title}\n\n{summary}"
 

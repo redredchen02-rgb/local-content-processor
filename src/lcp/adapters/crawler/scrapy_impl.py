@@ -34,9 +34,9 @@ from ...core.models import (
     AssetState,
     SourceType,
 )
-from ..storage._fs import write_0600_bytes as _write_0600
 from ...core.rules.extraction import classify_media_url
 from ...core.rules.extraction import extract_content as _core_extract
+from ..storage._fs import write_0600_bytes as _write_0600
 from ..storage.manifest import write_manifest
 from . import net_guard
 from .base import RawJobBundle, SourceSpec

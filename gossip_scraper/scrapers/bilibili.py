@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from urllib.parse import quote_plus
 
-from .base import fetch_json
 from ..models import GossipItem
+from .base import fetch_json
 
 _BILIBILI_TRENDING = "https://api.bilibili.com/x/web-interface/wbi/search/square"
 _EXTRA_HEADERS = {

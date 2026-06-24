@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from .base import fetch_json
 from ..models import GossipItem
+from .base import fetch_json
 
 _TIEBA_HOT = "https://tieba.baidu.com/hottopic/browse/topicList"
 _EXTRA_HEADERS = {
