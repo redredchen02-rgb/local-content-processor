@@ -50,6 +50,7 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from . import pipeline as pl
 from .adapters.clock import now as _now
@@ -266,8 +267,6 @@ class Api:
         url = data.get("url")
         if not isinstance(url, str) or not url:
             return {"found": False, "url": None}
-        from urllib.parse import urlparse
-
         if urlparse(url).scheme.lower() not in {"http", "https"}:
             return {"found": False, "url": None}
         return {"found": True, "url": url}
