@@ -1,7 +1,7 @@
 ---
 title: "feat: 10-Step Editorial SOP Workflow Integration"
 type: feat
-status: active
+status: completed
 date: 2026-06-23
 deepened: 2026-06-23
 reviewed: 2026-06-23
@@ -154,7 +154,7 @@ flowchart TB
 
 ---
 
-- [ ] **U1: Category suggestion via copywriter expansion**
+- [x] **U1: Category suggestion via copywriter expansion**
 
 **Goal:** Populate `Draft.category` from copywriter LLM output; park at `NEEDS_HUMAN_REVIEW+CLASSIFICATION` when category is missing or unrecognized (with categories list configured).
 
@@ -202,7 +202,7 @@ flowchart TB
 
 ---
 
-- [ ] **U2: Keyword generation by type in copywriter**
+- [x] **U2: Keyword generation by type in copywriter**
 
 **Goal:** Populate `Draft.keywords` with 5-dimension typed keywords matching the SOP categories (人物/地點/平台/事件/內容類型).
 
@@ -251,7 +251,7 @@ flowchart TB
 
 ---
 
-- [ ] **U3: Telegram group notification for Step 10**
+- [x] **U3: Telegram group notification for Step 10**
 
 **Goal:** Operator can send `cover.jpg` + title to a configured Telegram group from REVIEW_PENDING state. Fire-and-forget: failure is audited, never changes job state.
 
@@ -312,7 +312,7 @@ flowchart TB
 
 ---
 
-- [ ] **U4: GUI 10-step workflow progress panel**
+- [x] **U4: GUI 10-step workflow progress panel**
 
 **Goal:** Job detail view renders a persistent 10-step SOP progress checklist — completed steps marked ✓, current step highlighted, blocked steps flagged. Derived entirely from existing API data; no new server endpoint.
 
@@ -359,7 +359,7 @@ flowchart TB
 
 ---
 
-- [ ] **U5: Ingest completeness report display in GUI**
+- [x] **U5: Ingest completeness report display in GUI**
 
 **Goal:** After LOCAL_DIR intake reaches `CRAWLED`/`CRAWLED_WARN`, the GUI displays `ingest_report.json` summary (images imported, missing body/title, failed files). Surfaces the step-01 completeness check that currently produces data silently.
 

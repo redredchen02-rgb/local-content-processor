@@ -4,6 +4,7 @@ type: refactor
 status: active
 date: 2026-06-23
 origin: multi-agent discovery workflow (15 file-disjoint finders + adversarial verifiers)
+progress: "L12 e2e tests shipped 2026-06-24 (test_recovery_paths.py: 5 tests — supersede/redline, reject, audit-chain, batch, needs-revision-reprocess). Wave A/B/C largely shipped across prior sessions."
 ---
 
 # refactor: collision-free parallel optimization sweep
