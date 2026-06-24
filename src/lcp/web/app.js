@@ -825,11 +825,15 @@ async function openJob(jobId) {
     return;
   }
   renderBanner(rec.state, rec.review_reason);
-  await renderIngestReport(jobId);
-  // Render workflow panel after packet load (draft data needed for steps 04 + 08).
-  const reviewers = await a.reviewers();
+  // Parallelise independent API calls to halve time-to-interactive.
+  const [ingestRes, reviewers, packetRes] = await Promise.all([
+    a.get_ingest_report(jobId),
+    a.reviewers(),
+    a.get_packet(jobId),
+  ]);
+  renderIngestReportFromRes(ingestRes);
   renderActions(rec.state, rec.review_reason, reviewers);
-  await renderPacket(jobId);
+  await renderPacketFromRes(jobId, packetRes);
   await renderWorkflowPanel(jobId, rec.state, rec.review_reason);
 }
 
@@ -958,9 +962,7 @@ function _notifyJob(jobId, btn) {
   });
 }
 
-async function renderIngestReport(jobId) {
-  const a = api(); if (!a) return;
-  const res = await a.get_ingest_report(jobId);
+function renderIngestReportFromRes(res) {
   if (!res || isError(res) || !res.report) return;
   const r = res.report;
   const box = el("div"); box.className = "ingest-report";
@@ -1345,12 +1347,9 @@ async function afterAction(res, okLabel) {
   }
 }
 
-async function renderPacket(jobId) {
-  const a = api();
-  if (!a) return;
+async function renderPacketFromRes(jobId, res) {
   const view = $("job-packet");
   clear(view);
-  const res = await a.get_packet(jobId);
   if (isError(res)) return; // pre-draft states have no packet — hide, never show an error card
   const card = el("div");
   card.className = "packet" + (res.state === "review_pending" ? " is-frozen" : "");
