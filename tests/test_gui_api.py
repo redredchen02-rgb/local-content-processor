@@ -1072,3 +1072,23 @@ def test_get_source_url_absent_platform_returns_not_found(tmp_path):
     result = api.get_source_url("j5")
 
     assert result["found"] is False
+
+
+def test_get_source_url_dangerous_scheme_returns_not_found(tmp_path):
+    """javascript:// and data: URLs in source.json are rejected by scheme guard."""
+    import json
+
+    store, api = _setup_url_api(tmp_path)
+    for i, dangerous_url in enumerate(
+        ["javascript://alert(1)", "data:text/html,<script>alert(1)</script>", "ftp://internal.host/file"]
+    ):
+        job_id = f"jscheme{i}"
+        store.create_job(job_id, created_at="2026-01-01T00:00:00Z")
+        src = store.job_dir(job_id) / "source.json"
+        src.write_text(json.dumps({"url": dangerous_url, "platform": "url"}), encoding="utf-8")
+        src.chmod(0o600)
+
+        result = api.get_source_url(job_id)
+
+        assert result["found"] is False, f"scheme guard failed for {dangerous_url}"
+        assert result["url"] is None

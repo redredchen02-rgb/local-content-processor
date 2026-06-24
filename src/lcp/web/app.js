@@ -250,6 +250,7 @@ function renderInfo(container, title, detail) {
 
 const POLL_MS = 1500;
 const POLL_CAP = 120; // 120 × 1.5s = 180s (3 min); the spinner must never spin forever
+const pollers = {}; // jobId → { kind, ticks, errors, ui, timer, cap, lastStage }
 
 function clearPoller(jobId) {
   const p = pollers[jobId];
@@ -525,7 +526,10 @@ function jobRow(job) {
       setBusy(qbtn, true);
       const a = api();
       if (!a) { setBusy(qbtn, false); showToast("API 未就绪，请刷新页面", "error"); return; }
-      quickAction(a);
+      quickAction(a).catch(function () {
+        clearPoller(job.job_id);
+        refreshInbox();
+      });
       startPollInbox(job.job_id, quickKind);
     });
     row.appendChild(qbtn);
