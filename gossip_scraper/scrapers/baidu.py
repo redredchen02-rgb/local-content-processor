@@ -6,27 +6,17 @@ import json
 import re
 from urllib.parse import quote_plus
 
-import httpx
-
+from .base import fetch_text
 from ..models import GossipItem
 
 _BAIDU_HOT = "https://top.baidu.com/board?tab=realtime"
-_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-    ),
-}
 
 
 class BaiduScraper:
     platform = "baidu"
 
     async def fetch(self, limit: int = 50) -> list[GossipItem]:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(_BAIDU_HOT, headers=_HEADERS)
-            resp.raise_for_status()
-            html = resp.text
+        html = await fetch_text(_BAIDU_HOT)
 
         # Baidu embeds SSR data in an HTML comment: <!--s-data:{"data":{...}}-->
         m = re.search(r"<!--s-data:(.*?)-->", html, re.DOTALL)

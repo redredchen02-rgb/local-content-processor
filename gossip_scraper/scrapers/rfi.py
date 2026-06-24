@@ -4,27 +4,17 @@ from __future__ import annotations
 
 import re
 
-import httpx
-
+from .base import fetch_text
 from ..models import GossipItem
 
 _RFI_RSS = "https://www.rfi.fr/cn/rss"
-_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-    ),
-}
 
 
 class RFIScraper:
     platform = "rfi"
 
     async def fetch(self, limit: int = 50) -> list[GossipItem]:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(_RFI_RSS, headers=_HEADERS)
-            resp.raise_for_status()
-            xml = resp.text
+        xml = await fetch_text(_RFI_RSS)
 
         items = _parse_rss(xml, limit)
         return items

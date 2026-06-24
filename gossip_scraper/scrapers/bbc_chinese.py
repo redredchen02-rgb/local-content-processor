@@ -4,27 +4,17 @@ from __future__ import annotations
 
 import re
 
-import httpx
-
+from .base import fetch_text
 from ..models import GossipItem
 
 _BBC_RSS = "https://feeds.bbci.co.uk/zhongwen/trad/rss.xml"
-_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-    ),
-}
 
 
 class BBCChineseScraper:
     platform = "bbc_chinese"
 
     async def fetch(self, limit: int = 50) -> list[GossipItem]:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(_BBC_RSS, headers=_HEADERS)
-            resp.raise_for_status()
-            xml = resp.text
+        xml = await fetch_text(_BBC_RSS)
 
         items = _parse_rss(xml, limit)
         return items

@@ -4,16 +4,11 @@ from __future__ import annotations
 
 from urllib.parse import quote_plus
 
-import httpx
-
+from .base import fetch_json
 from ..models import GossipItem
 
 _WEIBO_API = "https://weibo.com/ajax/side/hotSearch"
-_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    ),
+_EXTRA_HEADERS = {
     "Accept": "application/json, text/plain, */*",
     "Referer": "https://weibo.com",
 }
@@ -23,10 +18,7 @@ class WeiboScraper:
     platform = "weibo"
 
     async def fetch(self, limit: int = 50) -> list[GossipItem]:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(_WEIBO_API, headers=_HEADERS)
-            resp.raise_for_status()
-            data = resp.json()
+        data = await fetch_json(_WEIBO_API, headers=_EXTRA_HEADERS)
 
         realtime = data.get("data", {}).get("realtime", [])
         items: list[GossipItem] = []

@@ -4,31 +4,20 @@ from __future__ import annotations
 
 import re
 
-import httpx
-
+from .base import fetch_text
 from ..models import GossipItem
 
 _BING_NEWS = "https://www.bing.com/news/search"
-_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-    ),
-}
 
 
 class BingNewsScraper:
     platform = "bing_news"
 
     async def fetch(self, limit: int = 50) -> list[GossipItem]:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                _BING_NEWS,
-                headers=_HEADERS,
-                params={"q": "中国 热门", "format": "rss"},
-            )
-            resp.raise_for_status()
-            xml = resp.text
+        xml = await fetch_text(
+            _BING_NEWS,
+            params={"q": "中国 热门", "format": "rss"},
+        )
 
         items = _parse_rss(xml, limit)
         return items

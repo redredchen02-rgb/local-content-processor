@@ -4,16 +4,11 @@ from __future__ import annotations
 
 import re
 
-import httpx
-
+from .base import fetch_text
 from ..models import GossipItem
 
 _PTT_GOSSIP = "https://www.ptt.cc/bbs/Gossiping/index.html"
-_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-    ),
+_EXTRA_HEADERS = {
     "Cookie": "over18=1",
 }
 
@@ -22,10 +17,7 @@ class PTTScraper:
     platform = "ptt"
 
     async def fetch(self, limit: int = 50) -> list[GossipItem]:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(_PTT_GOSSIP, headers=_HEADERS)
-            resp.raise_for_status()
-            html = resp.text
+        html = await fetch_text(_PTT_GOSSIP, headers=_EXTRA_HEADERS)
 
         # Parse titles and URLs from the board page
         pattern = r'<div class="title">\s*<a href="(/bbs/Gossiping/[^"]+)">([^<]+)</a>'

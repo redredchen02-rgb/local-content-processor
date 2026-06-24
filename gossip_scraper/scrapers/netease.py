@@ -2,16 +2,11 @@
 
 from __future__ import annotations
 
-import httpx
-
+from .base import fetch_json
 from ..models import GossipItem
 
 _NETEASE_HOT = "https://m.163.com/fe/api/hot/news/flow"
-_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-    ),
+_EXTRA_HEADERS = {
     "Accept": "application/json",
     "Referer": "https://m.163.com",
 }
@@ -21,14 +16,11 @@ class NeteaseScraper:
     platform = "netease"
 
     async def fetch(self, limit: int = 50) -> list[GossipItem]:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                _NETEASE_HOT,
-                headers=_HEADERS,
-                params={"api_version": "v1", "size": min(limit, 100)},
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        data = await fetch_json(
+            _NETEASE_HOT,
+            headers=_EXTRA_HEADERS,
+            params={"api_version": "v1", "size": str(min(limit, 100))},
+        )
 
         items_list = data.get("data", {}).get("list", [])
         items: list[GossipItem] = []

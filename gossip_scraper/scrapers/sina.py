@@ -2,16 +2,11 @@
 
 from __future__ import annotations
 
-import httpx
-
+from .base import fetch_json
 from ..models import GossipItem
 
 _SINA_NEWS = "https://feed.mix.sina.com.cn/api/roll/get"
-_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-    ),
+_EXTRA_HEADERS = {
     "Accept": "application/json",
     "Referer": "https://news.sina.com.cn",
 }
@@ -21,20 +16,17 @@ class SinaScraper:
     platform = "sina"
 
     async def fetch(self, limit: int = 50) -> list[GossipItem]:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                _SINA_NEWS,
-                headers=_HEADERS,
-                params={
-                    "pageid": "153",
-                    "lid": "2515",
-                    "k": "",
-                    "num": str(min(limit, 50)),
-                    "page": "1",
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        data = await fetch_json(
+            _SINA_NEWS,
+            headers=_EXTRA_HEADERS,
+            params={
+                "pageid": "153",
+                "lid": "2515",
+                "k": "",
+                "num": str(min(limit, 50)),
+                "page": "1",
+            },
+        )
 
         items_list = data.get("result", {}).get("data", [])
         items: list[GossipItem] = []

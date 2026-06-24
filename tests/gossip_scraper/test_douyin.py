@@ -1,9 +1,7 @@
 """Tests for the Douyin hot-search scraper.
 
 No pytest-asyncio in this project, so async fetch() is driven via asyncio.run();
-httpx is mocked by monkeypatching the module's AsyncClient with a fake async
-context-manager client (the lcp LLM client mocks at the SDK layer, which doesn't
-apply to these raw-httpx scrapers)."""
+fetch_json is mocked via monkeypatch on the base module."""
 
 from __future__ import annotations
 
@@ -16,44 +14,23 @@ from gossip_scraper.scrapers import douyin
 from gossip_scraper.scrapers.douyin import DouyinScraper
 
 
-class _FakeResp:
-    def __init__(self, payload: dict, status: int = 200) -> None:
-        self._payload = payload
-        self._status = status
+def _patch(monkeypatch, payload: dict, status: int = 200) -> None:
+    if status >= 400:
 
-    def raise_for_status(self) -> None:
-        if self._status >= 400:
+        async def _fail(*a: object, **k: object) -> dict:
             raise httpx.HTTPStatusError(
-                f"{self._status}",
-                request=httpx.Request("GET", douyin._DOUYIN_HOT),
-                response=httpx.Response(self._status),
+                f"{status}",
+                request=httpx.Request("GET", "https://www.douyin.com"),
+                response=httpx.Response(status),
             )
 
-    def json(self) -> dict:
-        return self._payload
+        monkeypatch.setattr(douyin, "fetch_json", _fail)
+    else:
 
+        async def _ok(*a: object, **k: object) -> dict:
+            return payload
 
-class _FakeClient:
-    def __init__(self, payload: dict, status: int = 200) -> None:
-        self._payload = payload
-        self._status = status
-
-    async def __aenter__(self) -> "_FakeClient":
-        return self
-
-    async def __aexit__(self, *exc: object) -> bool:
-        return False
-
-    async def get(self, *a: object, **k: object) -> _FakeResp:
-        return _FakeResp(self._payload, self._status)
-
-
-def _patch(monkeypatch, payload: dict, status: int = 200) -> None:
-    monkeypatch.setattr(
-        douyin.httpx,
-        "AsyncClient",
-        lambda *a, **k: _FakeClient(payload, status),
-    )
+        monkeypatch.setattr(douyin, "fetch_json", _ok)
 
 
 _SAMPLE = {
@@ -90,8 +67,6 @@ def test_missing_word_list_key_returns_empty(monkeypatch) -> None:
 
 
 def test_http_error_raises(monkeypatch) -> None:
-    # Sibling convention: the scraper RAISES on HTTP error; run()/_fetch_one
-    # turns that into a clean per-platform miss + a recorded health failure.
     _patch(monkeypatch, {}, status=503)
     with pytest.raises(httpx.HTTPStatusError):
         asyncio.run(DouyinScraper().fetch())
@@ -104,7 +79,6 @@ def test_limit_truncates(monkeypatch) -> None:
 
 
 def test_missing_fields_tolerated(monkeypatch) -> None:
-    # An entry with no hot_value/label must not crash; heat defaults to 0.
     _patch(monkeypatch, {"word_list": [{"word": "只有标题"}]})
     items = asyncio.run(DouyinScraper().fetch())
     assert len(items) == 1
